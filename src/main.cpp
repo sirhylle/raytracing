@@ -16,8 +16,6 @@
 #include <string>
 #include <vector>
 
-// #include <numbers> // Removed to avoid C++20 requirement issues
-
 namespace nb = nanobind;
 using namespace nb::literals;
 
@@ -25,9 +23,9 @@ using namespace nb::literals;
 // CORE MATH
 // ===============================================================================================
 
-using Real =
-    double; // Use double to match Python default and avoid casting issues
-const Real PI = 3.1415926535897932385;
+// --- MODIFICATION 1 : Passage en float ---
+using Real = float;
+const Real PI = 3.1415926535897932385f; // Ajout du suffixe 'f'
 
 struct Vec3 {
   Real e[3];
@@ -57,7 +55,8 @@ struct Vec3 {
     return *this;
   }
 
-  Vec3 &operator/=(Real t) { return *this *= (1 / t); }
+  // Utilisation de 1.0f pour éviter la promotion implicite en double
+  Vec3 &operator/=(Real t) { return *this *= (1.0f / t); }
 
   Real length_squared() const {
     return e[0] * e[0] + e[1] * e[1] + e[2] * e[2];
@@ -84,7 +83,7 @@ inline Vec3 operator*(Real t, const Vec3 &v) {
 
 inline Vec3 operator*(const Vec3 &v, Real t) { return t * v; }
 
-inline Vec3 operator/(const Vec3 &v, Real t) { return (1 / t) * v; }
+inline Vec3 operator/(const Vec3 &v, Real t) { return (1.0f / t) * v; }
 
 inline Real dot(const Vec3 &u, const Vec3 &v) {
   return u.e[0] * v.e[0] + u.e[1] * v.e[1] + u.e[2] * v.e[2];
@@ -100,7 +99,8 @@ inline Vec3 unit_vector(const Vec3 &v) { return v / v.length(); }
 
 // Random Utils
 thread_local std::mt19937 generator{std::random_device{}()};
-thread_local std::uniform_real_distribution<Real> distribution(0.0, 1.0);
+// Distribution reste correcte, elle templatera sur float
+thread_local std::uniform_real_distribution<Real> distribution(0.0f, 1.0f);
 
 inline Real random_real() { return distribution(generator); }
 
@@ -161,7 +161,7 @@ struct Ray {
   bool is_primary;
 
   Ray() : tm(0), is_shadow(false), is_primary(false) {}
-  Ray(const Vec3 &origin, const Vec3 &direction, Real time = 0.0,
+  Ray(const Vec3 &origin, const Vec3 &direction, Real time = 0.0f,
       bool shadow = false, bool primary = false)
       : orig(origin), dir(direction), tm(time), is_shadow(shadow),
         is_primary(primary) {}
@@ -174,8 +174,7 @@ class Material;
 struct HitRecord {
   Vec3 p;
   Vec3 normal;
-  // std::shared_ptr<Material> mat_ptr;
-  Material *mat_ptr; // Pointeur brut (Rapide !)
+  Material *mat_ptr;
   Real t;
   Real u;
   Real v;
@@ -191,7 +190,7 @@ class Hittable {
 public:
   virtual bool hit(const Ray &r, Real t_min, Real t_max,
                    HitRecord &rec) const = 0;
-  virtual Real pdf_value(const Vec3 &o, const Vec3 &v) const { return 0.0; }
+  virtual Real pdf_value(const Vec3 &o, const Vec3 &v) const { return 0.0f; }
   virtual Vec3 random(const Vec3 &o) const { return Vec3(1, 0, 0); }
   virtual ~Hittable() = default;
 };
@@ -239,9 +238,7 @@ public:
 
 class HittableList : public Hittable {
 public:
-  // On garde les shared_ptr pour la "propriété" de la mémoire
   std::vector<std::shared_ptr<Hittable>> owned_objects;
-  // On utilise ce vecteur pour le calcul (itération rapide)
   std::vector<Hittable *> raw_objects;
 
   HittableList() {}
@@ -264,8 +261,6 @@ struct ScatterRecord {
   Ray specular_ray;
   bool is_specular;
   Vec3 attenuation;
-  // For diffuse we store explicit PDF later or use implicit?
-  // Simplified struct from python translation
 };
 
 class Material {
@@ -300,8 +295,7 @@ public:
     srec.is_specular = false;
     srec.attenuation = albedo;
     srec.specular_ray =
-        Ray(rec.p, unit_vector(rec.normal + random_unit_vector()),
-            r_in.tm); // Direction is stored here
+        Ray(rec.p, unit_vector(rec.normal + random_unit_vector()), r_in.tm);
     return true;
   }
 
@@ -325,12 +319,8 @@ public:
                        ScatterRecord &srec) const override {
     srec.is_specular = false;
 
-    // Checkerboard pattern
-    // We use world position, but we should potentially use texture coordinates
-    // u,v? For simplicity on a sphere, sticking to spatial sine pattern is
-    // classic "One Weekend" style. Using p directly works for general objects.
-
-    Real eps = 1e-5; // avoid artifacts at 0
+    // --- MODIFICATION : 1e-5f ---
+    Real eps = 1e-5f;
     Real sines = std::sin(scale * rec.p.x()) * std::sin(scale * rec.p.y()) *
                  std::sin(scale * rec.p.z());
 
@@ -380,10 +370,10 @@ public:
     // Transparent passthrough for non-shadow rays
     srec.is_specular = true;
     // Pass r_in.is_primary to keep background visibility correct
-    srec.specular_ray = Ray(rec.p + 0.001 * r_in.dir, r_in.dir, r_in.tm,
+    srec.specular_ray = Ray(rec.p + 0.001f * r_in.dir, r_in.dir, r_in.tm,
                             r_in.is_shadow, r_in.is_primary);
 
-    srec.attenuation = Vec3(1.0, 1.0, 1.0);
+    srec.attenuation = Vec3(1.0f, 1.0f, 1.0f);
     return true;
   }
 
@@ -402,7 +392,7 @@ public:
   Vec3 tint;
 
   Dielectric(Real index_of_refraction,
-             const Vec3 &tint_color = Vec3(1.0, 1.0, 1.0))
+             const Vec3 &tint_color = Vec3(1.0f, 1.0f, 1.0f))
       : ir(index_of_refraction), tint(tint_color) {}
 
   virtual bool is_transparent() const override { return true; }
@@ -431,9 +421,9 @@ public:
   }
 
   static Real reflectance(Real cosine, Real ref_idx) {
-    auto r0 = (1 - ref_idx) / (1 + ref_idx);
+    auto r0 = (1.0f - ref_idx) / (1.0f + ref_idx);
     r0 = r0 * r0;
-    return r0 + (1 - r0) * std::pow((1 - cosine), 5);
+    return r0 + (1.0f - r0) * std::pow((1.0f - cosine), 5);
   }
 };
 
@@ -454,9 +444,9 @@ public:
     Real cos_theta = std::fmin(dot(-unit_direction, rec.normal), 1.0f);
 
     // Simple Schlick approximation for Fresnel prob
-    Real r0 = (1 - ir) / (1 + ir);
+    Real r0 = (1.0f - ir) / (1.0f + ir);
     r0 = r0 * r0;
-    Real reflect_prob = r0 + (1 - r0) * std::pow((1 - cos_theta), 5);
+    Real reflect_prob = r0 + (1.0f - r0) * std::pow((1.0f - cos_theta), 5);
 
     if (random_real() < reflect_prob) {
       // Specular Reflection (White Highlight)
@@ -464,7 +454,7 @@ public:
       srec.is_specular = true;
       srec.specular_ray =
           Ray(rec.p, reflected + fuzz * random_in_unit_sphere(), r_in.tm);
-      srec.attenuation = Vec3(1.0, 1.0, 1.0); // White highlight
+      srec.attenuation = Vec3(1.0f, 1.0f, 1.0f); // White highlight
       return true;
     } else {
       // Diffuse Base
@@ -544,48 +534,46 @@ bool Sphere::hit(const Ray &r, Real t_min, Real t_max, HitRecord &rec) const {
 
 Real Sphere::pdf_value(const Vec3 &o, const Vec3 &v) const {
   HitRecord rec;
-  if (!this->hit(Ray(o, v), 0.001, std::numeric_limits<Real>::infinity(), rec))
+  // --- MODIFICATION : Epsilon 1e-4f ---
+  if (!this->hit(Ray(o, v), 0.001f, std::numeric_limits<Real>::infinity(), rec))
     return 0;
 
   auto cos_theta_max =
-      std::sqrt(1 - radius * radius / (center - o).length_squared());
-  auto solid_angle = 2 * PI * (1 - cos_theta_max);
-  return 1.0 / solid_angle;
+      std::sqrt(1.0f - radius * radius / (center - o).length_squared());
+  auto solid_angle = 2 * PI * (1.0f - cos_theta_max);
+  return 1.0f / solid_angle;
 }
 
 Vec3 Sphere::random(const Vec3 &o) const {
   Vec3 direction = center - o;
   auto distance_squared = direction.length_squared();
 
-  // orthonormal basis
   auto w = unit_vector(direction);
-  auto a = (std::abs(w.x()) > 0.9) ? Vec3(0, 1, 0) : Vec3(1, 0, 0);
-  auto u = unit_vector(
-      cross(a, w)); // A bit different from python but basis is arbitrary
-  // Correct way: use consistent UP
-  if (std::abs(w.x()) > 0.9)
+  auto a = (std::abs(w.x()) > 0.9f) ? Vec3(0, 1, 0) : Vec3(1, 0, 0);
+  auto u = unit_vector(cross(a, w));
+  if (std::abs(w.x()) > 0.9f)
     a = Vec3(0, 1, 0);
   else
     a = Vec3(1, 0, 0);
-  u = unit_vector(
-      cross(a, w)); // wait, if w is (1,0,0), a=(0,1,0), cross is (0,0,1). OK.
-  // Re-check logic
+  u = unit_vector(cross(a, w));
   Vec3 v = cross(w, u);
 
   auto r1 = random_real();
   auto r2 = random_real();
-  auto z = 1 + r2 * (std::sqrt(1 - radius * radius / distance_squared) - 1);
+  auto z =
+      1.0f + r2 * (std::sqrt(1.0f - radius * radius / distance_squared) - 1.0f);
 
   auto phi = 2 * PI * r1;
-  auto x = std::cos(phi) * std::sqrt(1 - z * z);
-  auto y = std::sin(phi) * std::sqrt(1 - z * z);
+  auto x = std::cos(phi) * std::sqrt(1.0f - z * z);
+  auto y = std::sin(phi) * std::sqrt(1.0f - z * z);
 
   return x * u + y * v + w * z;
 }
 
 bool Quad::hit(const Ray &r, Real t_min, Real t_max, HitRecord &rec) const {
   auto denom = dot(normal, r.dir);
-  if (std::fabs(denom) < 1e-8)
+  // --- MODIFICATION : Epsilon pour float ---
+  if (std::fabs(denom) < 1e-6f)
     return false;
 
   auto t = (D - dot(normal, r.orig)) / denom;
@@ -611,7 +599,7 @@ bool Quad::hit(const Ray &r, Real t_min, Real t_max, HitRecord &rec) const {
 
 Real Quad::pdf_value(const Vec3 &o, const Vec3 &v) const {
   HitRecord rec;
-  if (!this->hit(Ray(o, v), 0.001, std::numeric_limits<Real>::infinity(), rec))
+  if (!this->hit(Ray(o, v), 0.001f, std::numeric_limits<Real>::infinity(), rec))
     return 0;
 
   auto distance_squared = rec.t * rec.t * v.length_squared();
@@ -641,11 +629,10 @@ bool HittableList::hit(const Ray &r, Real t_min, Real t_max,
 }
 
 Real HittableList::pdf_value(const Vec3 &o, const Vec3 &v) const {
-  // Attention : utiliser raw_objects.size()
   if (raw_objects.empty())
-    return 0.0; // Sécurité
+    return 0.0f;
 
-  auto weight = 1.0 / raw_objects.size();
+  auto weight = 1.0f / raw_objects.size();
   Real sum = 0;
   for (const auto *object : raw_objects)
     sum += weight * object->pdf_value(o, v);
@@ -653,22 +640,11 @@ Real HittableList::pdf_value(const Vec3 &o, const Vec3 &v) const {
 }
 
 Vec3 HittableList::random(const Vec3 &o) const {
-  // 1. Utiliser size_t pour éviter les conversions inutiles vers int
   auto list_size = raw_objects.size();
-
-  // 2. Sécurité
   if (list_size == 0)
     return Vec3(1, 0, 0);
 
-  // 3. Création locale de la distribution.
-  // C'est très rapide (quelques cycles CPU).
-  // On utilise size_t pour correspondre au vecteur.
   std::uniform_int_distribution<size_t> dist(0, list_size - 1);
-
-  // 4. Appel :
-  // 'generator' est votre variable thread_local globale définie plus haut.
-  // C'est elle qui est lourde et qui doit être réutilisée (ce que vous faites
-  // déjà).
   size_t random_index = dist(generator);
 
   return raw_objects[random_index]->random(o);
@@ -682,8 +658,8 @@ struct EnvironmentMap {
   std::vector<Real> data;
   int width;
   int height;
-  Real visible_strength = 1.0;
-  Real lighting_strength = 1.0;
+  Real visible_strength = 1.0f;
+  Real lighting_strength = 1.0f;
 
   EnvironmentMap(const std::vector<Real> &d, int w, int h)
       : data(d), width(w), height(h) {}
@@ -694,7 +670,7 @@ struct EnvironmentMap {
   }
 
   Vec3 sample(const Vec3 &dir, bool is_primary) const {
-    if (dir.length_squared() < 1e-8)
+    if (dir.length_squared() < 1e-6f)
       return Vec3(0, 0, 0);
 
     Real strength = is_primary ? visible_strength : lighting_strength;
@@ -702,7 +678,6 @@ struct EnvironmentMap {
       return Vec3(0, 0, 0);
 
     auto unit_dir = unit_vector(dir);
-    // Map +Y (Up) to Theta=0 (V=0, Top of Image)
     auto theta = std::acos(unit_dir.y());
     auto phi = std::atan2(-unit_dir.z(), unit_dir.x()) + PI;
 
@@ -710,8 +685,8 @@ struct EnvironmentMap {
     Real v = theta / PI;
 
     // Bilinear interpolation
-    Real px = u * width - 0.5;
-    Real py = v * height - 0.5;
+    Real px = u * width - 0.5f;
+    Real py = v * height - 0.5f;
 
     int x0 = static_cast<int>(std::floor(px));
     int y0 = static_cast<int>(std::floor(py));
@@ -735,10 +710,10 @@ struct EnvironmentMap {
     Vec3 c01 = get_pixel(x0, y0 + 1);
     Vec3 c11 = get_pixel(x0 + 1, y0 + 1);
 
-    Vec3 c0 = c00 * (1 - fx) + c10 * fx;
-    Vec3 c1 = c01 * (1 - fx) + c11 * fx;
+    Vec3 c0 = c00 * (1.0f - fx) + c10 * fx;
+    Vec3 c1 = c01 * (1.0f - fx) + c11 * fx;
 
-    return (c0 * (1 - fy) + c1 * fy) * strength;
+    return (c0 * (1.0f - fy) + c1 * fy) * strength;
   }
 };
 
@@ -752,7 +727,7 @@ Vec3 ray_color(const Ray &r, const Hittable &world, const HittableList &lights,
     return Vec3(0, 0, 0);
 
   HitRecord rec;
-  if (!world.hit(r, 0.001, std::numeric_limits<Real>::infinity(), rec)) {
+  if (!world.hit(r, 0.001f, std::numeric_limits<Real>::infinity(), rec)) {
     if (env_map)
       return env_map->sample(r.dir, r.is_primary);
     return Vec3(0, 0, 0);
@@ -775,12 +750,12 @@ Vec3 ray_color(const Ray &r, const Hittable &world, const HittableList &lights,
   // Only sample lights if there are any
   if (!lights.raw_objects.empty()) {
     auto light_ray_dir = lights.random(rec.p);
-    Ray light_ray(rec.p, light_ray_dir, r.tm, true); // is_shadow = true
+    Ray light_ray(rec.p, light_ray_dir, r.tm, true);
     auto light_pdf_val = lights.pdf_value(rec.p, light_ray.dir);
 
     if (light_pdf_val > 0) {
       HitRecord hit_light;
-      if (world.hit(light_ray, 0.001, std::numeric_limits<Real>::infinity(),
+      if (world.hit(light_ray, 0.001f, std::numeric_limits<Real>::infinity(),
                     hit_light)) {
         auto li_emit = hit_light.mat_ptr->emit(
             light_ray, hit_light, hit_light.u, hit_light.v, hit_light.p);
@@ -814,7 +789,7 @@ Vec3 ray_color_nee(const Ray &r, const Hittable &world,
     return Vec3(0, 0, 0);
 
   HitRecord rec;
-  if (!world.hit(r, 0.001, std::numeric_limits<Real>::infinity(), rec)) {
+  if (!world.hit(r, 0.001f, std::numeric_limits<Real>::infinity(), rec)) {
     if (env_map && allow_emission)
       return env_map->sample(r.dir, r.is_primary);
     return Vec3(0, 0, 0);
@@ -838,33 +813,30 @@ Vec3 ray_color_nee(const Ray &r, const Hittable &world,
   Vec3 direct(0, 0, 0);
   if (!lights.raw_objects.empty()) {
     auto light_ray_dir = lights.random(rec.p);
-    Ray light_ray(rec.p, light_ray_dir, r.tm, true); // is_shadow = true
+    Ray light_ray(rec.p, light_ray_dir, r.tm, true);
     auto light_pdf = lights.pdf_value(rec.p, light_ray.dir);
 
     if (light_pdf > 0) {
-      Vec3 transmission(1.0, 1.0, 1.0);
+      Vec3 transmission(1.0f, 1.0f, 1.0f);
       Ray shadow_ray = light_ray;
       bool reached_light = false;
       HitRecord hit_light;
 
       // Loop for transparent shadows (Fake Caustics)
       for (int i = 0; i < 5; ++i) { // Max 5 transparent layers
-        if (world.hit(shadow_ray, 0.001, std::numeric_limits<Real>::infinity(),
+        if (world.hit(shadow_ray, 0.001f, std::numeric_limits<Real>::infinity(),
                       hit_light)) {
           // Hit something
           if (hit_light.mat_ptr->is_transparent()) {
             // Attenuate
             ScatterRecord srec_shadow;
-            // Hack: use scatter to get attenuation?
-            // For Dielectric, scatter gives us tint in attenuation if we force
-            // it? Actually, Dielectric::scatter returns tint in attenuation.
             if (hit_light.mat_ptr->scatter(shadow_ray, hit_light,
                                            srec_shadow)) {
               transmission = transmission * srec_shadow.attenuation;
             }
 
             // Continue ray through
-            shadow_ray = Ray(hit_light.p + 0.001 * shadow_ray.dir,
+            shadow_ray = Ray(hit_light.p + 0.001f * shadow_ray.dir,
                              shadow_ray.dir, shadow_ray.tm, true);
           } else {
             // Opaque or Light?
@@ -886,9 +858,6 @@ Vec3 ray_color_nee(const Ray &r, const Hittable &world,
             break; // Stopped by opaque or light
           }
         } else {
-          // Missed everything (background?)
-          // If we have an env map, maybe we hit it?
-          // But we sampled a light from the `lights` list.
           break;
         }
       }
@@ -917,9 +886,9 @@ public:
 
   Camera(Vec3 lookfrom, Vec3 lookat, Vec3 vup, Real vfov, Real aspect_ratio,
          Real aperture, Real focus_dist) {
-    auto theta = vfov * PI / 180.0;
+    auto theta = vfov * PI / 180.0f;
     auto h = std::tan(theta / 2);
-    auto viewport_height = 2.0 * h;
+    auto viewport_height = 2.0f * h;
     auto viewport_width = aspect_ratio * viewport_height;
 
     w = unit_vector(lookfrom - lookat);
@@ -963,7 +932,7 @@ public:
   }
 
   void add_sphere(const Vec3 &center, Real radius, std::string mat_type,
-                  const Vec3 &color, Real fuzz = 0, Real ir = 1.5) {
+                  const Vec3 &color, Real fuzz = 0, Real ir = 1.5f) {
     std::shared_ptr<Material> mat;
     if (mat_type == "lambertian")
       mat = std::make_shared<Lambertian>(color);
@@ -999,7 +968,7 @@ public:
 
   void add_quad(const Vec3 &Q, const Vec3 &u, const Vec3 &v,
                 std::string mat_type, const Vec3 &color, Real fuzz = 0,
-                Real ir = 1.5) {
+                Real ir = 1.5f) {
     std::shared_ptr<Material> mat;
     if (mat_type == "lambertian")
       mat = std::make_shared<Lambertian>(color);
@@ -1027,15 +996,13 @@ public:
   void set_environment(nb::object image) {
     PyObject *obj = image.ptr();
     Py_buffer view;
-    int flags =
-        PyBUF_STRIDES | PyBUF_FORMAT | PyBUF_ND; // Request strides and format
+    int flags = PyBUF_STRIDES | PyBUF_FORMAT | PyBUF_ND;
 
     if (PyObject_GetBuffer(obj, &view, flags) != 0) {
       throw std::runtime_error(
           "Argument is not a buffer compatible object (numpy array required)");
     }
 
-    // Scope guard to release buffer
     struct BufferGuard {
       Py_buffer *v;
       ~BufferGuard() { PyBuffer_Release(v); }
@@ -1050,14 +1017,6 @@ public:
 
     if (c != 3)
       throw std::runtime_error("Environment map must have 3 channels (RGB)");
-
-    // Assume float32 ('f') or double ('d') or check view.format
-    // But for robustness just assume float* access for now or check itemsize
-    if (view.itemsize != 4) {
-      // throw std::runtime_error("Environment map must be float32 (itemsize
-      // 4)"); Relaxed: maybe user passed something else? But we proceed
-      // assuming float.
-    }
 
     std::vector<Real> data(w * h * 3);
 
@@ -1142,7 +1101,6 @@ public:
       throw;
     }
 
-    // Return ndarray (Now safe because we have GIL)
     nb::capsule owner(data, [](void *p) noexcept { delete[] (float *)p; });
 
     return nb::ndarray<nb::numpy, float>(
