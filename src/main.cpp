@@ -4,6 +4,7 @@
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <iostream>
@@ -15,6 +16,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+
 
 namespace nb = nanobind;
 using namespace nb::literals;
@@ -171,6 +173,42 @@ struct Ray {
 
 class Material;
 
+struct AABB {
+  Vec3 min, max;
+
+  AABB() {}
+  AABB(const Vec3 &a, const Vec3 &b) : min(a), max(b) {
+    // Optionnel : s'assurer que min < max pour éviter des bugs bizarres
+  }
+
+  // Méthode "Slab" optimisée sans division (plus rapide)
+  bool hit(const Ray &r, Real t_min, Real t_max) const {
+    for (int a = 0; a < 3; a++) {
+      auto invD = 1.0f / r.dir[a];
+      auto t0 = (min[a] - r.orig[a]) * invD;
+      auto t1 = (max[a] - r.orig[a]) * invD;
+      if (invD < 0.0f)
+        std::swap(t0, t1);
+      t_min = t0 > t_min ? t0 : t_min;
+      t_max = t1 < t_max ? t1 : t_max;
+      if (t_max <= t_min)
+        return false;
+    }
+    return true;
+  }
+};
+
+// Fonction utilitaire pour fusionner deux boîtes
+inline AABB surrounding_box(const AABB &box0, const AABB &box1) {
+  Vec3 small(std::fmin(box0.min.x(), box1.min.x()),
+             std::fmin(box0.min.y(), box1.min.y()),
+             std::fmin(box0.min.z(), box1.min.z()));
+  Vec3 big(std::fmax(box0.max.x(), box1.max.x()),
+           std::fmax(box0.max.y(), box1.max.y()),
+           std::fmax(box0.max.z(), box1.max.z()));
+  return AABB(small, big);
+}
+
 struct HitRecord {
   Vec3 p;
   Vec3 normal;
@@ -190,6 +228,7 @@ class Hittable {
 public:
   virtual bool hit(const Ray &r, Real t_min, Real t_max,
                    HitRecord &rec) const = 0;
+  virtual bool bounding_box(AABB &output_box) const = 0;
   virtual Real pdf_value(const Vec3 &o, const Vec3 &v) const { return 0.0f; }
   virtual Vec3 random(const Vec3 &o) const { return Vec3(1, 0, 0); }
   virtual ~Hittable() = default;
@@ -210,6 +249,7 @@ public:
 
   virtual bool hit(const Ray &r, Real t_min, Real t_max,
                    HitRecord &rec) const override;
+  virtual bool bounding_box(AABB &output_box) const override;
   virtual Real pdf_value(const Vec3 &o, const Vec3 &v) const override;
   virtual Vec3 random(const Vec3 &o) const override;
 };
@@ -232,6 +272,7 @@ public:
 
   virtual bool hit(const Ray &r, Real t_min, Real t_max,
                    HitRecord &rec) const override;
+  virtual bool bounding_box(AABB &output_box) const override;
   virtual Real pdf_value(const Vec3 &o, const Vec3 &v) const override;
   virtual Vec3 random(const Vec3 &o) const override;
 };
@@ -249,6 +290,7 @@ public:
 
   virtual bool hit(const Ray &r, Real t_min, Real t_max,
                    HitRecord &rec) const override;
+  virtual bool bounding_box(AABB &output_box) const override;
   virtual Real pdf_value(const Vec3 &o, const Vec3 &v) const override;
   virtual Vec3 random(const Vec3 &o) const override;
 };
@@ -532,6 +574,12 @@ bool Sphere::hit(const Ray &r, Real t_min, Real t_max, HitRecord &rec) const {
   return true;
 }
 
+bool Sphere::bounding_box(AABB &output_box) const {
+  output_box = AABB(center - Vec3(radius, radius, radius),
+                    center + Vec3(radius, radius, radius));
+  return true;
+}
+
 Real Sphere::pdf_value(const Vec3 &o, const Vec3 &v) const {
   HitRecord rec;
   // --- MODIFICATION : Epsilon 1e-4f ---
@@ -597,6 +645,44 @@ bool Quad::hit(const Ray &r, Real t_min, Real t_max, HitRecord &rec) const {
   return true;
 }
 
+bool Quad::bounding_box(AABB &output_box) const {
+  // Calcul de la boite min/max du parallélogramme
+  // Q est un coin, u et v sont les vecteurs côtés
+  auto min_v = Vec3(
+      std::fmin(Q.x(), std::fmin((Q + u).x(),
+                                 std::fmin((Q + v).x(), (Q + u + v).x()))),
+      std::fmin(Q.y(), std::fmin((Q + u).y(),
+                                 std::fmin((Q + v).y(), (Q + u + v).y()))),
+      std::fmin(Q.z(), std::fmin((Q + u).z(),
+                                 std::fmin((Q + v).z(), (Q + u + v).z()))));
+
+  auto max_v = Vec3(
+      std::fmax(Q.x(), std::fmax((Q + u).x(),
+                                 std::fmax((Q + v).x(), (Q + u + v).x()))),
+      std::fmax(Q.y(), std::fmax((Q + u).y(),
+                                 std::fmax((Q + v).y(), (Q + u + v).y()))),
+      std::fmax(Q.z(), std::fmax((Q + u).z(),
+                                 std::fmax((Q + v).z(), (Q + u + v).z()))));
+
+  // Ajouter un petit padding pour éviter les boites d'épaisseur nulle
+  Real padding = 0.0001f;
+  if (std::fabs(max_v.x() - min_v.x()) < padding) {
+    min_v.e[0] -= padding;
+    max_v.e[0] += padding;
+  }
+  if (std::fabs(max_v.y() - min_v.y()) < padding) {
+    min_v.e[1] -= padding;
+    max_v.e[1] += padding;
+  }
+  if (std::fabs(max_v.z() - min_v.z()) < padding) {
+    min_v.e[2] -= padding;
+    max_v.e[2] += padding;
+  }
+
+  output_box = AABB(min_v, max_v);
+  return true;
+}
+
 Real Quad::pdf_value(const Vec3 &o, const Vec3 &v) const {
   HitRecord rec;
   if (!this->hit(Ray(o, v), 0.001f, std::numeric_limits<Real>::infinity(), rec))
@@ -628,6 +714,22 @@ bool HittableList::hit(const Ray &r, Real t_min, Real t_max,
   return hit_anything;
 }
 
+bool HittableList::bounding_box(AABB &output_box) const {
+  if (raw_objects.empty())
+    return false;
+
+  AABB temp_box;
+  bool first_box = true;
+
+  for (const auto *object : raw_objects) {
+    if (!object->bounding_box(temp_box))
+      return false;
+    output_box = first_box ? temp_box : surrounding_box(output_box, temp_box);
+    first_box = false;
+  }
+  return true;
+}
+
 Real HittableList::pdf_value(const Vec3 &o, const Vec3 &v) const {
   if (raw_objects.empty())
     return 0.0f;
@@ -649,6 +751,83 @@ Vec3 HittableList::random(const Vec3 &o) const {
 
   return raw_objects[random_index]->random(o);
 }
+
+// ===============================================================================================
+// BVHNode
+// ===============================================================================================
+
+class BVHNode : public Hittable {
+public:
+  std::shared_ptr<Hittable> left;
+  std::shared_ptr<Hittable> right;
+  AABB box;
+
+  // Constructeur principal pour l'extérieur
+  BVHNode(const HittableList &list)
+      : BVHNode(list.owned_objects, 0, list.owned_objects.size()) {}
+
+  // Constructeur récursif interne
+  BVHNode(const std::vector<std::shared_ptr<Hittable>> &src_objects,
+          size_t start, size_t end) {
+    auto objects = src_objects; // Copie locale modifiable pour le tri
+
+    int axis = static_cast<int>(random_real(0, 3)); // 0=X, 1=Y, 2=Z
+
+    // Comparateur
+    auto comparator = [axis](const std::shared_ptr<Hittable> &a,
+                             const std::shared_ptr<Hittable> &b) {
+      AABB box_a, box_b;
+      if (!a->bounding_box(box_a) || !b->bounding_box(box_b))
+        std::cerr << "Objet sans boite englobante dans le BVH.\n";
+      return box_a.min[axis] < box_b.min[axis];
+    };
+
+    size_t object_span = end - start;
+
+    if (object_span == 1) {
+      left = right = objects[start];
+    } else if (object_span == 2) {
+      if (comparator(objects[start], objects[start + 1])) {
+        left = objects[start];
+        right = objects[start + 1];
+      } else {
+        left = objects[start + 1];
+        right = objects[start];
+      }
+    } else {
+      std::sort(objects.begin() + start, objects.begin() + end, comparator);
+      size_t mid = start + object_span / 2;
+      left = std::make_shared<BVHNode>(objects, start, mid);
+      right = std::make_shared<BVHNode>(objects, mid, end);
+    }
+
+    AABB box_left, box_right;
+    if (!left->bounding_box(box_left) || !right->bounding_box(box_right))
+      std::cerr << "Objet sans boite englobante.\n";
+
+    box = surrounding_box(box_left, box_right);
+  }
+
+  virtual bool hit(const Ray &r, Real t_min, Real t_max,
+                   HitRecord &rec) const override {
+    // 1. Si on rate la boite, on s'arrête immédiatement
+    if (!box.hit(r, t_min, t_max))
+      return false;
+
+    // 2. Sinon on teste les enfants
+    bool hit_left = left->hit(r, t_min, t_max, rec);
+    // Optimisation : si on touche à gauche à 'rec.t', on n'a besoin de chercher
+    // à droite que ce qui est plus proche que 'rec.t'.
+    bool hit_right = right->hit(r, t_min, hit_left ? rec.t : t_max, rec);
+
+    return hit_left || hit_right;
+  }
+
+  virtual bool bounding_box(AABB &output_box) const override {
+    output_box = box;
+    return true;
+  }
+};
 
 // ===============================================================================================
 // ENVIRONMENT MAP
@@ -918,6 +1097,7 @@ class PyScene {
 public:
   HittableList world;
   HittableList lights;
+  std::shared_ptr<Hittable> world_bvh;
   std::shared_ptr<Camera> camera;
   std::shared_ptr<EnvironmentMap> background;
 
@@ -1050,6 +1230,14 @@ public:
 
   nb::ndarray<nb::numpy, float> render(int width, int height, int spp,
                                        int depth, int n_threads) {
+
+    // CONSTRUIRE LE BVH AVANT LE RENDU
+    if (world.owned_objects.empty()) {
+      world_bvh = std::make_shared<HittableList>();
+    } else {
+      world_bvh = std::make_shared<BVHNode>(world);
+    }
+
     // Init progress
     total_scanlines = height;
     completed_scanlines = 0;
@@ -1079,8 +1267,8 @@ public:
               auto v = (j + random_real()) / (height - 1);
               Ray r = camera->get_ray(u, v);
               r.is_primary = true;
-              pixel_color += ray_color_nee(r, world, lights, background.get(),
-                                           depth, true);
+              pixel_color += ray_color_nee(r, *world_bvh, lights,
+                                           background.get(), depth, true);
             }
 
             int idx = ((height - 1 - j) * width + i) * 3;
