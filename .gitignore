@@ -1,0 +1,17 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Outputs
+animations_frames/
+animations_frames - Copie/
+*.mp4
+*.png
+!env-map.png
