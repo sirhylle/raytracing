@@ -1036,7 +1036,10 @@ public:
       }
     }
 
-    background = std::make_shared<EnvironmentMap>(data, w, h);
+    // background = std::make_shared<EnvironmentMap>(data, w, h);
+    //  On convertit explicitement w et h (size_t) en int pour le constructeur
+    background = std::make_shared<EnvironmentMap>(data, static_cast<int>(w),
+                                                  static_cast<int>(h));
   }
 
   void set_env_strength(Real vis, Real light) {
