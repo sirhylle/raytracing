@@ -15,3 +15,7 @@ animations_frames - Copie/
 *.mp4
 *.png
 !env-map.png
+
+# Logs
+*.log
+
