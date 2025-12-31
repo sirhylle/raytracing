@@ -11,18 +11,33 @@ from tqdm import tqdm
 import glob
 import scenes
 from config import RenderConfig
+from dataclasses import asdict
 
-# Global Defaults
-DEFAULT_WIDTH = 800
-DEFAULT_HEIGHT = 800 # or relative to aspect ratio
-DEFAULT_SPP = 100
-DEFAULT_DEPTH = 50
-DEFAULT_ENV = "env-map.png"
-DEFAULT_APERTURE = 0.0
-DEFAULT_FOCUS_DIST = 10.0
-DEFAULT_ENV_BACKGROUND_LEVEL = 1.0
-DEFAULT_ENV_DIRECT_LEVEL = 0.5
-DEFAULT_ENV_INDIRECT_LEVEL = 1.0
+def build_configuration(args, scene_config):
+    # 1. Commencer avec les valeurs par défaut globales
+    final_conf = RenderConfig()
+
+    # 2. Appliquer la config de la scène (si elle existe)
+    if scene_config:
+        # On ne prend que les valeurs non-None définies par la scène
+        scene_data = {k: v for k, v in asdict(scene_config).items() if v is not None}
+        # On met à jour l'objet final
+        for k, v in scene_data.items():
+            if hasattr(final_conf, k):
+                setattr(final_conf, k, v)
+
+    # 3. Appliquer les arguments CLI (Priorité absolue)
+    # L'astuce : argparse doit avoir des defaults=None pour savoir si l'user a tapé qqchose
+    args_data = vars(args)
+    for k, v in args_data.items():
+        # Si l'argument existe dans la config et n'est pas None (donc fourni par l'user)
+        if v is not None and hasattr(final_conf, k):
+            current_val = getattr(final_conf, k)
+            if current_val != v:
+                print(f"[Override] CLI '{k}': {current_val} -> {v}")
+            setattr(final_conf, k, v)
+            
+    return final_conf
 
 def load_environment(engine, env_path, background_level_override=None, direct_level_override=None, indirect_level_override=None):
     if not env_path or not os.path.exists(env_path):
@@ -151,13 +166,15 @@ def resolve_param(cli_val, scene_val, name, default):
 
 def main():
     parser = argparse.ArgumentParser(description='Python Path Tracer (C++ Core)')
-    parser.add_argument('--scene', type=str, default='cornell', choices=scenes.AVAILABLE_SCENES.keys(), help='Scene to render')
-    parser.add_argument('--width', type=int, default=DEFAULT_WIDTH, help='Image width')
-    parser.add_argument('--height', type=int, help='Image height (default square/aspect ratio)')
-    parser.add_argument('--spp', type=int, default=DEFAULT_SPP, help='Samples per pixel')
-    parser.add_argument('--depth', type=int, default=DEFAULT_DEPTH, help='Max recursion depth')
     
-    # Overrideable params (default=None to detect user input)
+    # Renderer params
+    parser.add_argument('--scene', type=str, default=None, choices=scenes.AVAILABLE_SCENES.keys(), help='Scene to render')
+    parser.add_argument('--width', type=int, default=None, help='Image width')
+    parser.add_argument('--height', type=int, default=None, help='Image height (default square/aspect ratio)')
+    parser.add_argument('--spp', type=int, default=None, help='Samples per pixel')
+    parser.add_argument('--depth', type=int, default=None, help='Max recursion depth')
+    
+    # Scene params
     parser.add_argument('--env', type=str, default=None, help='Path to environment map')
     parser.add_argument('--env-background-level', type=float, default=None, help='Environment brightness')
     parser.add_argument('--env-direct-level', type=float, default=None, help='Environment direct light level')
@@ -165,84 +182,57 @@ def main():
     parser.add_argument('--aperture', type=float, default=None, help='Camera aperture')
     parser.add_argument('--focus_dist', type=float, default=None, help='Focus distance')
 
-    # Animation
-    parser.add_argument('--animate', action='store_true', help='Render an animation sequence')
-    parser.add_argument('--frames', type=int, default=48, help='Number of frames')
-    parser.add_argument('--fps', type=int, default=24, help='Frames per second')
-    parser.add_argument('--radius', type=float, default=0.5, help='Radius of camera wobble')
+    # Animation params
+    parser.add_argument('--animate', default=None, help='Render an animation sequence')
+    parser.add_argument('--frames', type=int, default=None, help='Number of frames')
+    parser.add_argument('--fps', type=int, default=None, help='Frames per second')
+    parser.add_argument('--radius', type=float, default=None, help='Radius of camera wobble')
 
     # Performance
-    parser.add_argument('--threads', type=int, default=0, help='Explicit number of threads (0 = max avail)')
-    parser.add_argument('--leave-cores', type=int, default=0, help='Number of CPU cores to leave free')
-    
-    # Removed --force-override as CLI now naturally overrides
-    
+    parser.add_argument('--threads', type=int, default=None, help='Explicit number of threads (0 = max avail)')
+    parser.add_argument('--leave-cores', type=int, default=None, help='Number of CPU cores to leave free')
+
     args = parser.parse_args()
 
-    # Image Dimensions
-    image_width = args.width
-    # Aspect ratio logic: depends on scene? usually determined by W/H.
-    # We'll set height first.
-    if args.height:
-        image_height = args.height
-        aspect_ratio = image_width / image_height
-    else:
-        # Default square for now unless scene implies otherwise?
-        # Usually aspect ratio is derived from image size, not vice versa in this engine.
-        image_height = int(image_width / 1.0)
-        aspect_ratio = 1.0
-
+    # 1. Initialiser moteur
     print(f"Initializing C++ Engine...")
     engine = cpp_engine.Engine()
-    
-    # Create override dict
-    overrides = {}
         
-    # Setup Scene
-    print(f"Setting up scene: {args.scene}")
-    scene_obj = scenes.AVAILABLE_SCENES[args.scene]
+    # 2. Setup Scene
+    scene_name = args.scene if args.scene else 'cornell'
+    print(f"Setting up Scene: {scene_name}")
+    scene_obj = scenes.AVAILABLE_SCENES[scene_name]
+    partial_scene_config = scene_obj.setup(engine)
     
-    # Try passing overrides (legacy scenes might fail)
-    try:
-        config = scene_obj.setup(engine, overrides)
-    except TypeError:
-         config = scene_obj.setup(engine)
+    # 3. Fusion des paramètres CLI et Scene
+    conf = build_configuration(args, partial_scene_config)
+    final_config = build_configuration(args, partial_scene_config)
     
-    # Resolve Parameters (CLI > Scene > Default)
-    aperture = resolve_param(args.aperture, config.aperture, "aperture", DEFAULT_APERTURE)
-    focus_dist = resolve_param(args.focus_dist, config.focus_dist, "focus_dist", DEFAULT_FOCUS_DIST)
-    env_map = resolve_param(args.env, config.env_map, "env", DEFAULT_ENV)
-    
-    # Lighting Resolution
-    env_background_level = resolve_param(args.env_background_level, config.env_background_level, "env_background_level", DEFAULT_ENV_BACKGROUND_LEVEL)
-    env_direct_level = resolve_param(args.env_direct_level, config.env_direct_level, "env_direct_level", DEFAULT_ENV_DIRECT_LEVEL)
-    env_indirect_level = resolve_param(args.env_indirect_level, config.env_indirect_level, "env_indirect_level", DEFAULT_ENV_INDIRECT_LEVEL)
-    
-    # Camera
-    if config.lookfrom is None: config.lookfrom = [278, 278, -800]
-    if config.lookat is None: config.lookat = [278, 278, 0]
-    if config.vup is None: config.vup = [0, 1, 0]
-    if config.vfov is None: config.vfov = 40.0
-    
+    # 4. Camera
     def v3(l): return cpp_engine.Vec3(float(l[0]), float(l[1]), float(l[2]))
-    
-    engine.set_camera(v3(config.lookfrom), v3(config.lookat), v3(config.vup), 
-                      float(config.vfov), float(aspect_ratio), float(aperture), float(focus_dist))
+    # Aspect Ratio Logic (si width/height pas fournis, les defaults de RenderConfig s'appliquent)
+    aspect = conf.width / conf.height
+    print(f"Setting up Camera: {conf.lookfrom} -> {conf.lookat}, Aspect: {aspect}, Aperture: {conf.aperture}, Focus: {conf.focus_dist}")
+    engine.set_camera(
+        v3(conf.lookfrom), v3(conf.lookat), v3(conf.vup),
+        float(conf.vfov), float(aspect), 
+        float(conf.aperture), float(conf.focus_dist)
+    )
 
-    # Environment
-    load_environment(engine, env_map, env_background_level, env_direct_level, env_indirect_level)
+    # 5. Environment
+    load_environment(engine, conf.env_map, 
+                     conf.env_background_level, 
+                     conf.env_direct_level, 
+                     conf.env_indirect_level)
 
-    # Determine Threads
-    pool_threads = 0
-    if args.threads > 0:
-        pool_threads = args.threads
-    elif args.leave_cores > 0:
-        total = multiprocessing.cpu_count()
-        pool_threads = max(1, total - args.leave_cores)
-    # else 0 invokes C++ default (max)
+    # 6. Threads
+    pool_threads = conf.threads
+    if pool_threads == 0 and conf.leave_cores > 0:
+        pool_threads = max(1, multiprocessing.cpu_count() - conf.leave_cores)
+    print(f"Setting up Threads: {pool_threads}")
 
     # Render Logic
-    if args.animate:
+    if conf.animate:
         import imageio
         output_dir = "animation_frames"
         os.makedirs(output_dir, exist_ok=True)
@@ -254,8 +244,8 @@ def main():
         frames = []
         
         if num_existing > 0:
-            if num_existing < args.frames:
-                print(f"Found {num_existing} existing frames (Target: {args.frames}).")
+            if num_existing < conf.frames:
+                print(f"Found {num_existing} existing frames (Target: {conf.frames}).")
                 while True:
                     choice = input("Resume from last frame [r] or Delete all and restart [d]? ").strip().lower()
                     if choice == 'r' or choice == 'resume':
@@ -279,8 +269,8 @@ def main():
                         frames = []
                         break
             else:
-                # num_existing >= args.frames
-                print(f"Found {num_existing} existing frames (Target: {args.frames}).")
+                # num_existing >= conf.frames
+                print(f"Found {num_existing} existing frames (Target: {conf.frames}).")
                 while True:
                      choice = input("Delete and restart? [y/n] ").strip().lower()
                      if choice == 'y':
@@ -293,14 +283,14 @@ def main():
                          print("Aborting render. Proceeding to compilation if available.")
                          # If we don't restart, we might want to just compile what we have or exit.
                          # Let's try to load them and compile video.
-                         start_frame = args.frames # Skip loop
+                         start_frame = conf.frames # Skip loop
                          
                          # Check if we should load frames for compilation
                          frames = []
                          print("Loading existing frames for compilation...")
-                         for fpath in existing_files: # Load all, even if > args.frames? Or just up to args.frames?
-                              # Only load up to args.frames usually, or all if we want full video
-                              if len(frames) < args.frames: # Or match all
+                         for fpath in existing_files: # Load all, even if > conf.frames? Or just up to conf.frames?
+                              # Only load up to conf.frames usually, or all if we want full video
+                              if len(frames) < conf.frames: # Or match all
                                   try:
                                       img = Image.open(fpath).convert('RGB')
                                       frames.append(np.array(img))
@@ -308,9 +298,9 @@ def main():
                          break
 
         
-        print(f"Starting Animation Render ({args.frames} frames)...")
+        print(f"Starting Animation Render ({conf.frames} frames)...")
         
-        if start_frame < args.frames:
+        if start_frame < conf.frames:
              pass # frames list is already populated if resuming
 
         
@@ -330,11 +320,11 @@ def main():
         right = right / np.linalg.norm(right)
         up = np.cross(right, forward) # Orthogonal up
         
-        for frame_idx in range(start_frame, args.frames):
-            t = (frame_idx / args.frames) * 2 * math.pi
+        for frame_idx in range(start_frame, conf.frames):
+            t = (frame_idx / conf.frames) * 2 * math.pi
             
             # Wobble in the Right/Up plane
-            offset = args.radius * (math.cos(t) * right + math.sin(t) * up)
+            offset = conf.radius * (math.cos(t) * right + math.sin(t) * up)
             new_lookfrom = center_pos + offset
             
             # Update Camera
@@ -342,13 +332,13 @@ def main():
                               float(config.vfov), float(aspect_ratio), float(aperture), float(focus_dist))
             
             # Render Frame
-            print(f"Rendering Frame {frame_idx+1}/{args.frames}...")
+            print(f"Rendering Frame {frame_idx+1}/{conf.frames}...")
             # We can't reuse the threaded logic easily without refactoring 'render_thread' to be callable.
             # Let's simplify and run synchronous for animation to avoid complex thread restarts, 
             # OR wrap the thread logic in a loop. Synchronous is safer for now.
             
             try:
-                raw_pixels = engine.render(image_width, image_height, args.spp, args.depth, pool_threads)
+                raw_pixels = engine.render(conf.width, conf.height, conf.spp, conf.depth, pool_threads)
                 
                 # Post Process
                 # Denoise (Optional inside loop)
@@ -380,14 +370,14 @@ def main():
                 
         # Compile Video
         print("Compiling video...")
-        imageio.mimsave('animation.mp4', frames, fps=args.fps)
+        imageio.mimsave('animation.mp4', frames, fps=conf.fps)
         print("Saved animation.mp4")
         return
 
     # Standard Single Frame Render
-    print(f"Rendering {image_width}x{image_height} with {args.spp} spp...")
-    print(f"Config: Aperture={aperture}, Focus={focus_dist}, Env='{env_map}'")
-    print(f"Lighting: EnvBackgroundLevel={env_background_level}, EnvDirectLevel={env_direct_level}, EnvIndirectLevel={env_indirect_level}")
+    print(f"Rendering {conf.width}x{conf.height} with {conf.spp} spp...")
+    print(f"Config: Aperture={conf.aperture}, Focus={conf.focus_dist}, Env='{conf.env_map}'")
+    print(f"Lighting: EnvBackgroundLevel={conf.env_background_level}, EnvDirectLevel={conf.env_direct_level}, EnvIndirectLevel={conf.env_indirect_level}")
     if pool_threads > 0:
         print(f"Threads: {pool_threads} (Limit applied)")
     else:
@@ -397,7 +387,7 @@ def main():
     result_container = {}
     def render_thread():
         try:
-            result_container['pixels'] = engine.render(image_width, image_height, args.spp, args.depth, pool_threads)
+            result_container['pixels'] = engine.render(conf.width, conf.height, conf.spp, conf.depth, pool_threads)
         except Exception as e:
             result_container['error'] = e
 

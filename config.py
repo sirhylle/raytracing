@@ -1,4 +1,4 @@
-from dataclasses import dataclass, fields, asdict
+from dataclasses import dataclass, field, asdict
 from typing import Optional, List
 
 @dataclass

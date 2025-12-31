@@ -1166,7 +1166,11 @@ Vec3 ray_color(const Ray &r, const Hittable &world, const HittableList &lights,
             ScatterRecord srec_shadow;
             if (hit_obstacle.mat_ptr->scatter(shadow_ray, hit_obstacle,
                                               srec_shadow)) {
-              transmission = transmission * srec_shadow.attenuation;
+              // transmission = transmission * srec_shadow.attenuation;
+              // HACK :
+              // On multiplie par 0.8 (ou 0.9) pour simuler que 10-20% de la
+              // lumière a été réfléchie ailleurs et n'a pas traversé.
+              transmission = transmission * srec_shadow.attenuation * 0.8f;
             }
             // On avance le rayon un poil après l'obstacle
             shadow_ray = Ray(hit_obstacle.p + 0.001f * shadow_ray.dir,
@@ -1473,7 +1477,9 @@ public:
 NB_MODULE(cpp_engine, m) {
   nb::class_<PyScene>(m, "Engine")
       .def(nb::init<>())
-      .def("add_sphere", &PyScene::add_sphere)
+      .def("add_sphere", &PyScene::add_sphere, nb::arg("center"),
+           nb::arg("radius"), nb::arg("mat_type"), nb::arg("color"),
+           nb::arg("fuzz") = 0.0f, nb::arg("ir") = 1.5f)
       .def("add_invisible_sphere_light", &PyScene::add_invisible_sphere_light)
       .def("add_checker_sphere", &PyScene::add_checker_sphere)
       .def("add_quad", &PyScene::add_quad)
@@ -1488,5 +1494,9 @@ NB_MODULE(cpp_engine, m) {
       .def("render", &PyScene::render, nb::arg("width"), nb::arg("height"),
            nb::arg("spp"), nb::arg("depth"), nb::arg("n_threads") = 0);
 
-  nb::class_<Vec3>(m, "Vec3").def(nb::init<Real, Real, Real>());
+  nb::class_<Vec3>(m, "Vec3")
+      .def(nb::init<Real, Real, Real>())
+      .def("x", &Vec3::x)
+      .def("y", &Vec3::y)
+      .def("z", &Vec3::z);
 }
