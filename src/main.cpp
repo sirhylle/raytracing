@@ -836,8 +836,9 @@ struct EnvironmentMap {
   std::vector<Real> data;
   int width;
   int height;
-  Real visible_strength = 1.0f;
-  Real lighting_strength = 1.0f;
+  Real env_visible_scale = 1.0f;
+  Real env_direct_scale = 1.0f;
+  Real env_indirect_scale = 1.0f;
 
   // Pour l'Importance Sampling
   std::vector<Real> marginal_CDF; // Probabilité de choisir une ligne Y
@@ -849,9 +850,10 @@ struct EnvironmentMap {
     build_cdf();
   }
 
-  void set_strengths(Real vis, Real light) {
-    visible_strength = vis;
-    lighting_strength = light;
+  void set_scales(Real vis, Real direct, Real indirect) {
+    env_visible_scale = vis;
+    env_direct_scale = direct;
+    env_indirect_scale = indirect;
   }
 
   // Calculer la luminosité perçue d'un pixel
@@ -981,11 +983,19 @@ struct EnvironmentMap {
     return unit_vector(dir);
   }
 
-  Vec3 sample(const Vec3 &dir, bool is_primary) const {
+  Vec3 sample(const Vec3 &dir, int mode) const {
     if (dir.length_squared() < 1e-6f)
       return Vec3(0, 0, 0);
 
-    Real strength = is_primary ? visible_strength : lighting_strength;
+    Real strength = 1.0f;
+    // Selection du bon multiplicateur selon le mode d'appel
+    if (mode == 0)
+      strength = env_visible_scale; // Vue Camera
+    else if (mode == 1)
+      strength = env_direct_scale; // NEE
+    else if (mode == 2)
+      strength = env_indirect_scale; // GI
+
     if (strength <= 0)
       return Vec3(0, 0, 0);
 
@@ -1046,8 +1056,12 @@ Vec3 ray_color(const Ray &r, const Hittable &world, const HittableList &lights,
   // Note : Epsilon à 0.001f pour éviter l'acné, Infinity pour le max
   if (!world.hit(r, 0.001f, std::numeric_limits<Real>::infinity(), rec)) {
     // Si on rate tout, on touche le fond (Environment Map)
-    if (env_map && allow_emission)
-      return env_map->sample(r.dir, r.is_primary);
+    if (env_map && allow_emission) {
+      // Si primaire (caméra) -> Mode 0 (Visible)
+      // Sinon (rebond) -> Mode 2 (Indirect)
+      int mode = r.is_primary ? 0 : 2;
+      return env_map->sample(r.dir, mode);
+    }
     return Vec3(0, 0, 0);
   }
 
@@ -1108,7 +1122,7 @@ Vec3 ray_color(const Ray &r, const Hittable &world, const HittableList &lights,
       light_pdf_val *= 0.5f;
 
     // On connait déjà la couleur du ciel dans cette direction
-    potential_light_emission = env_map->sample(dir, false);
+    potential_light_emission = env_map->sample(dir, 1);
     if (potential_light_emission.length_squared() <= 0)
       light_pdf_val = 0; // Optim
 
@@ -1371,9 +1385,10 @@ public:
                                                   static_cast<int>(h));
   }
 
-  void set_env_strength(Real vis, Real light) {
+  void set_env_levels(Real env_background, Real env_direct,
+                      Real env_indirect = 1.0f) {
     if (background) {
-      background->set_strengths(vis, light);
+      background->set_scales(env_background, env_direct, env_indirect);
     }
   }
 
@@ -1464,7 +1479,11 @@ NB_MODULE(cpp_engine, m) {
       .def("add_quad", &PyScene::add_quad)
       .def("set_camera", &PyScene::set_camera)
       .def("set_environment", &PyScene::set_environment)
-      .def("set_env_strength", &PyScene::set_env_strength)
+      .def("set_env_levels", &PyScene::set_env_levels,
+           nb::arg("env_background_level"), // Ce que je vois
+           nb::arg("env_direct_level"),     // Ce qui crée les ombres
+           nb::arg("env_indirect_level") =
+               1.0f) // Ce qui éclaire les coins (défaut 1.0)
       .def("get_progress", &PyScene::get_progress)
       .def("render", &PyScene::render, nb::arg("width"), nb::arg("height"),
            nb::arg("spp"), nb::arg("depth"), nb::arg("n_threads") = 0);

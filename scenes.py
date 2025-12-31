@@ -17,11 +17,9 @@ class SceneConfig:
     focus_dist: Optional[float] = None
     env_map: Optional[str] = None
     # Lighting
-    ambient: float = 1.0     # Sky lighting intensity (Light)
-    sky_gain: float = 1.0    # Sky camera visibility (Visual)
-    # Debug info (returned for UI/Logging)
-    sun_intensity: Optional[float] = None
-    sun_visible: Optional[bool] = None
+    env_background_level: float = 1.0     # Sky brightness (when viewed directly)
+    env_direct_level: float = 1.0    # Sky lighting intensity (by direct lighting)
+    env_indirect_level: float = 1.0    # Sky lighting intensity (by indirect lighting)
 
 class Scene:
     def setup(self, engine: cpp_engine.Engine, config_overrides: dict = None) -> SceneConfig:
@@ -63,20 +61,16 @@ class CornellBox(Scene):
             aperture=0.0,
             focus_dist=10.0,
             env_map=None,
-            ambient=2.0,
-            sky_gain=1.0
+            env_background_level=2.0,
+            env_direct_level=1.0,
+            env_indirect_level=1.0
         )
 
 class RandomSpheres(Scene):
     def setup(self, engine: cpp_engine.Engine, config_overrides: dict = None) -> SceneConfig:
-        # Defaults
-        default_sun_intensity = 10.0
-        default_sun_visible = False
         
         # Apply Overrides
         overrides = config_overrides or {}
-        sun_intens = overrides.get('sun_intensity', default_sun_intensity)
-        sun_vis = overrides.get('sun_visible', default_sun_visible)
 
         def v3(x, y, z):
             return cpp_engine.Vec3(float(x), float(y), float(z))
@@ -139,10 +133,9 @@ class RandomSpheres(Scene):
             aperture=0.05,
             focus_dist=10.0,
             env_map=None, 
-            ambient=1.0,
-            sky_gain=1.0,
-            sun_intensity=sun_intens,
-            sun_visible=sun_vis
+            env_background_level=1.0,
+            env_direct_level=0.5,
+            env_indirect_level=1.0
         )
 
 # Registry

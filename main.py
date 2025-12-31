@@ -10,6 +10,7 @@ import math
 from tqdm import tqdm
 import glob
 import scenes
+from config import RenderConfig
 
 # Global Defaults
 DEFAULT_WIDTH = 800
@@ -19,9 +20,11 @@ DEFAULT_DEPTH = 50
 DEFAULT_ENV = "env-map.png"
 DEFAULT_APERTURE = 0.0
 DEFAULT_FOCUS_DIST = 10.0
-DEFAULT_ENV_STRENGTH = 1.0
+DEFAULT_ENV_BACKGROUND_LEVEL = 1.0
+DEFAULT_ENV_DIRECT_LEVEL = 0.5
+DEFAULT_ENV_INDIRECT_LEVEL = 1.0
 
-def load_environment(engine, env_path, strength=1.0, vis_override=None, light_override=None):
+def load_environment(engine, env_path, background_level_override=None, direct_level_override=None, indirect_level_override=None):
     if not env_path or not os.path.exists(env_path):
         if env_path != DEFAULT_ENV: # Only warn if user specified something else or if default is missing
              print(f"Environment map '{env_path}' not found, using black background.")
@@ -84,19 +87,6 @@ def load_environment(engine, env_path, strength=1.0, vis_override=None, light_ov
             env_data = img.astype(np.float32) / 255.0
         else:
             env_data = img.astype(np.float32)
-            
-        # Apply base intensity multiplier (legacy strength)
-        # If overrides are present, we handle split.
-        # Ideally, we load raw data and use set_env_strength.
-        
-        # NOTE: We do NOT multiply data if we use set_env_strength properly?
-        # Actually existing set_environment takes data.
-        # Let's keep data as-is (multiply by 1.0 or strength if no overrides?)
-        # Better: Multiply data by 1.0 (Raw). Apply multipliers via set_env_strength.
-        
-        # But wait, if we change behaviour, existing scenes might look different if they relied on data modification?
-        # Actually previous code did `env_data *= strength`.
-        # Now we want `vis = strength`, `light = strength`.
         
         # Let's load RAW.
         # env_data *= 1.0 
@@ -106,16 +96,21 @@ def load_environment(engine, env_path, strength=1.0, vis_override=None, light_ov
 
         engine.set_environment(env_data)
         
-        # Calculate Final Strengths
-        final_vis = strength
-        final_light = strength
+        # Calculate Final Levels
+        if background_level_override is not None: final_env_background_level = background_level_override
+        else: final_env_background_level = DEFAULT_ENV_BACKGROUND_LEVEL
+        if direct_level_override is not None: final_env_direct_level = direct_level_override
+        else: final_env_direct_level = DEFAULT_ENV_DIRECT_LEVEL
+        if indirect_level_override is not None: final_env_indirect_level = indirect_level_override
+        else: final_env_indirect_level = DEFAULT_ENV_INDIRECT_LEVEL
         
-        if vis_override is not None: final_vis = vis_override
-        if light_override is not None: final_light = light_override
+        engine.set_env_levels(
+            env_background_level=final_env_background_level,
+            env_direct_level=final_env_direct_level,
+            env_indirect_level=final_env_indirect_level
+        )
         
-        engine.set_env_strength(float(final_vis), float(final_light))
-        
-        print(f"Environment map loaded. Base={strength}, Vis={final_vis}, Light={final_light}")
+        print(f"Environment map loaded. Image={env_path}, Background_level={final_env_background_level}, Direct_level={final_env_direct_level}, Indirect_level={final_env_indirect_level}")
     except Exception as e:
         print(f"Failed to load environment map: {e}")
         print("Fallback to PIL...")
@@ -164,15 +159,11 @@ def main():
     
     # Overrideable params (default=None to detect user input)
     parser.add_argument('--env', type=str, default=None, help='Path to environment map')
-    # Removed --strength in favor of --ambient
+    parser.add_argument('--env-background-level', type=float, default=None, help='Environment brightness')
+    parser.add_argument('--env-direct-level', type=float, default=None, help='Environment direct light level')
+    parser.add_argument('--env-indirect-level', type=float, default=None, help='Environment indirect light level')
     parser.add_argument('--aperture', type=float, default=None, help='Camera aperture')
     parser.add_argument('--focus_dist', type=float, default=None, help='Focus distance')
-    
-    # Lighting Debug
-    parser.add_argument('--sun-intensity', type=float, default=None, help='Intensity of the Sun (Default: Scene specific)')
-    parser.add_argument('--show-sun', action='store_true', help='Force sun to be visible (white ball)')
-    parser.add_argument('--ambient', type=float, default=None, help='Ambient/Sky lighting multiplier (Default: Scene specific)')
-    parser.add_argument('--sky-gain', type=float, default=None, help='Sky visibility multiplier (Default: 1.0)')
 
     # Animation
     parser.add_argument('--animate', action='store_true', help='Render an animation sequence')
@@ -206,10 +197,6 @@ def main():
     
     # Create override dict
     overrides = {}
-    if args.sun_intensity is not None:
-        overrides['sun_intensity'] = args.sun_intensity
-    if args.show_sun:
-        overrides['sun_visible'] = True
         
     # Setup Scene
     print(f"Setting up scene: {args.scene}")
@@ -227,8 +214,9 @@ def main():
     env_map = resolve_param(args.env, config.env_map, "env", DEFAULT_ENV)
     
     # Lighting Resolution
-    ambient = resolve_param(args.ambient, config.ambient, "ambient", DEFAULT_ENV_STRENGTH)
-    sky_gain = resolve_param(args.sky_gain, config.sky_gain, "sky_gain", 1.0)
+    env_background_level = resolve_param(args.env_background_level, config.env_background_level, "env_background_level", DEFAULT_ENV_BACKGROUND_LEVEL)
+    env_direct_level = resolve_param(args.env_direct_level, config.env_direct_level, "env_direct_level", DEFAULT_ENV_DIRECT_LEVEL)
+    env_indirect_level = resolve_param(args.env_indirect_level, config.env_indirect_level, "env_indirect_level", DEFAULT_ENV_INDIRECT_LEVEL)
     
     # Camera
     if config.lookfrom is None: config.lookfrom = [278, 278, -800]
@@ -242,9 +230,7 @@ def main():
                       float(config.vfov), float(aspect_ratio), float(aperture), float(focus_dist))
 
     # Environment
-    load_environment(engine, env_map, strength=1.0, 
-                     vis_override=sky_gain, 
-                     light_override=ambient)
+    load_environment(engine, env_map, env_background_level, env_direct_level, env_indirect_level)
 
     # Determine Threads
     pool_threads = 0
@@ -401,7 +387,7 @@ def main():
     # Standard Single Frame Render
     print(f"Rendering {image_width}x{image_height} with {args.spp} spp...")
     print(f"Config: Aperture={aperture}, Focus={focus_dist}, Env='{env_map}'")
-    print(f"Lighting: Ambient={ambient}, SkyGain={sky_gain}")
+    print(f"Lighting: EnvBackgroundLevel={env_background_level}, EnvDirectLevel={env_direct_level}, EnvIndirectLevel={env_indirect_level}")
     if pool_threads > 0:
         print(f"Threads: {pool_threads} (Limit applied)")
     else:
