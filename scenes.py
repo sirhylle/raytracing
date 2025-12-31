@@ -125,11 +125,11 @@ class RandomSpheres(Scene):
         engine.add_sphere(v3(4, 1, 0), 1.0, "metal", v3(1, 1, 1), 0.0, 1.5)
         
         # Sun Light
-        sun_pos = v3(0, 100, -100)
-        if sun_vis:
-            engine.add_sphere(sun_pos, 30.0, "light", v3(sun_intens, sun_intens, sun_intens), 0.0, 1.0)
-        else:
-            engine.add_invisible_sphere_light(sun_pos, 30.0, v3(sun_intens, sun_intens, sun_intens))
+        # sun_pos = v3(0, 100, -100)
+        # if sun_vis:
+        #     engine.add_sphere(sun_pos, 30.0, "light", v3(sun_intens, sun_intens, sun_intens), 0.0, 1.0)
+        # else:
+        #     engine.add_invisible_sphere_light(sun_pos, 30.0, v3(sun_intens, sun_intens, sun_intens))
 
         return SceneConfig(
             lookfrom=[11, 2, 3],

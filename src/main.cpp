@@ -17,7 +17,6 @@
 #include <string>
 #include <vector>
 
-
 namespace nb = nanobind;
 using namespace nb::literals;
 
@@ -840,12 +839,146 @@ struct EnvironmentMap {
   Real visible_strength = 1.0f;
   Real lighting_strength = 1.0f;
 
+  // Pour l'Importance Sampling
+  std::vector<Real> marginal_CDF; // Probabilité de choisir une ligne Y
+  std::vector<std::vector<Real>>
+      conditional_CDFs; // Probabilité de choisir X sachant Y
+
   EnvironmentMap(const std::vector<Real> &d, int w, int h)
-      : data(d), width(w), height(h) {}
+      : data(d), width(w), height(h) {
+    build_cdf();
+  }
 
   void set_strengths(Real vis, Real light) {
     visible_strength = vis;
     lighting_strength = light;
+  }
+
+  // Calculer la luminosité perçue d'un pixel
+  Real get_luminance(int x, int y) const {
+    int idx = (y * width + x) * 3;
+    Real r = data[idx];
+    Real g = data[idx + 1];
+    Real b = data[idx + 2];
+    return 0.2126f * r + 0.7152f * g + 0.0722f * b;
+  }
+
+  void build_cdf() {
+    marginal_CDF.resize(height + 1);
+    conditional_CDFs.resize(height, std::vector<Real>(width + 1));
+
+    Real total_integral = 0.0f;
+
+    for (int y = 0; y < height; ++y) {
+      // Facteur sin(theta) pour corriger la distorsion de la sphère (les pôles
+      // sont plus petits)
+      Real v = (y + 0.5f) / height;
+      Real theta = v * PI;
+      Real sin_theta = std::sin(theta);
+
+      Real row_integral = 0.0f;
+      conditional_CDFs[y][0] = 0.0f;
+
+      for (int x = 0; x < width; ++x) {
+        // Luminosité pondérée par l'aire sur la sphère
+        Real importance = get_luminance(x, y) * sin_theta;
+        row_integral += importance;
+        conditional_CDFs[y][x + 1] = row_integral;
+      }
+
+      // Normalisation de la ligne (CDF conditionnelle)
+      if (row_integral > 0) {
+        for (int x = 1; x <= width; ++x)
+          conditional_CDFs[y][x] /= row_integral;
+      } else {
+        // Ligne noire : probabilité uniforme (fallback)
+        for (int x = 1; x <= width; ++x)
+          conditional_CDFs[y][x] = (Real)x / width;
+      }
+
+      total_integral += row_integral;
+      marginal_CDF[y + 1] = total_integral;
+    }
+
+    // Normalisation de la colonne marginale
+    if (total_integral > 0) {
+      for (int y = 1; y <= height; ++y)
+        marginal_CDF[y] /= total_integral;
+    } else {
+      for (int y = 1; y <= height; ++y)
+        marginal_CDF[y] = (Real)y / height;
+    }
+  }
+
+  // Échantillonne une direction importante (vers le soleil/lumière)
+  // Retourne la direction et met à jour la probabilité (pdf)
+  Vec3 sample_direction(Real &pdf) const {
+    // 1. Choisir une ligne Y selon la distribution marginale
+    Real r1 = random_real();
+    auto it_y = std::lower_bound(marginal_CDF.begin(), marginal_CDF.end(), r1);
+    int y = std::max(0, (int)(it_y - marginal_CDF.begin()) - 1);
+
+    // 2. Choisir un pixel X dans cette ligne selon la distribution
+    // conditionnelle
+    Real r2 = random_real();
+    auto it_x = std::lower_bound(conditional_CDFs[y].begin(),
+                                 conditional_CDFs[y].end(), r2);
+    int x = std::max(0, (int)(it_x - conditional_CDFs[y].begin()) - 1);
+
+    // 3. Convertir (x,y) en UV puis en Direction
+    Real u = (x + random_real()) / width;
+    Real v = (y + random_real()) / height;
+
+    Real theta = v * PI;
+    Real phi = (u * 2 * PI) - PI;
+
+    Real sin_theta = std::sin(theta);
+    Real cos_theta = std::cos(theta);
+    Real sin_phi = std::sin(phi);
+    Real cos_phi = std::cos(phi);
+
+    // Attention aux axes: Y is up dans ton code
+    Vec3 dir(sin_theta * cos_phi, cos_theta, -sin_theta * sin_phi);
+
+    // 4. Calculer la PDF (Densité de probabilité) de cette direction
+    // PDF = (Probabilité de choisir ce pixel) / (Aire solide du pixel)
+    // Probabilité pixel ~ luminance * sin(theta) / TotalIntegral
+    // Aire solide pixel ~ (2*PI^2 * sin(theta)) / (Width * Height)
+
+    Real pixel_lum = get_luminance(x, y);
+    // Note: on recalcule approximativement la PDF basée sur la luminance
+    // Une méthode rigoureuse utiliserait les valeurs du CDF, mais ceci est
+    // suffisant pour le NEE
+
+    // Calcul de la somme totale brute (pour normaliser)
+    // Astuce : marginal_CDF.back() contient la somme totale *avant*
+    // normalisation si on ne divise pas. Mais ici on a normalisé. On peut
+    // approximer la PDF simplement :
+
+    // PDF_solid_angle = (pixel_probability) / (sin_theta * 2 * PI * PI / (W*H))
+    // C'est complexe à faire exact.
+    // Simplification robuste pour le NEE :
+
+    Real pdf_uv = (pixel_lum * sin_theta); // Proportionnel
+    // On doit normaliser par l'intégrale totale qu'on n'a pas stockée
+    // explicitement post-normalisation C'est le piège classique.
+
+    // APPROCHE SIMPLE : On retourne une PDF géométrique pour l'instant
+    // Si on veut faire du "vrai" Monte Carlo, il faut la valeur exacte du PDF.
+    // Voici la valeur exacte extraite des CDFs :
+
+    Real prob_y =
+        marginal_CDF[y + 1] - marginal_CDF[y]; // Prob d'être dans cette rangée
+    Real prob_x_given_y = conditional_CDFs[y][x + 1] -
+                          conditional_CDFs[y][x]; // Prob d'être ce pixel
+    Real prob_pixel = prob_y * prob_x_given_y;
+
+    if (sin_theta == 0)
+      pdf = 0;
+    else
+      pdf = prob_pixel * (width * height) / (2 * PI * PI * sin_theta);
+
+    return unit_vector(dir);
   }
 
   Vec3 sample(const Vec3 &dir, bool is_primary) const {
@@ -901,156 +1034,172 @@ struct EnvironmentMap {
 // ===============================================================================================
 
 Vec3 ray_color(const Ray &r, const Hittable &world, const HittableList &lights,
-               const EnvironmentMap *env_map, int depth) {
+               const EnvironmentMap *env_map, int depth,
+               bool allow_emission = true) {
+
+  // 1. Limite de rebond
   if (depth <= 0)
     return Vec3(0, 0, 0);
 
+  // 2. Intersection avec la scène
   HitRecord rec;
+  // Note : Epsilon à 0.001f pour éviter l'acné, Infinity pour le max
   if (!world.hit(r, 0.001f, std::numeric_limits<Real>::infinity(), rec)) {
-    if (env_map)
-      return env_map->sample(r.dir, r.is_primary);
-    return Vec3(0, 0, 0);
-  }
-
-  Vec3 emitted = rec.mat_ptr->emit(r, rec, rec.u, rec.v, rec.p);
-
-  ScatterRecord srec;
-  if (!rec.mat_ptr->scatter(r, rec, srec))
-    return emitted;
-
-  if (srec.is_specular) {
-    return emitted + srec.attenuation * ray_color(srec.specular_ray, world,
-                                                  lights, env_map, depth - 1);
-  }
-
-  // NEE
-  Vec3 direct_light(0, 0, 0);
-
-  // Only sample lights if there are any
-  if (!lights.raw_objects.empty()) {
-    auto light_ray_dir = lights.random(rec.p);
-    Ray light_ray(rec.p, light_ray_dir, r.tm, true);
-    auto light_pdf_val = lights.pdf_value(rec.p, light_ray.dir);
-
-    if (light_pdf_val > 0) {
-      HitRecord hit_light;
-      if (world.hit(light_ray, 0.001f, std::numeric_limits<Real>::infinity(),
-                    hit_light)) {
-        auto li_emit = hit_light.mat_ptr->emit(
-            light_ray, hit_light, hit_light.u, hit_light.v, hit_light.p);
-        if (li_emit.length_squared() > 0) {
-          auto scattering_pdf = rec.mat_ptr->scattering_pdf(r, rec, light_ray);
-          if (scattering_pdf > 0) {
-            direct_light =
-                li_emit * srec.attenuation * scattering_pdf / light_pdf_val;
-          }
-        }
-      }
-    }
-  }
-
-  // 2. Indirect
-  auto indirect = srec.attenuation * ray_color(srec.specular_ray, world, lights,
-                                               env_map, depth - 1);
-
-  return emitted + direct_light + indirect;
-}
-
-// Forward decl
-Vec3 ray_color_nee(const Ray &r, const Hittable &world,
-                   const HittableList &lights, const EnvironmentMap *env_map,
-                   int depth, bool allow_emission = true);
-
-Vec3 ray_color_nee(const Ray &r, const Hittable &world,
-                   const HittableList &lights, const EnvironmentMap *env_map,
-                   int depth, bool allow_emission) {
-  if (depth <= 0)
-    return Vec3(0, 0, 0);
-
-  HitRecord rec;
-  if (!world.hit(r, 0.001f, std::numeric_limits<Real>::infinity(), rec)) {
+    // Si on rate tout, on touche le fond (Environment Map)
     if (env_map && allow_emission)
       return env_map->sample(r.dir, r.is_primary);
     return Vec3(0, 0, 0);
   }
 
+  // 3. Emission propre de l'objet touché
   Vec3 emitted = rec.mat_ptr->emit(r, rec, rec.u, rec.v, rec.p);
   if (!allow_emission)
-    emitted = Vec3(0, 0, 0); // Suppress
+    emitted = Vec3(0, 0, 0); // Empêche le double comptage pour le NEE
 
+  // 4. Scattering (Rebond)
   ScatterRecord srec;
   if (!rec.mat_ptr->scatter(r, rec, srec))
-    return emitted; // Light source hit directly
+    return emitted; // C'est une lumière ou un objet noir, on s'arrête.
 
+  // 5. Cas Spécial : Miroirs et Verres (Spéculaire pur)
+  // On ne peut pas faire de NEE sur un miroir parfait, on suit juste le rayon.
   if (srec.is_specular) {
-    return emitted + srec.attenuation * ray_color_nee(srec.specular_ray, world,
-                                                      lights, env_map,
-                                                      depth - 1, true);
+    return emitted +
+           srec.attenuation *
+               ray_color(
+                   srec.specular_ray, world, lights, env_map, depth - 1,
+                   true); // true car on veut voir les lumières dans le miroir
   }
 
-  // Direct
-  Vec3 direct(0, 0, 0);
-  if (!lights.raw_objects.empty()) {
-    auto light_ray_dir = lights.random(rec.p);
-    Ray light_ray(rec.p, light_ray_dir, r.tm, true);
-    auto light_pdf = lights.pdf_value(rec.p, light_ray.dir);
+  // =========================================================
+  // 6. NEE (Next Event Estimation) - Éclairage Direct
+  // =========================================================
+  Vec3 direct_light(0, 0, 0);
 
-    if (light_pdf > 0) {
+  // Stratégie de choix : EnvMap OU Lumières géométriques ?
+  bool sample_env = false;
+
+  // Si on a les deux, on choisit au hasard (50/50)
+  if (env_map && !lights.raw_objects.empty()) {
+    sample_env = random_real() < 0.5f;
+  } else if (env_map) {
+    sample_env = true;
+  } else if (!lights.raw_objects.empty()) {
+    sample_env = false;
+  }
+
+  // Préparation des variables
+  Ray light_ray;
+  Real light_pdf_val = 0.0f;
+  bool is_env_sample = false;
+  Vec3 potential_light_emission(0, 0, 0);
+
+  // --- A. Génération du rayon vers la lumière ---
+  if (sample_env && env_map) {
+    // Importance Sampling de l'HDRI
+    Real pdf = 0;
+    Vec3 dir = env_map->sample_direction(
+        pdf); // Direction vers un point brillant du ciel
+    light_ray = Ray(rec.p, dir, r.tm, true);
+    light_pdf_val = pdf;
+
+    // Compensation du choix 50/50
+    if (!lights.raw_objects.empty())
+      light_pdf_val *= 0.5f;
+
+    // On connait déjà la couleur du ciel dans cette direction
+    potential_light_emission = env_map->sample(dir, false);
+    if (potential_light_emission.length_squared() <= 0)
+      light_pdf_val = 0; // Optim
+
+    is_env_sample = true;
+
+  } else if (!lights.raw_objects.empty()) {
+    // Sampling d'une lumière géométrique (Sphère, Quad)
+    auto light_ray_dir = lights.random(rec.p);
+    light_ray = Ray(rec.p, light_ray_dir, r.tm, true);
+    light_pdf_val = lights.pdf_value(rec.p, light_ray.dir);
+
+    // Compensation du choix 50/50
+    if (env_map)
+      light_pdf_val *= 0.5f;
+
+    is_env_sample = false;
+  }
+
+  // --- B. Validation et Calcul ---
+  if (light_pdf_val > 0) {
+    // Le BSDF de notre matériau pour cette direction de lumière
+    auto scattering_pdf = rec.mat_ptr->scattering_pdf(r, rec, light_ray);
+
+    if (scattering_pdf > 0) {
+      // Rayon d'ombre : Est-ce qu'on voit la lumière ?
       Vec3 transmission(1.0f, 1.0f, 1.0f);
       Ray shadow_ray = light_ray;
-      bool reached_light = false;
-      HitRecord hit_light;
 
-      // Loop for transparent shadows (Fake Caustics)
-      for (int i = 0; i < 5; ++i) { // Max 5 transparent layers
+      bool light_visible = false;
+
+      // Boucle pour traverser les objets transparents (ex: fenêtres)
+      // On s'arrête si on touche un objet opaque ou la lumière visée
+      for (int i = 0; i < 5; ++i) {
+        HitRecord hit_obstacle;
+        // On utilise le BVH ici (world.hit est rapide)
         if (world.hit(shadow_ray, 0.001f, std::numeric_limits<Real>::infinity(),
-                      hit_light)) {
-          // Hit something
-          if (hit_light.mat_ptr->is_transparent()) {
-            // Attenuate
+                      hit_obstacle)) {
+
+          if (hit_obstacle.mat_ptr->is_transparent()) {
+            // C'est du verre, on atténue et on continue
             ScatterRecord srec_shadow;
-            if (hit_light.mat_ptr->scatter(shadow_ray, hit_light,
-                                           srec_shadow)) {
+            if (hit_obstacle.mat_ptr->scatter(shadow_ray, hit_obstacle,
+                                              srec_shadow)) {
               transmission = transmission * srec_shadow.attenuation;
             }
-
-            // Continue ray through
-            shadow_ray = Ray(hit_light.p + 0.001f * shadow_ray.dir,
+            // On avance le rayon un poil après l'obstacle
+            shadow_ray = Ray(hit_obstacle.p + 0.001f * shadow_ray.dir,
                              shadow_ray.dir, shadow_ray.tm, true);
           } else {
-            // Opaque or Light?
-            // Check if it's a light source
-            auto li_emit = hit_light.mat_ptr->emit(
-                shadow_ray, hit_light, hit_light.u, hit_light.v, hit_light.p);
-            if (li_emit.length_squared() > 0) {
-              // It is a light!
-              // Use this emission
-              auto scattering_pdf =
-                  rec.mat_ptr->scattering_pdf(r, rec, light_ray);
-              if (scattering_pdf > 0) {
-                direct =
-                    li_emit * srec.attenuation * scattering_pdf / light_pdf;
-                direct = direct * transmission; // Apply transparency
+            // Obstacle Opaque ou Lumière
+            if (is_env_sample) {
+              // Si on visait le ciel et qu'on touche quelque chose d'opaque,
+              // c'est raté.
+              light_visible = false;
+            } else {
+              // Si on visait une lampe, est-ce que c'est elle qu'on a touchée ?
+              auto li_emit = hit_obstacle.mat_ptr->emit(
+                  shadow_ray, hit_obstacle, hit_obstacle.u, hit_obstacle.v,
+                  hit_obstacle.p);
+              if (li_emit.length_squared() > 0) {
+                potential_light_emission = li_emit;
+                light_visible = true;
               }
-              reached_light = true;
             }
-            break; // Stopped by opaque or light
+            break; // Fin du rayon
           }
         } else {
+          // On n'a rien touché
+          if (is_env_sample) {
+            // Si on visait le ciel et qu'on touche rien, c'est gagné !
+            light_visible = true;
+          }
           break;
         }
+      }
+
+      // --- C. Contribution finale ---
+      if (light_visible) {
+        direct_light = potential_light_emission * srec.attenuation *
+                       scattering_pdf * transmission / light_pdf_val;
       }
     }
   }
 
-  // Indirect
-  // Use stored specular_ray (which is diffuse importance sampled ray in this
-  // case)
-  Vec3 indirect =
-      srec.attenuation * ray_color_nee(srec.specular_ray, world, lights,
-                                       env_map, depth - 1, false);
+  // 7. Eclairage Indirect (Récursif)
+  // Important : allow_emission = false pour ne pas recompter les lumières qu'on
+  // vient de sampler au dessus
+  Vec3 indirect = srec.attenuation * ray_color(srec.specular_ray, world, lights,
+                                               env_map, depth - 1, false);
 
-  return emitted + direct + indirect;
+  return emitted + direct_light + indirect;
 }
 
 // Camera
@@ -1267,8 +1416,8 @@ public:
               auto v = (j + random_real()) / (height - 1);
               Ray r = camera->get_ray(u, v);
               r.is_primary = true;
-              pixel_color += ray_color_nee(r, *world_bvh, lights,
-                                           background.get(), depth, true);
+              pixel_color += ray_color(r, *world_bvh, lights, background.get(),
+                                       depth, true);
             }
 
             int idx = ((height - 1 - j) * width + i) * 3;
