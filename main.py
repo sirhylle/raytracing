@@ -1,8 +1,9 @@
 import cpp_engine
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 import os
 import time
+import datetime
 import argparse
 import threading
 import multiprocessing
@@ -12,6 +13,8 @@ import glob
 import scenes
 from config import RenderConfig
 from dataclasses import asdict
+
+SAVE_INTERMEDIATE_IMAGES = False
 
 # ===============================================================================================
 # 1. UTILS & POST-PROCESSING (C'est ici qu'on centralise la logique "Image")
@@ -41,20 +44,71 @@ def convert_to_uint8(data):
     """Convertit un tableau float (0..1) en uint8 (0..255)."""
     return (np.clip(data, 0.0, 1.0) * 255).astype(np.uint8)
 
-def save_image(linear_pixels, filename):
+def overlay_params(pil_image, text):
+    """Dessine un texte discret en haut à droite."""
+    draw = ImageDraw.Draw(pil_image)
+    
+    # Essai de chargement d'une police propre (Arial sur Windows, ou défaut)
+    try:
+        # Taille 12 pour être discret mais lisible
+        font = ImageFont.truetype("arial.ttf", 14) 
+    except IOError:
+        # Fallback si arial n'est pas trouvé (Linux/Mac parfois)
+        font = ImageFont.load_default()
+
+    # Calcul de la taille du texte pour le caler à droite
+    # (textbbox est la méthode moderne de Pillow, textsize est déprécié)
+    if hasattr(draw, "textbbox"):
+        bbox = draw.textbbox((0, 0), text, font=font)
+        text_w = bbox[2] - bbox[0]
+        text_h = bbox[3] - bbox[1]
+    else:
+        # Fallback pour vieilles versions de Pillow
+        text_w, text_h = draw.textsize(text, font=font)
+
+    margin = 10
+    x = pil_image.width - text_w - margin
+    y = margin
+
+    # 1. Ombre noire (pour lisibilité sur fond clair)
+    draw.text((x+1, y+1), text, font=font, fill=(0, 0, 0))
+    # 2. Texte blanc
+    draw.text((x, y), text, font=font, fill=(255, 255, 255))
+    
+    return pil_image
+
+def save_image(linear_pixels, filename, overlay_text=None):
     """Pipeline complet : ToneMap -> Uint8 -> Sauvegarde Disque."""
     toned = apply_tone_mapping(linear_pixels)
     img_uint8 = convert_to_uint8(toned)
-    Image.fromarray(img_uint8, 'RGB').save(filename)
+    img = Image.fromarray(img_uint8, 'RGB')
+    if overlay_text:
+        img = overlay_params(img, overlay_text)
+    img.save(filename)
     print(f"Saved: {filename}")
 
-def try_denoise(pixels):
-    """Tente de débruiter l'image. Retourne None si échec ou module absent."""
+def save_debug_layer(data, filename, is_normal=False):
+    """Sauvegarde une passe brute (Albedo ou Normal) pour inspection."""
+    img_data = data.copy()
+    
+    # Si c'est une carte de normales, on transforme [-1, 1] vers [0, 1]
+    if is_normal:
+        img_data = (img_data + 1.0) * 0.5
+        
+    # On applique juste une correction Gamma simple pour que ce soit visible
+    # (On n'utilise pas le Tonemapping ACES ici car on veut voir la donnée brute)
+    img_data = np.clip(img_data, 0.0, 1.0)
+    img_data = np.power(img_data, 1.0/2.2) 
+    
+    img_uint8 = (img_data * 255).astype(np.uint8)
+    Image.fromarray(img_uint8, 'RGB').save(filename)
+    print(f"Saved Debug: {filename}")
+
+def try_denoise(pixels, **kwargs):
+    """Tente de débruiter l'image. kwargs peut contenir albedo=... et normal=..."""
     try:
-        # Import local pour éviter de planter si le module n'est pas là au démarrage
         from denoise import denoise_image
-        # print("Denoising...") 
-        return denoise_image(pixels)
+        return denoise_image(pixels, **kwargs)
     except ImportError:
         return None
     except Exception as e:
@@ -75,10 +129,42 @@ def build_configuration(args, scene_config):
             if hasattr(final_conf, k):
                 setattr(final_conf, k, v)
 
-    # 2. Appliquer les arguments CLI (Override)
+    # 2. Gestion de la string compacte Auto-Sun
+    if args.auto_sun is not None:
+        # On active le flag principal quoi qu'il arrive
+        if not final_conf.auto_sun:
+            print(f"[Override] CLI 'auto_sun': {final_conf.auto_sun} -> True")
+            final_conf.auto_sun = True
+        
+        # Si c'est une string de config (pas juste le flag par défaut 'ON')
+        if type(args.auto_sun) == str and args.auto_sun != '':
+            try:
+                # On découpe par espace : "I10 R30 D1000" -> ["I10", "R30", "D1000"]
+                parts = args.auto_sun.split()
+                for p in parts:
+                    code = p[0].upper()      # La lettre (I, R, D, E)
+                    val = float(p[1:])       # Le nombre
+                    
+                    if code == 'I': 
+                        print(f"[Override] CLI 'auto_sun_intensity': {final_conf.auto_sun_intensity} -> {val}")
+                        final_conf.auto_sun_intensity = val
+                    elif code == 'R': 
+                        print(f"[Override] CLI 'auto_sun_radius': {final_conf.auto_sun_radius} -> {val}")
+                        final_conf.auto_sun_radius = val
+                    elif code == 'D': 
+                        print(f"[Override] CLI 'auto_sun_dist': {final_conf.auto_sun_dist} -> {val}")
+                        final_conf.auto_sun_dist = val
+                    elif code == 'E': 
+                        print(f"[Override] CLI 'auto_sun_env_level': {final_conf.auto_sun_env_level} -> {val}")
+                        final_conf.auto_sun_env_level = val
+                    else: print(f"[Warn] Code auto-sun inconnu: {code}")
+            except Exception as e:
+                print(f"[Error] Failed to parse auto-sun string: {e}")
+
+    # 3. Appliquer les arguments CLI (Override)
     args_data = vars(args)
     for k, v in args_data.items():
-        if v is not None and hasattr(final_conf, k):
+        if v is not None and hasattr(final_conf, k) and k != 'auto_sun':
             current_val = getattr(final_conf, k)
             if current_val != v:
                 print(f"[Override] CLI '{k}': {current_val} -> {v}")
@@ -86,8 +172,12 @@ def build_configuration(args, scene_config):
             
     return final_conf
 
-def load_environment(engine, env_path, background_level=None, direct_level=None, indirect_level=None, add_sun_light=False):
+def load_environment(engine, env_path, 
+    background_level=None, direct_level=None, indirect_level=None, 
+    auto_sun=False, auto_sun_intensity=None, auto_sun_radius=None,
+    auto_sun_dist=None, auto_sun_env_level=None):
     """Charge la HDRI et configure le soleil physique automatique."""
+
     if not env_path or not os.path.exists(env_path):
         return
 
@@ -117,28 +207,28 @@ def load_environment(engine, env_path, background_level=None, direct_level=None,
         engine.set_env_levels(bg_lvl, dir_lvl, indir_lvl)
 
         # Logique Auto-Sun
-        if add_sun_light:
+        if auto_sun:
             print("Auto-Sun: Analyzing Environment...")
             sun_dir, sun_color = engine.get_env_sun_info()
             
             # On coupe le direct de l'envmap pour remplacer par le soleil physique
-            engine.set_env_levels(bg_lvl, 0.1, indir_lvl)
+            engine.set_env_levels(bg_lvl, auto_sun_env_level, indir_lvl)
 
-            dist = 500.0
+            dist = auto_sun_dist
             pos = [sun_dir.x() * dist, sun_dir.y() * dist, sun_dir.z() * dist]
             
             # Normalisation et Boost
             raw_intensity = max(sun_color.x(), max(sun_color.y(), sun_color.z()))
             if raw_intensity <= 0: raw_intensity = 1.0
             
-            target_intensity = 100.0 # Curseur d'intensité artistique
+            target_intensity = auto_sun_intensity # Curseur d'intensité artistique
             scale = target_intensity / raw_intensity
             
             sun_col = [sun_color.x()*scale, sun_color.y()*scale, sun_color.z()*scale]
             
             engine.add_invisible_sphere_light(
                 cpp_engine.Vec3(*pos), 
-                15.0, # Rayon 
+                auto_sun_radius, # Rayon 
                 cpp_engine.Vec3(*sun_col)
             )
             print(f"Auto-Sun added. Intensity scaled {raw_intensity:.0f} -> {target_intensity}")
@@ -151,118 +241,130 @@ def load_environment(engine, env_path, background_level=None, direct_level=None,
 # ===============================================================================================
 
 def run_single_frame(engine, conf, pool_threads):
-    """Gère le rendu d'une image unique avec barre de progression."""
     print(f"Rendering Single Frame {conf.width}x{conf.height} ({conf.spp} spp)...")
     
-    # 1. Lancement du thread de rendu
     result_container = {}
     def render_thread():
         try:
-            result_container['pixels'] = engine.render(conf.width, conf.height, conf.spp, conf.depth, pool_threads)
+            # engine.render renvoie maintenant un dict
+            result_container['output'] = engine.render(conf.width, conf.height, conf.spp, conf.depth, pool_threads)
         except Exception as e:
             result_container['error'] = e
 
     t = threading.Thread(target=render_thread)
     t.start()
     
-    # 2. Gestion de la barre de progression
+    # ... (Barre de progression identique) ...
+    # ... (Copiez le bloc while t.is_alive() de votre ancien code ou du précédent) ...
+    # (Pour abréger ici je remets juste la logique post-thread)
+    
     t0 = time.time()
     pbar = tqdm(total=100, unit="%", bar_format="{l_bar}{bar}| {n:.1f}% [{elapsed}<{remaining}]")
     last_progress = 0
-    
     while t.is_alive():
         progress = engine.get_progress() * 100
         if progress > last_progress:
             pbar.update(progress - last_progress)
             last_progress = progress
         time.sleep(0.1)
-    
     pbar.update(100 - last_progress)
     pbar.close()
     t.join()
-    
+
     if 'error' in result_container:
         print(f"Render failed: {result_container['error']}")
         return
 
-    pixels = result_container['pixels']
-    print(f"Render complete in {time.time()-t0:.2f}s")
+    # Extraction des buffers
+    outputs = result_container['output']
+    pixels = outputs['color']
+    albedo = outputs['albedo']
+    normal = outputs['normal']
     
-    # 3. Pipeline de sauvegarde (Raw -> Denoised)
-    print("Processing outputs...")
-    save_image(pixels, 'output_raw.png')
-    
-    denoised_pixels = try_denoise(pixels)
-    if denoised_pixels is not None:
-        print("Denoising success.")
-        save_image(denoised_pixels, 'output_denoised.png')
-    else:
-        print("Skipping denoise output (module missing or failed).")
+    duration = time.time() - t0
+    print(f"Render complete in {duration:.2f}s")
 
+    timestamp = ""
+    overlay_txt = None
+
+    if conf.param_stamp:
+        # 1. Création du Timestamp (ex: _20231025_143005)
+        timestamp = datetime.datetime.now().strftime("_%Y%m%d_%H%M%S")
+        
+        # 2. Création du texte des paramètres
+        ren_txt = f"Size: {conf.width}x{conf.height} | SPP: {conf.spp} | Depth: {conf.depth} | Time: {duration:.2f}s"
+        sun_txt = f"Sun-Int: {conf.auto_sun_intensity:.2f} | Sun-Rad: {conf.auto_sun_radius:.2f} | Sun-Dist: {conf.auto_sun_dist:.2f} | Sun-Env: {conf.auto_sun_env_level:.2f}" if conf.auto_sun else "Sun: Off"
+        env_txt = f"Env-Dir: {conf.env_direct_level:.2f} |  Env-Ind: {conf.env_indirect_level:.2f} | Env-Bg: {conf.env_background_level:.2f}"
+        cam_txt = f"Camera: {conf.lookfrom} -> {conf.lookat} | Aperture: {conf.aperture:.2f} | Focus: {conf.focus_dist:.2f} | VFOV: {conf.vfov:.2f}"
+        
+        overlay_txt = (
+            f"{ren_txt}\n"
+            f"{sun_txt}\n"
+            f"{env_txt}\n"
+            f"{cam_txt}"
+        )
+    
+    print("Processing outputs...")
+    if SAVE_INTERMEDIATE_IMAGES: 
+        save_image(pixels, f'output_raw{timestamp}.png', overlay_txt)
+
+    if albedo is not None and SAVE_INTERMEDIATE_IMAGES:
+        save_debug_layer(albedo, f'output_albedo{timestamp}.png', is_normal=False)
+    
+    if normal is not None and SAVE_INTERMEDIATE_IMAGES:
+        save_debug_layer(normal, f'output_normal{timestamp}.png', is_normal=True)
+    
+    # Appel avec Albedo et Normal
+    denoised_pixels = try_denoise(pixels, albedo=albedo, normal=normal)
+    
+    if denoised_pixels is not None:
+        print("Denoising success (with Feature Buffers).")
+        save_image(denoised_pixels, f'output_denoised{timestamp}.png', overlay_txt)
+    else:
+        print("Skipping denoise output.")
 
 def run_animation(engine, conf, pool_threads):
-    """Gère le rendu d'une séquence d'animation et la compilation vidéo."""
     import imageio
     
     output_dir = "animation_frames"
     os.makedirs(output_dir, exist_ok=True)
     
-    frames_data = [] # Stockera les arrays uint8 pour la vidéo finale
+    frames_data = [] 
     start_frame = 0
 
-    # 1. Vérification des frames existantes
+    # --- LOGIQUE DE REPRISE (RESUME) ---
     existing_files = sorted(glob.glob(os.path.join(output_dir, "frame_*.png")))
     num_existing = len(existing_files)
 
     if num_existing > 0:
-        print(f"\n[Info] Found {num_existing} existing frames (Target: {conf.frames}).")
-        
-        # Logique interactive
+        print(f"\n[Info] Found {num_existing} existing frames.")
         if num_existing < conf.frames:
-            while True:
-                choice = input("Resume render [r] or Delete all and restart [d]? ").strip().lower()
-                
-                if choice in ['r', 'resume']:
-                    print(f"Resuming from frame {num_existing}...")
-                    start_frame = num_existing
-                    
-                    # On doit recharger les images existantes pour la compilation vidéo finale
-                    print("Reloading existing frames for video compilation...")
-                    for fpath in tqdm(existing_files, desc="Loading frames"):
-                        try:
-                            # On charge et on s'assure que c'est du uint8 RGB
-                            img = np.array(Image.open(fpath).convert('RGB'))
-                            frames_data.append(img)
-                        except Exception as e:
-                            print(f"[Error] Failed to load {fpath}: {e}")
-                    break
-                    
-                elif choice in ['d', 'delete', 'restart']:
-                    print("Deleting existing frames...")
-                    for fpath in existing_files:
-                        try: os.remove(fpath)
-                        except: pass
-                    frames_data = [] # On repart à vide
-                    start_frame = 0
-                    break
-        else:
-            # On a déjà toutes les frames (ou plus)
-            print("Target frame count reached.")
-            choice = input("Recompile video only [c] or Delete and restart [d]? ").strip().lower()
-            if choice in ['c', 'compile']:
-                print("Reloading frames for compilation...")
-                for fpath in existing_files[:conf.frames]:
-                    frames_data.append(np.array(Image.open(fpath).convert('RGB')))
-                start_frame = conf.frames # On saute le rendu
+            # Choix interactif
+            choice = input("Resume [r] or Delete [d]? ").strip().lower()
+            if choice in ['r', 'resume']:
+                print(f"Resuming from frame {num_existing}...")
+                start_frame = num_existing
+                for fpath in tqdm(existing_files, desc="Loading existing"):
+                     frames_data.append(np.array(Image.open(fpath).convert('RGB')))
             else:
-                print("Deleting and restarting...")
-                for fpath in existing_files:
-                    os.remove(fpath)
+                print("Deleting...")
+                for f in existing_files: os.remove(f)
+                frames_data = []
+        else:
+            # Tout est déjà là
+            choice = input("Compile only [c] or Restart [d]? ").strip().lower()
+            if choice in ['c']:
+                print("Compiling...")
+                for fpath in existing_files[:conf.frames]:
+                     frames_data.append(np.array(Image.open(fpath).convert('RGB')))
+                start_frame = conf.frames
+            else:
+                for f in existing_files: os.remove(f)
                 start_frame = 0
 
-    print(f"\nStarting Animation Loop: Frames {start_frame} to {conf.frames}")
+    print(f"Animation loop: {start_frame} -> {conf.frames}")
 
-    # Calcul de la base caméra (Tangente)
+    # (Calcul vecteurs caméra identique...)
     center_pos = np.array(conf.lookfrom)
     target_pos = np.array(conf.lookat)
     forward = target_pos - center_pos
@@ -271,57 +373,42 @@ def run_animation(engine, conf, pool_threads):
     right = np.cross(forward, world_up)
     right /= np.linalg.norm(right)
     up = np.cross(right, forward)
-
     def v3(v): return cpp_engine.Vec3(float(v[0]), float(v[1]), float(v[2]))
 
-    # Boucle de rendu
     for i in range(start_frame, conf.frames):
         print(f"--- Frame {i+1}/{conf.frames} ---")
         
-        # A. Mise à jour Caméra (Wobble)
         t = (i / conf.frames) * 2 * math.pi
         offset = conf.radius * (math.cos(t) * right + math.sin(t) * up)
-        new_lookfrom = center_pos + offset
+        engine.set_camera(v3(center_pos + offset), v3(target_pos), v3(conf.vup), 
+                          float(conf.vfov), float(conf.width/conf.height), 
+                          float(conf.aperture), float(conf.focus_dist))
         
-        aspect = conf.width / conf.height
-        engine.set_camera(
-            v3(new_lookfrom), v3(target_pos), v3(conf.vup), 
-            float(conf.vfov), float(aspect), 
-            float(conf.aperture), float(conf.focus_dist)
-        )
-        
-        # B. Rendu
         try:
-            raw_pixels = engine.render(conf.width, conf.height, conf.spp, conf.depth, pool_threads)
+            # Rendu et unpack
+            outputs = engine.render(conf.width, conf.height, conf.spp, conf.depth, pool_threads)
+            raw = outputs['color']
             
-            # C. Denoising
-            clean_pixels = try_denoise(raw_pixels)
-            if clean_pixels is None:
-                clean_pixels = raw_pixels
+            # Denoise avec features
+            clean = try_denoise(raw, albedo=outputs['albedo'], normal=outputs['normal'])
+            if clean is None: clean = raw
             
-            # D. Post-Process & Save
-            # Note : on utilise les fonctions utilitaires définies plus haut dans le script
-            final_pixels = apply_tone_mapping(clean_pixels)
-            img_uint8 = convert_to_uint8(final_pixels)
+            # Save
+            final = apply_tone_mapping(clean)
+            img_uint8 = convert_to_uint8(final)
             
             frame_path = os.path.join(output_dir, f"frame_{i:04d}.png")
             Image.fromarray(img_uint8, 'RGB').save(frame_path)
-            
             frames_data.append(img_uint8)
             
         except Exception as e:
             print(f"Frame {i} failed: {e}")
             continue
 
-    # 3. Compilation Vidéo
     if frames_data:
-        print("Compiling MP4...")
-        try:
-            imageio.mimsave('animation.mp4', frames_data, fps=conf.fps, ffmpeg_params=['-crf', '18'])
-            print("Animation saved: animation.mp4")
-        except Exception as e:
-            print(f"Video compilation failed: {e}")
-            print("But frames are saved in 'animation_frames/' folder.")
+        print("Compiling video...")
+        imageio.mimsave('animation.mp4', frames_data, fps=conf.fps, ffmpeg_params=['-crf', '18'])
+        print("Done: animation.mp4")
 
 # ===============================================================================================
 # 4. MAIN ENTRY POINT
@@ -341,13 +428,18 @@ def main():
     parser.add_argument('--env-indirect-level', type=float)
     parser.add_argument('--aperture', type=float)
     parser.add_argument('--focus_dist', type=float)
-    parser.add_argument('--auto-sun', action='store_true')
+    parser.add_argument('--auto-sun', nargs='?', const=True, default=None, help='Active le soleil. Optionnel: string compacte "I50.0 R50 D1000 E0.2"')
+    parser.add_argument('--auto-sun-intensity', type=float)
+    parser.add_argument('--auto-sun-radius', type=float)
+    parser.add_argument('--auto-sun-dist', type=float)
+    parser.add_argument('--auto-sun-env-level', type=float)
     parser.add_argument('--animate', action='store_true')
     parser.add_argument('--frames', type=int)
     parser.add_argument('--fps', type=int)
     parser.add_argument('--radius', type=float)
     parser.add_argument('--threads', type=int, default=0)
     parser.add_argument('--leave-cores', type=int, default=2)
+    parser.add_argument('--param-stamp', action='store_true', help="Incruste les params sur l'image et un timestamp")
 
     args = parser.parse_args()
 
@@ -374,7 +466,11 @@ def main():
                      conf.env_background_level, 
                      conf.env_direct_level, 
                      conf.env_indirect_level,
-                     conf.auto_sun)
+                     conf.auto_sun,
+                     conf.auto_sun_intensity,
+                     conf.auto_sun_radius,
+                     conf.auto_sun_dist,
+                     conf.auto_sun_env_level)
 
     # 5. Calcul Threads
     pool_threads = conf.threads

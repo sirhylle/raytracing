@@ -19,3 +19,8 @@ animations_frames - Copie/
 # Logs
 *.log
 
+# Denoiser OIDN
+oidn/
+
+# Python C++ compiled modules
+*.pyd

@@ -147,7 +147,7 @@ class MaterialsShowcase(Scene):
         # 1. Le Sol (Plateau damier)
         engine.add_checker_sphere(
             v3(0, -1000, 0), 1000.0, 
-            v3(0.1, 0.1, 0.1), v3(0.5, 0.5, 0.5), 10.0)
+            v3(0.1, 0.1, 0.1), v3(0.5, 0.5, 0.5), 2.0)
 
         # Liste pour stocker les sphères existantes (centre, rayon) pour les collisions
         placed_spheres = []

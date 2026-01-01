@@ -43,7 +43,7 @@ const Real DIELECTRIC_SHADOW_TRANSMISSION = 0.8f;
 // Valeur à partir de laquelle on commence à compresser les pixels trop lumineux
 // 100.0 = Conservateur (garde la dynamique)
 // 10.0  = Agressif (image très propre mais caustiques ternes)
-const Real FIREFLY_CLAMP_LIMIT = 100.0f;
+const Real FIREFLY_CLAMP_LIMIT = 50.0f;
 
 // ===============================================================================================
 // CORE MATH
@@ -233,7 +233,7 @@ inline AABB surrounding_box(const AABB &box0, const AABB &box1) {
            std::fmax(box0.max.y(), box1.max.y()),
            std::fmax(box0.max.z(), box1.max.z()));
   return AABB(small, big);
-}
+};
 
 struct HitRecord {
   Vec3 p;
@@ -350,6 +350,8 @@ public:
 
   virtual bool is_transparent() const { return false; }
 
+  virtual Vec3 get_albedo(const HitRecord &rec) const { return Vec3(0, 0, 0); }
+
   virtual ~Material() = default;
 };
 
@@ -372,6 +374,10 @@ public:
     auto cosine = dot(rec.normal, unit_vector(scattered.dir));
     return cosine < 0 ? 0 : cosine / PI;
   }
+
+  virtual Vec3 get_albedo(const HitRecord &rec) const override {
+    return albedo;
+  }
 };
 
 class LambertianChecker : public Material {
@@ -383,17 +389,66 @@ public:
   LambertianChecker(const Vec3 &a1, const Vec3 &a2, Real s)
       : albedo1(a1), albedo2(a2), scale(s) {}
 
+  virtual Vec3 get_albedo(const HitRecord &rec) const override {
+    // Fréquence du damier
+    const double s = scale;
+
+    // Calcul des coordonnées entières de la "case"
+    // On utilise floor pour gérer correctement les négatifs
+    int ix = static_cast<int>(std::floor(s * rec.p.x()));
+    int iy = static_cast<int>(std::floor(s * rec.p.y()));
+    int iz = static_cast<int>(std::floor(s * rec.p.z()));
+
+    // LOGIQUE ROBUSTE :
+    // 1. Si on est sur le sol (Y ~ 0), le "iy" va clignoter entre 0 et -1.
+    // 2. La solution propre est de désactiver l'influence de Y pour le sol.
+    //    On peut le faire dynamiquement : si la normale pointe vers le haut
+    //    (0,1,0), on ignore la composante Y du damier.
+
+    bool isPlanar =
+        std::abs(rec.normal.y()) > 0.9; // Détection auto du sol plat
+
+    // Formule XOR Standard (très rapide et stable)
+    // (ix ^ iy ^ iz) & 1  vérifie si la somme des bits est impaire
+    bool isOdd;
+
+    if (isPlanar) {
+      // Mode 2D : On ignore iy (on considère qu'on est sur la couche 0)
+      isOdd = (ix ^ iz) & 1;
+    } else {
+      // Mode 3D complet (pour les sphères)
+      isOdd = (ix ^ iy ^ iz) & 1;
+    }
+
+    return isOdd ? albedo2 : albedo1;
+  }
+
+  // 1. On centralise la logique de couleur ici
+  virtual Vec3 get_albedo_old(const HitRecord &rec) {
+    // Epsilon minuscule pour X et Z (juste pour la stabilité numérique des
+    // lignes) Cela ne décale pas le motif visiblement.
+    const double eps = 1e-5;
+
+    // LE FIX EST ICI : On décale Y de 0.5 (moitié d'une case).
+    // Ainsi, le sol (y=0) tombe mathématiquement au milieu d'une case
+    // verticale. Fini le bruit, et fini le décalage horizontal !
+    int xInt = static_cast<int>(std::floor(scale * rec.p.x() + eps));
+    int yInt = static_cast<int>(std::floor(scale * rec.p.y() + 0.5));
+    int zInt = static_cast<int>(std::floor(scale * rec.p.z() + eps));
+
+    // Astuce bitwise : Si la somme des coordonnées entières est paire
+    bool isEven = (xInt + yInt + zInt) % 2 == 0;
+
+    return isEven ? albedo1 : albedo2;
+  }
+
   virtual bool scatter(const Ray &r_in, const HitRecord &rec,
                        ScatterRecord &srec) const override {
     srec.is_specular = false;
 
-    Real sines = std::sin(scale * rec.p.x()) * std::sin(scale * rec.p.y()) *
-                 std::sin(scale * rec.p.z());
-
-    if (sines < 0)
-      srec.attenuation = albedo1;
-    else
-      srec.attenuation = albedo2;
+    // 2. Scatter récupère maintenant la couleur via get_albedo
+    // Cela garantit que le rendu et le débruitage "voient" la même chose.
+    srec.attenuation = get_albedo(rec);
 
     srec.specular_ray =
         Ray(rec.p, unit_vector(rec.normal + random_unit_vector()), r_in.tm);
@@ -421,6 +476,10 @@ public:
     srec.attenuation = albedo;
     srec.is_specular = true;
     return (dot(srec.specular_ray.dir, rec.normal) > 0);
+  }
+
+  virtual Vec3 get_albedo(const HitRecord &rec) const override {
+    return albedo;
   }
 };
 
@@ -520,6 +579,8 @@ public:
     r0 = r0 * r0;
     return r0 + (1.0f - r0) * std::pow((1.0f - cosine), 5);
   }
+
+  virtual Vec3 get_albedo(const HitRecord &rec) const override { return tint; }
 };
 
 class Plastic : public Material {
@@ -570,6 +631,10 @@ public:
     auto cosine = dot(rec.normal, unit_vector(scattered.dir));
     return cosine < 0 ? 0 : cosine / PI;
   }
+
+  virtual Vec3 get_albedo(const HitRecord &rec) const override {
+    return albedo;
+  }
 };
 
 class DiffuseLight : public Material {
@@ -587,6 +652,10 @@ public:
     if (rec.front_face)
       return emit_color;
     return Vec3(0, 0, 0);
+  }
+
+  virtual Vec3 get_albedo(const HitRecord &rec) const override {
+    return emit_color;
   }
 };
 
@@ -1572,74 +1641,96 @@ public:
     return {Vec3(0, 1, 0), Vec3(0, 0, 0)};
   }
 
-  nb::ndarray<nb::numpy, float> render(int width, int height, int spp,
-                                       int depth, int n_threads) {
+  // Changez le type de retour : nb::ndarray -> nb::dict
+  nb::dict render(int width, int height, int spp, int depth, int n_threads) {
 
-    // CONSTRUIRE LE BVH AVANT LE RENDU
     if (world.owned_objects.empty()) {
       world_bvh = std::make_shared<HittableList>();
     } else {
       world_bvh = std::make_shared<BVHNode>(world);
     }
 
-    // Init progress
     total_scanlines = height;
     completed_scanlines = 0;
 
-    // Prepare output
-    float *data = new float[width * height * 3];
+    size_t num_pixels = (size_t)width * height;
+    float *beauty = new float[num_pixels * 3];
+    float *albedo = new float[num_pixels * 3];
+    float *normal = new float[num_pixels * 3];
 
     try {
-      // Scope for GIL release
-      // We only release GIL during the heavy computation
       {
         nb::gil_scoped_release release;
-
-        // Set thread count if specified
-        if (n_threads > 0) {
+        if (n_threads > 0)
           omp_set_num_threads(n_threads);
-        }
 
-// Parallel Rendering
-// Simple OMP
 #pragma omp parallel for schedule(dynamic)
         for (int j = 0; j < height; ++j) {
           for (int i = 0; i < width; ++i) {
-            Vec3 pixel_color(0, 0, 0);
+
+            Vec3 acc_color(0, 0, 0);
+            Vec3 acc_albedo(0, 0, 0);
+            Vec3 acc_normal(0, 0, 0);
+
             for (int s = 0; s < spp; ++s) {
               auto u = (i + random_real()) / (width - 1);
               auto v = (j + random_real()) / (height - 1);
               Ray r = camera->get_ray(u, v);
-              r.is_primary = true;
-              pixel_color += ray_color(r, *world_bvh, lights, background.get(),
-                                       depth, true);
+              r.is_primary = true; // Important pour InvisibleLight
+
+              // 1. Beauty Pass (Calcul complet)
+              acc_color += ray_color(r, *world_bvh, lights, background.get(),
+                                     depth, true);
+
+              // 2. Feature Buffers (Premier impact seulement)
+              HitRecord rec;
+              if (world_bvh->hit(r, 0.001f,
+                                 std::numeric_limits<Real>::infinity(), rec)) {
+                acc_albedo += rec.mat_ptr->get_albedo(rec);
+                // Mapping normale [-1, 1] -> [0, 1] pour l'image
+                acc_normal += 0.5f * (unit_vector(rec.normal) + Vec3(1, 1, 1));
+              }
+              // Si on touche le fond, on laisse noir (0,0,0), OIDN gère très
+              // bien ça.
             }
 
             int idx = ((height - 1 - j) * width + i) * 3;
-            data[idx + 0] = pixel_color.x() / spp;
-            data[idx + 1] = pixel_color.y() / spp;
-            data[idx + 2] = pixel_color.z() / spp;
-          }
 
-          // Update progress
+            beauty[idx + 0] = acc_color.x() / spp;
+            beauty[idx + 1] = acc_color.y() / spp;
+            beauty[idx + 2] = acc_color.z() / spp;
+
+            albedo[idx + 0] = acc_albedo.x() / spp;
+            albedo[idx + 1] = acc_albedo.y() / spp;
+            albedo[idx + 2] = acc_albedo.z() / spp;
+
+            normal[idx + 0] = acc_normal.x() / spp;
+            normal[idx + 1] = acc_normal.y() / spp;
+            normal[idx + 2] = acc_normal.z() / spp;
+          }
           completed_scanlines++;
         }
-      } // GIL assumed re-acquired here
-
-    } catch (const std::exception &e) {
-      std::cerr << "Render error: " << e.what() << std::endl;
-      delete[] data;
-      throw;
+      }
     } catch (...) {
-      std::cerr << "Unknown render error" << std::endl;
-      delete[] data;
+      delete[] beauty;
+      delete[] albedo;
+      delete[] normal;
       throw;
     }
 
-    nb::capsule owner(data, [](void *p) noexcept { delete[] (float *)p; });
+    // Encapsulation pour Python (Memory Management)
+    nb::capsule owner_b(beauty, [](void *p) noexcept { delete[] (float *)p; });
+    nb::capsule owner_a(albedo, [](void *p) noexcept { delete[] (float *)p; });
+    nb::capsule owner_n(normal, [](void *p) noexcept { delete[] (float *)p; });
 
-    return nb::ndarray<nb::numpy, float>(
-        data, {(size_t)height, (size_t)width, 3ul}, owner);
+    size_t shape[3] = {(size_t)height, (size_t)width, 3ul};
+
+    nb::dict res;
+    res["color"] = nb::ndarray<nb::numpy, float>(beauty, 3, shape, owner_b);
+    res["albedo"] = nb::ndarray<nb::numpy, float>(albedo, 3, shape, owner_a);
+    res["normal"] = nb::ndarray<nb::numpy, float>(normal, 3, shape, owner_n);
+
+    return res;
   }
 
   float get_progress() const {

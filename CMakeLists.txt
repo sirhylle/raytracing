@@ -5,6 +5,16 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(Python 3.8 REQUIRED COMPONENTS Interpreter Development.Module)
+
+# On demande à l'exécutable Python trouvé ci-dessus où est installé nanobind
+execute_process(
+  COMMAND "${Python_EXECUTABLE}" -m nanobind --cmake_dir
+  OUTPUT_VARIABLE NB_DIR
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+# On ajoute ce chemin à la liste de recherche de CMake
+list(APPEND CMAKE_PREFIX_PATH "${NB_DIR}")
+
 find_package(nanobind CONFIG REQUIRED)
 
 nanobind_add_module(cpp_engine src/main.cpp)

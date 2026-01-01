@@ -23,6 +23,10 @@ class RenderConfig:
     env_direct_level: float = 0.5
     env_indirect_level: float = 0.5
     auto_sun: bool = False
+    auto_sun_intensity: float = 50.0
+    auto_sun_radius: float = 50.0
+    auto_sun_dist: float = 1000.0
+    auto_sun_env_level: float = 0.2
     
     # --- Animation ---
     animate: bool = False
@@ -33,3 +37,4 @@ class RenderConfig:
     # --- System ---
     threads: int = 0
     leave_cores: int = 2
+    param_stamp: bool = False
