@@ -39,7 +39,7 @@ def build_configuration(args, scene_config):
             
     return final_conf
 
-def load_environment(engine, env_path, background_level_override=None, direct_level_override=None, indirect_level_override=None):
+def load_environment(engine, env_path, background_level_override=None, direct_level_override=None, indirect_level_override=None, add_sun_light=False):
     if not env_path or not os.path.exists(env_path):
         if env_path != DEFAULT_ENV: # Only warn if user specified something else or if default is missing
              print(f"Environment map '{env_path}' not found, using black background.")
@@ -124,6 +124,59 @@ def load_environment(engine, env_path, background_level_override=None, direct_le
             env_direct_level=final_env_direct_level,
             env_indirect_level=final_env_indirect_level
         )
+
+        # --- AUTO-SUN LOGIC ---
+        if add_sun_light:
+            print("Analyzing Environment for Sun position...")
+            sun_dir, sun_color = engine.get_env_sun_info()
+            
+            # IMPORTANT : On coupe la lumière directe de l'Env Map 
+            # pour éviter d'avoir deux soleils (celui de l'image + la sphère)
+            # On garde juste le background (visuel) et l'indirect (ciel bleu)
+            engine.set_env_levels(
+                env_background_level=final_env_background_level,
+                env_direct_level=0.1,  # <--- ON REDUIT ICI
+                env_indirect_level=final_env_indirect_level
+            )
+
+            # Position (Loin)
+            dist = 500.0
+            pos_x = sun_dir.x() * dist
+            pos_y = sun_dir.y() * dist
+            pos_z = sun_dir.z() * dist
+
+            # NORMALISATION
+            r = sun_color.x()
+            g = sun_color.y()
+            b = sun_color.z()
+            current_max = max(r, max(g, b))
+
+            # Sécurité anti-bug
+            if current_max <= 0: current_max = 1.0
+
+            # RÉGLAGE DE LA PUISSANCE
+            # 50.0 = Soleil doux / Matin
+            # 100.0 = Plein soleil (Zénith) -> Recommandé
+            # 200.0 = Désert / Très brillant
+            target_intensity = 100.0
+
+            scale_factor = target_intensity / current_max
+
+            final_sun_r = r * scale_factor
+            final_sun_g = g * scale_factor
+            final_sun_b = b * scale_factor
+
+            print(f"Adding Physical Sun. Raw={current_max:.0f} -> Scaled={target_intensity}")
+
+            sun_pos = cpp_engine.Vec3(pos_x, pos_y, pos_z)
+            sun_col = cpp_engine.Vec3(final_sun_r, final_sun_g, final_sun_b)
+
+            # Taille du soleil
+            # Le soleil réel fait environ 0.5 degrés de diamètre.
+            # tan(0.25 deg) * 1000 ~= 4.5 rayon
+            sun_radius = 15.0 # Un peu plus gros pour des ombres douces (soft shadows)
+            
+            engine.add_invisible_sphere_light(sun_pos, sun_radius, sun_col)
         
         print(f"Environment map loaded. Image={env_path}, Background_level={final_env_background_level}, Direct_level={final_env_direct_level}, Indirect_level={final_env_indirect_level}")
     except Exception as e:
@@ -181,9 +234,10 @@ def main():
     parser.add_argument('--env-indirect-level', type=float, default=None, help='Environment indirect light level')
     parser.add_argument('--aperture', type=float, default=None, help='Camera aperture')
     parser.add_argument('--focus_dist', type=float, default=None, help='Focus distance')
+    parser.add_argument('--auto-sun', action='store_true', default=None, help='Add a physical sun sphere based on environment hotspot')
 
     # Animation params
-    parser.add_argument('--animate', default=None, help='Render an animation sequence')
+    parser.add_argument('--animate', action='store_true', default=None, help='Render an animation sequence')
     parser.add_argument('--frames', type=int, default=None, help='Number of frames')
     parser.add_argument('--fps', type=int, default=None, help='Frames per second')
     parser.add_argument('--radius', type=float, default=None, help='Radius of camera wobble')
@@ -223,7 +277,8 @@ def main():
     load_environment(engine, conf.env_map, 
                      conf.env_background_level, 
                      conf.env_direct_level, 
-                     conf.env_indirect_level)
+                     conf.env_indirect_level,
+                     conf.auto_sun)
 
     # 6. Threads
     pool_threads = conf.threads

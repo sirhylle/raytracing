@@ -22,6 +22,7 @@ class RenderConfig:
     env_background_level: float = 1.0
     env_direct_level: float = 0.5
     env_indirect_level: float = 0.5
+    auto_sun: bool = False
     
     # --- Animation ---
     animate: bool = False

@@ -1,5 +1,6 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
+#include <nanobind/stl/pair.h>
 #include <nanobind/stl/shared_ptr.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
@@ -21,12 +22,32 @@ namespace nb = nanobind;
 using namespace nb::literals;
 
 // ===============================================================================================
-// CORE MATH
+// GLOBAL CONFIGURATION
 // ===============================================================================================
 
-// --- MODIFICATION 1 : Passage en float ---
 using Real = float;
-const Real PI = 3.1415926535897932385f; // Ajout du suffixe 'f'
+const Real PI = 3.1415926535897932385f;
+
+// 1. Gestion du faux soleil (InvisibleLight) dans les reflets
+// true  : Le soleil est visible dans les miroirs/verres (Recommandé)
+// false : Le soleil est totalement invisible (sauf pour éclairer la scène)
+const bool VISIBLE_IN_REFLECTIONS = true;
+
+// 2. Intensité de l'ombre des objets transparents (Verre/Eau)
+// 1.0 = Pas d'ombre (Physiquement incorrect pour un path tracer simple)
+// 0.8 = Ombre légère (Réaliste "artistique")
+// 0.0 = Ombre noire (Physiquement faux mais très contrasté)
+const Real DIELECTRIC_SHADOW_TRANSMISSION = 0.8f;
+
+// 3. Gestion des Fireflies (Lucioles)
+// Valeur à partir de laquelle on commence à compresser les pixels trop lumineux
+// 100.0 = Conservateur (garde la dynamique)
+// 10.0  = Agressif (image très propre mais caustiques ternes)
+const Real FIREFLY_CLAMP_LIMIT = 100.0f;
+
+// ===============================================================================================
+// CORE MATH
+// ===============================================================================================
 
 struct Vec3 {
   Real e[3];
@@ -97,6 +118,12 @@ inline Vec3 cross(const Vec3 &u, const Vec3 &v) {
 }
 
 inline Vec3 unit_vector(const Vec3 &v) { return v / v.length(); }
+
+// Fonction de compression douce
+// Transforme x (0 -> inf) en y (0 -> limit)
+// Les valeurs faibles ne changent presque pas, les valeurs extrêmes sont
+// freinées.
+inline Real soft_clamp(Real x, Real limit) { return x * limit / (x + limit); }
 
 // Random Utils
 thread_local std::mt19937 generator{std::random_device{}()};
@@ -360,8 +387,6 @@ public:
                        ScatterRecord &srec) const override {
     srec.is_specular = false;
 
-    // --- MODIFICATION : 1e-5f ---
-    Real eps = 1e-5f;
     Real sines = std::sin(scale * rec.p.x()) * std::sin(scale * rec.p.y()) *
                  std::sin(scale * rec.p.z());
 
@@ -406,8 +431,23 @@ public:
   Vec3 emit_color;
   InvisibleLight(const Vec3 &c) : emit_color(c) {}
 
+  virtual bool is_transparent() const override { return true; }
+
   virtual bool scatter(const Ray &r_in, const HitRecord &rec,
                        ScatterRecord &srec) const override {
+
+    // LOGIQUE CONDITIONNELLE
+    if (VISIBLE_IN_REFLECTIONS) {
+      // Si activé : On bloque les rayons secondaires (reflets) pour qu'ils
+      // voient l'émission
+      if (!r_in.is_primary) {
+        return false;
+      }
+    }
+
+    // Si désactivé OU si c'est un rayon primaire : On laisse tout passer
+    // (transparence)
+
     // Transparent passthrough for non-shadow rays
     srec.is_specular = true;
     // Pass r_in.is_primary to keep background visibility correct
@@ -420,9 +460,23 @@ public:
 
   virtual Vec3 emit(const Ray &r_in, const HitRecord &rec, Real u, Real v,
                     const Vec3 &p) const override {
+
+    bool should_emit = false;
+
+    // 1. Toujours émettre pour les ombres (pour éclairer la scène)
     if (r_in.is_shadow) {
+      should_emit = true;
+    }
+
+    // 2. Si activé, émettre aussi pour les reflets (!is_primary)
+    if (VISIBLE_IN_REFLECTIONS && !r_in.is_primary) {
+      should_emit = true;
+    }
+
+    if (should_emit) {
       return emit_color;
     }
+
     return Vec3(0, 0, 0);
   }
 };
@@ -770,7 +824,24 @@ public:
           size_t start, size_t end) {
     auto objects = src_objects; // Copie locale modifiable pour le tri
 
-    int axis = static_cast<int>(random_real(0, 3)); // 0=X, 1=Y, 2=Z
+    // 1. Calculer la bbox de tous les objets actuels pour trouver le meilleur
+    // axe
+    AABB total_box;
+    bool first = true;
+    for (size_t i = start; i < end; ++i) {
+      AABB temp_box;
+      if (objects[i]->bounding_box(temp_box)) {
+        total_box = first ? temp_box : surrounding_box(total_box, temp_box);
+        first = false;
+      }
+    }
+
+    Vec3 extent = total_box.max - total_box.min;
+    int axis = 0; // Par défaut X
+    if (extent.y() > extent.x() && extent.y() > extent.z())
+      axis = 1; // Y est le plus long
+    else if (extent.z() > extent.x() && extent.z() > extent.y())
+      axis = 2; // Z est le plus long
 
     // Comparateur
     auto comparator = [axis](const std::shared_ptr<Hittable> &a,
@@ -854,6 +925,53 @@ struct EnvironmentMap {
     env_visible_scale = vis;
     env_direct_scale = direct;
     env_indirect_scale = indirect;
+  }
+
+  // Trouve la direction du pixel le plus lumineux
+  // Retourne une paire : {Direction, IntensitéMax}
+  std::pair<Vec3, Vec3> find_sun_hotspot() const {
+    Real max_lum = -1.0f;
+    int best_x = 0;
+    int best_y = 0;
+    Vec3 best_color(0, 0, 0);
+
+    for (int y = 0; y < height; ++y) {
+      for (int x = 0; x < width; ++x) {
+        // Récupération manuelle (inlining simple)
+        int idx = (y * width + x) * 3;
+        Real r = data[idx];
+        Real g = data[idx + 1];
+        Real b = data[idx + 2];
+
+        // Luminance simple
+        Real lum = 0.2126f * r + 0.7152f * g + 0.0722f * b;
+
+        if (lum > max_lum) {
+          max_lum = lum;
+          best_x = x;
+          best_y = y;
+          best_color = Vec3(r, g, b);
+        }
+      }
+    }
+
+    // Conversion (x,y) -> (u,v) -> Direction (Inverse de sample())
+    // On centre le pixel (+0.5)
+    Real u = (best_x + 0.5f) / width;
+    Real v = (best_y + 0.5f) / height;
+
+    Real theta = v * PI;          // v va de 0 à 1, theta de 0 à PI
+    Real phi = (u * 2 * PI) - PI; // u va de 0 à 1, phi de -PI à +PI
+
+    Real sin_theta = std::sin(theta);
+    Real cos_theta = std::cos(theta);
+    Real sin_phi = std::sin(phi);
+    Real cos_phi = std::cos(phi);
+
+    // Même convention que ton code existant (Y-up)
+    Vec3 dir(sin_theta * cos_phi, cos_theta, -sin_theta * sin_phi);
+
+    return {unit_vector(dir), best_color};
   }
 
   // Calculer la luminosité perçue d'un pixel
@@ -977,8 +1095,11 @@ struct EnvironmentMap {
 
     if (sin_theta == 0)
       pdf = 0;
-    else
-      pdf = prob_pixel * (width * height) / (2 * PI * PI * sin_theta);
+    else {
+      Real safe_sin =
+          std::max(sin_theta, 1e-5f); // Évite la division par quasi-zéro
+      pdf = prob_pixel * (width * height) / (2 * PI * PI * safe_sin);
+    }
 
     return unit_vector(dir);
   }
@@ -1093,13 +1214,25 @@ Vec3 ray_color(const Ray &r, const Hittable &world, const HittableList &lights,
   // Stratégie de choix : EnvMap OU Lumières géométriques ?
   bool sample_env = false;
 
-  // Si on a les deux, on choisit au hasard (50/50)
-  if (env_map && !lights.raw_objects.empty()) {
+  // On vérifie si l'env map contribue vraiment
+  bool env_is_active = env_map && (env_map->env_direct_scale > 0.001f);
+  bool lights_are_active = !lights.raw_objects.empty();
+
+  // On gère les différents cas entre envMap et lumières géométriques
+  if (env_is_active && lights_are_active) {
+    // 50/50
     sample_env = random_real() < 0.5f;
-  } else if (env_map) {
+  } else if (env_is_active) {
+    // EnvMap seule
     sample_env = true;
-  } else if (!lights.raw_objects.empty()) {
+  } else if (lights_are_active) {
+    // Lumières géométriques seule
     sample_env = false;
+  } else {
+    // Aucune source de lumière directe !
+    return emitted + srec.attenuation * ray_color(srec.specular_ray, world,
+                                                  lights, env_map, depth - 1,
+                                                  false);
   }
 
   // Préparation des variables
@@ -1118,7 +1251,7 @@ Vec3 ray_color(const Ray &r, const Hittable &world, const HittableList &lights,
     light_pdf_val = pdf;
 
     // Compensation du choix 50/50
-    if (!lights.raw_objects.empty())
+    if (lights_are_active)
       light_pdf_val *= 0.5f;
 
     // On connait déjà la couleur du ciel dans cette direction
@@ -1135,7 +1268,7 @@ Vec3 ray_color(const Ray &r, const Hittable &world, const HittableList &lights,
     light_pdf_val = lights.pdf_value(rec.p, light_ray.dir);
 
     // Compensation du choix 50/50
-    if (env_map)
+    if (env_is_active)
       light_pdf_val *= 0.5f;
 
     is_env_sample = false;
@@ -1162,15 +1295,42 @@ Vec3 ray_color(const Ray &r, const Hittable &world, const HittableList &lights,
                       hit_obstacle)) {
 
           if (hit_obstacle.mat_ptr->is_transparent()) {
-            // C'est du verre, on atténue et on continue
+            // Si on ne visait PAS le ciel (donc on visait une lampe
+            // géométrique), on vérifie si l'objet transparent qu'on traverse
+            // n'est pas notre lampe invisible!
+            if (!is_env_sample) {
+              Vec3 emission_found = hit_obstacle.mat_ptr->emit(
+                  shadow_ray, hit_obstacle, hit_obstacle.u, hit_obstacle.v,
+                  hit_obstacle.p);
+              if (emission_found.length_squared() > 0) {
+                // BINGO ! On a trouvé la lumière invisible qu'on visait.
+                potential_light_emission = emission_found;
+                light_visible = true;
+                break; // On s'arrête, pas besoin d'aller voir derrière.
+              }
+            }
+
+            // C'est du verre (ou pas la bonne lumière), on atténue et on
+            // continue
             ScatterRecord srec_shadow;
             if (hit_obstacle.mat_ptr->scatter(shadow_ray, hit_obstacle,
                                               srec_shadow)) {
-              // transmission = transmission * srec_shadow.attenuation;
-              // HACK :
-              // On multiplie par 0.8 (ou 0.9) pour simuler que 10-20% de la
-              // lumière a été réfléchie ailleurs et n'a pas traversé.
-              transmission = transmission * srec_shadow.attenuation * 0.8f;
+
+              transmission = transmission * srec_shadow.attenuation;
+
+              // ASTUCE : On vérifie si l'objet émet de la lumière.
+              // - Le Verre / Plastique n'émet rien (0,0,0) -> ON APPLIQUE LE
+              // HACK (pour créer une légère ombre en atténuant légèrement la
+              // transmission)
+              // - La Sphère Invisible émet de la lumière -> ON N'APPLIQUE PAS
+              Vec3 check_emit = hit_obstacle.mat_ptr->emit(
+                  shadow_ray, hit_obstacle, hit_obstacle.u, hit_obstacle.v,
+                  hit_obstacle.p);
+              if (check_emit.length_squared() == 0) {
+                // C'est un objet passif (Verre/Eau), on force une ombre
+                // artificielle
+                transmission = transmission * DIELECTRIC_SHADOW_TRANSMISSION;
+              }
             }
             // On avance le rayon un poil après l'obstacle
             shadow_ray = Ray(hit_obstacle.p + 0.001f * shadow_ray.dir,
@@ -1216,6 +1376,14 @@ Vec3 ray_color(const Ray &r, const Hittable &world, const HittableList &lights,
   // vient de sampler au dessus
   Vec3 indirect = srec.attenuation * ray_color(srec.specular_ray, world, lights,
                                                env_map, depth - 1, false);
+
+  // 8. Clamp pour éviter les pixels nucléaires (Fireflies)
+  // On ne touche pas à l'émission directe ni à la lumière directe (soleil)
+  // On ne compresse que l'indirect (les rebonds "fous")
+
+  indirect.e[0] = soft_clamp(indirect.x(), FIREFLY_CLAMP_LIMIT);
+  indirect.e[1] = soft_clamp(indirect.y(), FIREFLY_CLAMP_LIMIT);
+  indirect.e[2] = soft_clamp(indirect.z(), FIREFLY_CLAMP_LIMIT);
 
   return emitted + direct_light + indirect;
 }
@@ -1396,6 +1564,14 @@ public:
     }
   }
 
+  // Retourne un tuple (Direction, Couleur) pour Python
+  std::pair<Vec3, Vec3> get_env_sun_info() {
+    if (background) {
+      return background->find_sun_hotspot();
+    }
+    return {Vec3(0, 1, 0), Vec3(0, 0, 0)};
+  }
+
   nb::ndarray<nb::numpy, float> render(int width, int height, int spp,
                                        int depth, int n_threads) {
 
@@ -1492,7 +1668,8 @@ NB_MODULE(cpp_engine, m) {
                1.0f) // Ce qui éclaire les coins (défaut 1.0)
       .def("get_progress", &PyScene::get_progress)
       .def("render", &PyScene::render, nb::arg("width"), nb::arg("height"),
-           nb::arg("spp"), nb::arg("depth"), nb::arg("n_threads") = 0);
+           nb::arg("spp"), nb::arg("depth"), nb::arg("n_threads") = 0)
+      .def("get_env_sun_info", &PyScene::get_env_sun_info);
 
   nb::class_<Vec3>(m, "Vec3")
       .def(nb::init<Real, Real, Real>())
