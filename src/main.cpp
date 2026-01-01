@@ -12,7 +12,6 @@
 #include <limits>
 #include <memory>
 #include <omp.h>
-#include <optional>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -1733,6 +1732,101 @@ public:
     return res;
   }
 
+  // Retourne un Numpy Array (H, W, 3) directement utilisable par
+  // OpenCV/Matplotlib
+  nb::ndarray<nb::numpy, float> render_preview(int width, int height,
+                                               int n_threads) {
+
+    // 1. Vérifications de sécurité
+    if (!camera) {
+      throw std::runtime_error("Camera not set! Call set_camera first.");
+    }
+
+    // On s'assure que le BVH est construit (comme dans render())
+    if (!world_bvh) {
+      if (world.owned_objects.empty()) {
+        world_bvh = std::make_shared<HittableList>();
+      } else {
+        world_bvh = std::make_shared<BVHNode>(world);
+      }
+    }
+
+    size_t num_pixels = (size_t)width * height;
+    float *buffer = new float[num_pixels * 3];
+
+    try {
+      // 2. Libérer le GIL Python pour permettre le multithreading fluide
+      nb::gil_scoped_release release;
+
+      if (n_threads > 0)
+        omp_set_num_threads(n_threads);
+
+#pragma omp parallel for schedule(dynamic)
+      for (int j = 0; j < height; ++j) {
+        for (int i = 0; i < width; ++i) {
+
+          // UV centrés pixels
+          auto u = (i + 0.5f) / width;
+          auto v = (j + 0.5f) / height;
+
+          Ray r = camera->get_ray(u, v);
+          // Important : en preview, pas de shadow rays, on considère tout comme
+          // primaire
+          r.is_primary = true;
+
+          HitRecord rec;
+          Vec3 pixel_color;
+
+          // Intersection rapide (BVH)
+          if (world_bvh->hit(r, 0.001f, std::numeric_limits<Real>::infinity(),
+                             rec)) {
+            // --- MODE NORMALES ---
+            // Visualisation de la géométrie (r,g,b) = (nx, ny, nz) mappé en
+            // [0,1]
+            pixel_color = 0.5f * (unit_vector(rec.normal) + Vec3(1, 1, 1));
+          } else {
+            // --- MODE FOND ---
+            // Si une map HDRI est chargée, on l'utilise (rapide)
+            if (background) {
+              // 1. On échantillonne la HDRI (Mode 0 = Visible)
+              Vec3 hdri_color = background->sample(r.dir, 0);
+
+              // 2. TONE MAPPING SIMPLIFIÉ (Reinhard)
+              // Les HDRIs ont des valeurs > 1.0 (le soleil peut être à 20.0).
+              // Si on ne fait rien, tout sera blanc. On compresse doucement : x
+              // / (1+x)
+              pixel_color = Vec3(hdri_color.x() / (1.0f + hdri_color.x()),
+                                 hdri_color.y() / (1.0f + hdri_color.y()),
+                                 hdri_color.z() / (1.0f + hdri_color.z()));
+            } else {
+              // Fallback : Dégradé par défaut si pas de map chargée
+              Vec3 unit_dir = unit_vector(r.dir);
+              auto t = 0.5f * (unit_dir.y() + 1.0f);
+              pixel_color = (1.0f - t) * Vec3(1.0f, 1.0f, 1.0f) +
+                            t * Vec3(0.5f, 0.7f, 1.0f);
+            }
+          }
+
+          // Écriture dans le buffer (Flip vertical pour compatibilité standard)
+          int idx = ((height - 1 - j) * width + i) * 3;
+
+          buffer[idx + 0] = pixel_color.x();
+          buffer[idx + 1] = pixel_color.y();
+          buffer[idx + 2] = pixel_color.z();
+        }
+      }
+    } catch (...) {
+      delete[] buffer;
+      throw;
+    }
+
+    // 3. Encapsulation Nanobind (Zéro copie vers Python)
+    nb::capsule owner(buffer, [](void *p) noexcept { delete[] (float *)p; });
+    size_t shape[3] = {(size_t)height, (size_t)width, 3ul};
+
+    return nb::ndarray<nb::numpy, float>(buffer, 3, shape, owner);
+  }
+
   float get_progress() const {
     int t = total_scanlines.load();
     if (t == 0)
@@ -1760,7 +1854,10 @@ NB_MODULE(cpp_engine, m) {
       .def("get_progress", &PyScene::get_progress)
       .def("render", &PyScene::render, nb::arg("width"), nb::arg("height"),
            nb::arg("spp"), nb::arg("depth"), nb::arg("n_threads") = 0)
-      .def("get_env_sun_info", &PyScene::get_env_sun_info);
+      .def("get_env_sun_info", &PyScene::get_env_sun_info)
+      .def("render_preview", &PyScene::render_preview,
+           "Rendu temps réel (Normales)", nb::arg("width"), nb::arg("height"),
+           nb::arg("n_threads") = 0);
 
   nb::class_<Vec3>(m, "Vec3")
       .def(nb::init<Real, Real, Real>())
