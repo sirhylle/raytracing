@@ -2,131 +2,115 @@ import trimesh
 import numpy as np
 import os
 import cpp_engine
+from dataclasses import dataclass
+
+# ==================================================================================
+# 1. Structure de données pour les métadonnées
+# ==================================================================================
+
+@dataclass
+class MeshInfo:
+    """Contient les métadonnées géométriques d'un objet chargé."""
+    name: str
+    
+    # Global Bounds (numpy arrays [x, y, z])
+    min_coords: np.ndarray
+    max_coords: np.ndarray
+    size: np.ndarray    # [width, height, depth]
+    center: np.ndarray  # Le centre géométrique
+    
+    # Helpers pratiques (distances depuis le pivot 0,0,0)
+    @property
+    def height(self): return self.size[1]
+    
+    @property
+    def bottom_y(self): return self.min_coords[1] # Position des pieds par rapport au pivot
+    
+    def __repr__(self):
+        return (f"<MeshInfo '{self.name}': W={self.size[0]:.2f}, H={self.size[1]:.2f}, D={self.size[2]:.2f} | "
+                f"Bottom Y={self.bottom_y:.3f}>")
+
+# ==================================================================================
+# 2. Fonctions de Chargement
+# ==================================================================================
 
 def load_mesh_to_engine(engine, file_path, scale=1.0, translation=[0,0,0], auto_center=False,
                         override_mat=None, override_color=None, override_ior=None):
     """
-    Charge un fichier 3D (.obj, .glb, .stl) et l'envoie au moteur C++.
-    Gère la conversion automatique des matériaux (.mtl -> PBR).
+    Charge un fichier 3D et l'ajoute directement à la scène (HittableList).
+    Retourne un objet MeshInfo.
     """
     if not os.path.exists(file_path):
         print(f"[Error] Mesh file not found: {file_path}")
-        return
+        return None
 
     print(f"[Loader] Processing mesh: {file_path}...")
     
-    # 1. Chargement avec Trimesh
-    # force='mesh' permet de s'assurer qu'on ne récupère pas une 'Scene' vide
     try:
         scene_or_mesh = trimesh.load(file_path, force=None)
     except Exception as e:
         print(f"[Error] Failed to load mesh: {e}")
-        return
+        return None
 
-    # Si c'est une Scène (plusieurs objets), on itère sur toutes les géométries
     geometries = []
     if isinstance(scene_or_mesh, trimesh.Scene):
-        # On peut fusionner tout en un seul mesh si on veut, 
-        # mais garder les matériaux séparés est mieux.
-        # dump(concatenate=False) retourne une liste de meshes
         geometries = list(scene_or_mesh.geometry.values())
     else:
         geometries = [scene_or_mesh]
 
-    # Calcul du centre global pour l'auto-centrage (optionnel)
-    if auto_center:
-        # On calcule le bounds global
-        all_verts = []
-        for g in geometries: 
-            all_verts.append(g.vertices)
-        if all_verts:
-            all_verts = np.vstack(all_verts)
-            center_mass = all_verts.mean(axis=0)
-        else:
-            center_mass = np.array([0,0,0])
+    # --- Pré-calcul pour auto-centrage global ---
+    all_verts_raw = []
+    for g in geometries: 
+        all_verts_raw.append(g.vertices)
+    
+    center_mass = np.array([0,0,0])
+    if auto_center and all_verts_raw:
+        combined = np.vstack(all_verts_raw)
+        center_mass = combined.mean(axis=0)
+
+    # Liste pour stocker tous les vertices finaux (pour MeshInfo)
+    all_final_verts = [] 
 
     print(f"[Loader] Found {len(geometries)} sub-meshes.")
 
-    # 2. Traitement de chaque sous-objet
     for geom in geometries:
         # --- A. Conversion Matériau (.mtl -> PBR) ---
         mat_type = "lambertian"
-        color = [0.8, 0.8, 0.8] # Gris par défaut
+        color = [0.8, 0.8, 0.8]
         fuzz = 0.0
         ior = 1.5
         
-        # Trimesh parse le .mtl et le met dans 'visual.material'
         if hasattr(geom.visual, 'material'):
             mat = geom.visual.material
-            
-            # 1. Couleur (Diffuse / Albedo)
             if hasattr(mat, 'diffuse'):
-                # diffuse est souvent en RGBA uint8 (0-255)
-                # On convertit en float (0.0-1.0) et on enlève Alpha
                 rgba = mat.diffuse
-                if rgba.dtype == np.uint8:
-                    color = rgba[:3] / 255.0
-                else:
-                    color = rgba[:3] # Déjà float
+                if rgba.dtype == np.uint8: color = rgba[:3] / 255.0
+                else: color = rgba[:3]
 
-            # 2. Transparence (Verre)
-            # 'opacity' dans trimesh vient souvent du 'd' du mtl
-            opacity = getattr(mat, 'opacity', 1.0) # Par défaut 1.0 (Opaque)
-            
-            # Parfois l'alpha est dans la couleur diffuse[3]
+            opacity = getattr(mat, 'opacity', 1.0)
             if len(getattr(mat, 'diffuse', [])) == 4:
                 alpha = mat.diffuse[3] / 255.0 if mat.diffuse.dtype == np.uint8 else mat.diffuse[3]
                 if alpha < opacity: opacity = alpha
 
             if opacity < 0.99:
                 mat_type = "dielectric"
-                # On essaie de trouver l'IOR (Ni), sinon 1.5 standard
                 ior = getattr(mat, 'refraction_index', 1.5)
-                # Petit hack : Si la couleur est très sombre (noir), le verre sera invisible.
-                # On force un peu de blanc pour le "teinter"
                 if np.mean(color) < 0.1: color = [0.9, 0.9, 0.9]
 
-            # 3. Métaux (Spéculaire)
-            # Heuristique : Si le speculaire est brillant, c'est du métal ou du plastique brillant
             elif hasattr(mat, 'specular'):
                 spec = mat.specular
                 if spec.dtype == np.uint8: spec = spec / 255.0
-                
-                # Si la composante spéculaire moyenne est forte (> 0.2)
                 if np.mean(spec[:3]) > 0.2:
                     mat_type = "metal"
-                    # Conversion Shininess (Phong) -> Roughness (PBR)
-                    # Ns (Shininess) va souvent de 0 à 1000
                     shininess = getattr(mat, 'shininess', 50.0)
                     fuzz = max(0.0, min(1.0, 1.0 - (shininess / 1000.0)))
 
-        # --- OVERRIDES MANUELS ---
-        if override_mat is not None:
-            mat_type = override_mat
-            
-        if override_color is not None:
-            # On s'assure que c'est une liste si jamais l'utilisateur passe un array numpy
-            color = override_color
-            
-        if override_ior is not None:
-            ior = override_ior
+        # --- Overrides ---
+        if override_mat is not None: mat_type = override_mat
+        if override_color is not None: color = override_color
+        if override_ior is not None: ior = override_ior
 
         # --- B. Nettoyage Géométrie ---
-        
-        # Important : Appliquer les transformations locales (si on vient d'une Scene)
-        # (Certains loaders trimesh appliquent déjà, d'autres non, check rapide)
-        # Ici on simplifie en assumant que geom.vertices est déjà en World Space
-        # ou Local Space.
-        
-        # 1. Astuce : Parfois les normales ne sont pas générées par défaut.
-        # On demande à trimesh de les calculer si besoin.
-        
-        # 2. Triangulation (S'assurer qu'on n'a pas de Quads)
-        # trimesh le fait souvent au chargement, mais on force pour être sûr
-        # (Note: trimesh stocke toujours en triangles, les quads sont divisés)
-        
-        # 3. Transformations manuelles (Scale / Translation / Centrage)
-
         geom.fix_normals()
         verts = geom.vertices.copy()
         
@@ -134,49 +118,60 @@ def load_mesh_to_engine(engine, file_path, scale=1.0, translation=[0,0,0], auto_
             verts -= center_mass
         
         verts *= scale
-        print_bounds(os.path.basename(file_path), verts)
+        
+        # On sauvegarde les vertices transformés (avant translation finale) pour le MeshInfo local
+        # (Si on veut le MeshInfo global world-space, il faudrait ajouter la translation)
+        # Ici on garde la logique "taille de l'objet"
+        all_final_verts.append(verts.copy()) 
+
         verts += np.array(translation)
         
-        # Récupération des Normales
-        # vertex_normals est un array (N, 3) qui matche les vertices
         norms = geom.vertex_normals.copy()
         
-        # 3. Préparation pour C++ (Contiguous Array + Float32/Int32)
         c_verts = np.ascontiguousarray(verts, dtype=np.float32)
         c_norms = np.ascontiguousarray(norms, dtype=np.float32)
         c_faces = np.ascontiguousarray(geom.faces, dtype=np.int32)
 
-        # --- C. Envoi au Moteur ---
-        # On utilise la méthode add_mesh
-        # Note : on passe des listes Python pour la couleur si c'est un array numpy
-
-        # On s'assure d'abord d'avoir une liste
-        if isinstance(color, np.ndarray): 
-            color = color.tolist()
-        # ET SURTOUT : On convertit la liste en cpp_engine.Vec3
+        if isinstance(color, np.ndarray): color = color.tolist()
         vec_color = cpp_engine.Vec3(float(color[0]), float(color[1]), float(color[2]))
 
-        # Enfin, on envoie tout à add_mesh
         engine.add_mesh(c_verts, c_faces, c_norms, mat_type, vec_color, float(fuzz), float(ior))       
         
-    print(f"[Loader] Finished. Loaded {len(geometries)} parts.")
+    # --- C. Construction et Retour de MeshInfo ---
+    if all_final_verts:
+        total_verts = np.vstack(all_final_verts)
+        min_v = total_verts.min(axis=0)
+        max_v = total_verts.max(axis=0)
+        
+        info = MeshInfo(
+            name=os.path.basename(file_path),
+            min_coords=min_v,
+            max_coords=max_v,
+            size=max_v - min_v,
+            center=(min_v + max_v) / 2.0
+        )
+        print(f"[Loader] {info}")
+        return info
+    
+    return None
 
 
 def load_asset(engine, asset_name, file_path, override_mat=None, override_color=None):
     """
-    Charge un fichier 3D et le stocke dans la mémoire du moteur sous le nom 'asset_name'.
-    Il ne sera PAS visible tant qu'on ne crée pas d'instance.
+    Charge un asset en mémoire (Engine.mesh_assets) SANS l'afficher.
+    Applique une logique "Pieds à Zéro" : Le point (0,0,0) local sera aux pieds de l'objet.
+    Retourne un objet MeshInfo.
     """
     if not os.path.exists(file_path):
         print(f"[Error] Mesh file not found: {file_path}")
-        return
+        return None
 
     print(f"[Loader] Loading Asset '{asset_name}' from: {file_path}...")
     try:
         scene_or_mesh = trimesh.load(file_path, force=None)
     except Exception as e:
         print(f"[Error] Failed to load mesh: {e}")
-        return
+        return None
 
     geometries = []
     if isinstance(scene_or_mesh, trimesh.Scene):
@@ -184,16 +179,26 @@ def load_asset(engine, asset_name, file_path, override_mat=None, override_color=
     else:
         geometries = [scene_or_mesh]
 
-    # Pour les assets, on force souvent le centrage pour que la rotation se fasse autour du centre
-    all_verts = []
-    for g in geometries: all_verts.append(g.vertices)
-    if all_verts:
-        center_mass = np.vstack(all_verts).mean(axis=0)
-    else:
-        center_mass = np.array([0,0,0])
+    # --- CALCUL DU PIVOT INTELLIGENT (PIEDS À ZÉRO) ---
+    all_verts_raw = []
+    for g in geometries: all_verts_raw.append(g.vertices)
+    
+    center_mass = np.array([0,0,0])
+    all_final_verts = [] # Pour MeshInfo
+
+    if all_verts_raw:
+        combined = np.vstack(all_verts_raw)
+        # On aligne le bas (Y min) sur 0
+        min_y = combined[:, 1].min()
+        # On centre X et Z
+        mean_x = combined[:, 0].mean()
+        mean_z = combined[:, 2].mean()
+        
+        # Ce vecteur sera soustrait aux vertices
+        center_mass = np.array([mean_x, min_y, mean_z])
 
     for geom in geometries:
-        # 1. Matériaux (Simplifié pour l'asset)
+        # 1. Matériaux (Simplifié)
         mat_type = "lambertian"
         color = [0.8, 0.8, 0.8]
         fuzz = 0.0
@@ -206,54 +211,57 @@ def load_asset(engine, asset_name, file_path, override_mat=None, override_color=
                 if rgba.dtype == np.uint8: color = rgba[:3] / 255.0
                 else: color = rgba[:3]
         
-        # Overrides
         if override_mat: mat_type = override_mat
         if override_color: color = override_color
 
         # 2. Géométrie
-        # On évite fix_normals pour ne pas dépendre de scipy, on lit juste
+        # On évite fix_normals pour les assets (dépendance scipy optionnelle), on lit juste
         _ = geom.vertex_normals 
         
         verts = geom.vertices.copy()
-        verts -= center_mass # IMPORTANT : On centre l'asset localement !
+        verts -= center_mass # APPLICATION DU PIVOT "PIEDS À ZÉRO"
         
-        print_bounds(f"Asset: {asset_name}", verts)
+        all_final_verts.append(verts.copy())
+        
         norms = geom.vertex_normals.copy()
         
         c_verts = np.ascontiguousarray(verts, dtype=np.float32)
         c_norms = np.ascontiguousarray(norms, dtype=np.float32)
         c_faces = np.ascontiguousarray(geom.faces, dtype=np.int32)
-
+        
         if isinstance(color, np.ndarray): color = color.tolist()
         vec_color = cpp_engine.Vec3(float(color[0]), float(color[1]), float(color[2]))
 
-        # APPEL A LA NOUVELLE METHODE C++
+        # Envoi à l'engine (Asset)
         engine.load_mesh_asset(asset_name, c_verts, c_faces, c_norms, 
                                mat_type, vec_color, float(fuzz), float(ior))
 
-    print(f"[Loader] Asset '{asset_name}' ready.")
+    # --- C. Construction et Retour de MeshInfo ---
+    if all_final_verts:
+        total_verts = np.vstack(all_final_verts)
+        min_v = total_verts.min(axis=0)
+        max_v = total_verts.max(axis=0)
+        
+        info = MeshInfo(
+            name=asset_name,
+            min_coords=min_v,
+            max_coords=max_v,
+            size=max_v - min_v,
+            center=(min_v + max_v) / 2.0
+        )
+        print(f"[Loader] Asset Ready: {info}")
+        return info
+
+    return None
 
 def print_bounds(name, verts):
-    """Affiche les dimensions de l'objet par rapport à son point de pivot (0,0,0)."""
-    # Calcul des min/max sur les 3 axes
+    """(Optionnel) Affiche les dimensions brutes pour debug rapide."""
     min_v = verts.min(axis=0)
     max_v = verts.max(axis=0)
-    
-    # Largeurs totales
     width = max_v[0] - min_v[0]
     height = max_v[1] - min_v[1]
     depth = max_v[2] - min_v[2]
 
     print(f"--- 📏 BOUNDARIES : '{name}' ---")
-    print(f"  • X (Largeur) : {width:.4f}")
-    print(f"    └─ Centre -> Gauche : {abs(min_v[0]):.4f}")
-    print(f"    └─ Centre -> Droite : {max_v[0]:.4f}")
-    
-    print(f"  • Y (Hauteur) : {height:.4f}")
-    print(f"    └─ Centre -> Bas    : {abs(min_v[1]):.4f}")
-    print(f"    └─ Centre -> Haut   : {max_v[1]:.4f}")
-    
-    print(f"  • Z (Profondeur): {depth:.4f}")
-    print(f"    └─ Centre -> Arrière: {abs(min_v[2]):.4f}")
-    print(f"    └─ Centre -> Avant  : {max_v[2]:.4f}")
+    print(f"  • Size: {width:.3f} x {height:.3f} x {depth:.3f}")
     print("-----------------------------------")

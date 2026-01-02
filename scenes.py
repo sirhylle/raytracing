@@ -289,29 +289,38 @@ class MeshScene1(Scene):
 class MeshScene2(Scene):
     def setup(self, engine):
         # 1. Le Sol
+        floor_height = -0.5
         engine.add_checker_sphere(
-            cpp_engine.Vec3(0.0, -100.5, -1.0), 100.0,
+            cpp_engine.Vec3(0.0, -100.0 + floor_height, -1.0), 100.0,
             cpp_engine.Vec3(0.2, 0.3, 0.1), cpp_engine.Vec3(0.9, 0.9, 0.9), 10.0
         )
 
         # 2. Chargement des Assets (Mémoire seule, pas d'affichage)
         # On charge deux versions : une brute, une en verre
-        meshloader.load_asset(engine, "bunny_glass", "assets/dragon/dragon.obj", override_mat="dielectric", override_color=[0.9, 0.95, 1.0])
-        meshloader.load_asset(engine, "bunny_metal", "assets/dragon/dragon.obj", override_mat="metal", override_color=[0.8, 0.6, 0.2])
+        info_glass = meshloader.load_asset(engine, "obj_glass", "assets/dragon/dragon.obj", override_mat="dielectric", override_color=[0.9, 0.95, 1.0])
+        _ = meshloader.load_asset(engine, "obj_metal", "assets/dragon/dragon.obj", override_mat="metal", override_color=[0.8, 0.6, 0.2])
 
-        # 3. Le Roi Lapin (Centre)
+        if info_glass is None:
+            print("Erreur chargement asset")
+            return
+        
+        # 3. Le Roi (Centre)
         # Scale x1
-        M = tf.translate(0, 0, 0) @ tf.scale(1.0, 1.0, 1.0) 
+        scale_king = 2.5
+        y_pos_king = floor_height - (scale_king * info_glass.bottom_y)
+        M = tf.translate(0, y_pos_king, 0) @ tf.rotate_y(90) @ tf.scale(scale_king, scale_king, scale_king) 
         # On calcule l'inverse pour les rayons
         InvM = np.linalg.inv(M)
         
         # Passage au C++ (Numpy -> C++ Array)
         # ascontiguousarray est vital pour les matrices !
-        engine.add_instance("bunny_glass", 
+        engine.add_instance("obj_glass", 
                             np.ascontiguousarray(M, dtype=np.float32), 
                             np.ascontiguousarray(InvM, dtype=np.float32))
 
         # 4. La Garde Royale (Cercle autour)
+        scale_guard = 1.0
+        y_pos_guard = floor_height - (scale_guard * info_glass.bottom_y)
         radius = 2.0
         count = 8
         for i in range(count):
@@ -328,11 +337,11 @@ class MeshScene2(Scene):
             
             # Note: Le modèle bunny regarde souvent vers +Z ou -Z par défaut. 
             # On ajuste la rotation -angle - 90 pour qu'il regarde le centre.
-            M_instance = tf.translate(x, -0.25, z) @ tf.rotate_y(-angle - 90) @ tf.scale(.5, .5, .5)
+            M_instance = tf.translate(x, y_pos_guard, z) @ tf.rotate_y(-angle - 90) @ tf.scale(scale_guard, scale_guard, scale_guard)
             
             InvM_instance = np.linalg.inv(M_instance)
             
-            engine.add_instance("bunny_metal", 
+            engine.add_instance("obj_metal", 
                                 np.ascontiguousarray(M_instance, dtype=np.float32), 
                                 np.ascontiguousarray(InvM_instance, dtype=np.float32))
 
