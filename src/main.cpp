@@ -3,6 +3,7 @@
 #include <nanobind/stl/pair.h>
 #include <nanobind/stl/shared_ptr.h>
 #include <nanobind/stl/string.h>
+#include <nanobind/stl/tuple.h>
 #include <nanobind/stl/vector.h>
 
 #include <algorithm>
@@ -300,6 +301,20 @@ public:
   virtual bool bounding_box(AABB &output_box) const override;
   virtual Real pdf_value(const Vec3 &o, const Vec3 &v) const override;
   virtual Vec3 random(const Vec3 &o) const override;
+};
+
+class Triangle : public Hittable {
+public:
+  Vec3 v0, v1, v2;
+  Vec3 normal;
+  std::shared_ptr<Material> mat_ptr;
+
+  Triangle(Vec3 _v0, Vec3 _v1, Vec3 _v2, std::shared_ptr<Material> m);
+
+  virtual bool hit(const Ray &r, Real t_min, Real t_max,
+                   HitRecord &rec) const override;
+  virtual bool bounding_box(AABB &output_box) const override;
+  // On peut laisser pdf et random par défaut (return 0) pour l'instant
 };
 
 class HittableList : public Hittable {
@@ -833,6 +848,68 @@ bool HittableList::hit(const Ray &r, Real t_min, Real t_max,
     }
   }
   return hit_anything;
+}
+
+// --- IMPLÉMENTATION TRIANGLE ---
+
+Triangle::Triangle(Vec3 _v0, Vec3 _v1, Vec3 _v2, std::shared_ptr<Material> m)
+    : v0(_v0), v1(_v1), v2(_v2), mat_ptr(m) {
+  // Calcul de la normale géométrique une seule fois à la construction
+  auto edge1 = v1 - v0;
+  auto edge2 = v2 - v0;
+  normal = unit_vector(cross(edge1, edge2));
+}
+
+bool Triangle::hit(const Ray &r, Real t_min, Real t_max, HitRecord &rec) const {
+  const float EPSILON = 1e-6f;
+  Vec3 edge1 = v1 - v0;
+  Vec3 edge2 = v2 - v0;
+  Vec3 h = cross(r.dir, edge2);
+  Real a = dot(edge1, h);
+
+  if (a > -EPSILON && a < EPSILON)
+    return false; // Rayon parallèle
+
+  Real f = 1.0f / a;
+  Vec3 s = r.orig - v0;
+  Real u = f * dot(s, h);
+  if (u < 0.0f || u > 1.0f)
+    return false;
+
+  Vec3 q = cross(s, edge1);
+  Real v = f * dot(r.dir, q);
+  if (v < 0.0f || u + v > 1.0f)
+    return false;
+
+  Real t = f * dot(edge2, q);
+  if (t > t_min && t < t_max) {
+    rec.t = t;
+    rec.p = r.at(t);
+    rec.set_face_normal(r, normal);
+    rec.mat_ptr = mat_ptr.get();
+    // Coordonnées barycentriques pour les textures futures
+    rec.u = u;
+    rec.v = v;
+    return true;
+  }
+  return false;
+}
+
+bool Triangle::bounding_box(AABB &output_box) const {
+  // On cherche le min et max sur les 3 axes
+  Real min_x = std::min({v0.x(), v1.x(), v2.x()});
+  Real min_y = std::min({v0.y(), v1.y(), v2.y()});
+  Real min_z = std::min({v0.z(), v1.z(), v2.z()});
+
+  Real max_x = std::max({v0.x(), v1.x(), v2.x()});
+  Real max_y = std::max({v0.y(), v1.y(), v2.y()});
+  Real max_z = std::max({v0.z(), v1.z(), v2.z()});
+
+  // Petit padding de sécurité (0.001) pour éviter les boites plates qui cassent
+  // le BVH
+  output_box = AABB(Vec3(min_x - 0.001f, min_y - 0.001f, min_z - 0.001f),
+                    Vec3(max_x + 0.001f, max_y + 0.001f, max_z + 0.001f));
+  return true;
 }
 
 bool HittableList::bounding_box(AABB &output_box) const {
@@ -1570,6 +1647,55 @@ public:
       lights.add(quad);
   }
 
+  void add_mesh(nb::ndarray<float, nb::shape<nb::any, 3>> vertices,
+                nb::ndarray<int, nb::shape<nb::any, 3>> indices,
+                std::string mat_type, const Vec3 &color, Real fuzz = 0.0f,
+                Real ir = 1.5f) {
+
+    // 1. Création du matériau (On réutilise la logique existante)
+    std::shared_ptr<Material> mat;
+    if (mat_type == "lambertian")
+      mat = std::make_shared<Lambertian>(color);
+    else if (mat_type == "metal")
+      mat = std::make_shared<Metal>(color, fuzz);
+    else if (mat_type == "dielectric")
+      mat = std::make_shared<Dielectric>(ir, color);
+    else if (mat_type == "plastic")
+      mat = std::make_shared<Plastic>(color, ir, fuzz);
+    else if (mat_type == "light")
+      mat = std::make_shared<DiffuseLight>(color);
+    else
+      mat = std::make_shared<Lambertian>(Vec3(0.5, 0.5, 0.5)); // Fallback gris
+
+    // 2. Accès direct à la mémoire Numpy (Zéro copie = Performance Max)
+    auto v_view = vertices.view();
+    auto i_view = indices.view();
+
+    size_t num_triangles = i_view.shape(0);
+
+    // 3. Boucle de génération des triangles
+    for (size_t k = 0; k < num_triangles; ++k) {
+      // On récupère les 3 indices du triangle k
+      int idx0 = i_view(k, 0);
+      int idx1 = i_view(k, 1);
+      int idx2 = i_view(k, 2);
+
+      // On va chercher les sommets correspondants
+      Vec3 v0(v_view(idx0, 0), v_view(idx0, 1), v_view(idx0, 2));
+      Vec3 v1(v_view(idx1, 0), v_view(idx1, 1), v_view(idx1, 2));
+      Vec3 v2(v_view(idx2, 0), v_view(idx2, 1), v_view(idx2, 2));
+
+      auto tri = std::make_shared<Triangle>(v0, v1, v2, mat);
+      world.add(tri);
+
+      // Si c'est une lumière, on l'ajoute aussi à la liste des émetteurs pour
+      // le NEE
+      if (mat_type == "light") {
+        lights.add(tri);
+      }
+    }
+  }
+
   void set_camera(const Vec3 &lookfrom, const Vec3 &lookat, const Vec3 &vup,
                   Real vfov, Real aspect, Real aperture, Real dist) {
     camera = std::make_shared<Camera>(lookfrom, lookat, vup, vfov, aspect,
@@ -1833,6 +1959,48 @@ public:
       return 0.0f;
     return (float)completed_scanlines.load() / t;
   }
+
+  // Pick Focus Distance (Click-to-Focus)
+  std::tuple<float, float, float, float>
+  pick_focus_distance(int width, int height, int mouse_x, int mouse_y) {
+    if (!camera)
+      return {-1.0f, 0.0f, 0.0f, 0.0f};
+
+    // Ensure BVH
+    if (!world_bvh) {
+      if (world.owned_objects.empty())
+        world_bvh = std::make_shared<HittableList>();
+      else
+        world_bvh = std::make_shared<BVHNode>(world);
+    }
+
+    // UV calculé comme dans render_preview
+    // Attention: OpenCV (et la plupart des UI) ont (0,0) en haut à gauche.
+    // Notre moteur de rendu dans la boucle for j=0..h traite j=0 comme le haut
+    // (cf render_preview). Donc mouse_y correspond bien à j.
+
+    auto u = (mouse_x + 0.5f) / width;
+    // CORRECTION: Inversion de l'axe Y pour correspondre à la caméra (v=0 en
+    // bas, v=1 en haut) OpenCV mouse_y=0 (Haut) -> v=1
+    auto v = 1.0f - ((mouse_y + 0.5f) / height);
+
+    Ray r = camera->get_ray(u, v);
+    r.is_primary = true;
+
+    HitRecord rec;
+    // On cherche l'intersection
+    if (world_bvh->hit(r, 0.001f, std::numeric_limits<Real>::infinity(), rec)) {
+      // FIX IMPORTANT: rec.t dépend de la longueur du vecteur direction du
+      // rayon. Si la direction n'est pas normalisée (ce qui est le cas avec
+      // focus_dist), rec.t change quand focus_dist change. Il faut retourner la
+      // distance Euclidienne REELLE independent de la caméra.
+      float euclidean_dist = (rec.p - r.orig).length();
+      return {euclidean_dist, (float)rec.p.x(), (float)rec.p.y(),
+              (float)rec.p.z()};
+    }
+
+    return {-1.0f, 0.0f, 0.0f, 0.0f}; // Sky / Void
+  }
 };
 
 NB_MODULE(cpp_engine, m) {
@@ -1844,6 +2012,10 @@ NB_MODULE(cpp_engine, m) {
       .def("add_invisible_sphere_light", &PyScene::add_invisible_sphere_light)
       .def("add_checker_sphere", &PyScene::add_checker_sphere)
       .def("add_quad", &PyScene::add_quad)
+      .def("add_mesh", &PyScene::add_mesh,
+           "Ajoute un mesh (Vertices Nx3, Indices Mx3)", nb::arg("vertices"),
+           nb::arg("indices"), nb::arg("mat_type"), nb::arg("color"),
+           nb::arg("fuzz") = 0.0f, nb::arg("ir") = 1.5f)
       .def("set_camera", &PyScene::set_camera)
       .def("set_environment", &PyScene::set_environment)
       .def("set_env_levels", &PyScene::set_env_levels,
@@ -1855,6 +2027,10 @@ NB_MODULE(cpp_engine, m) {
       .def("render", &PyScene::render, nb::arg("width"), nb::arg("height"),
            nb::arg("spp"), nb::arg("depth"), nb::arg("n_threads") = 0)
       .def("get_env_sun_info", &PyScene::get_env_sun_info)
+      .def("pick_focus_distance", &PyScene::pick_focus_distance,
+           "Retourne (dist, x, y, z) du premier obstacle sous la souris",
+           nb::arg("width"), nb::arg("height"), nb::arg("mouse_x"),
+           nb::arg("mouse_y"))
       .def("render_preview", &PyScene::render_preview,
            "Rendu temps réel (Normales)", nb::arg("width"), nb::arg("height"),
            nb::arg("n_threads") = 0);

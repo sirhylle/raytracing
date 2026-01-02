@@ -10,6 +10,13 @@ from pathlib import Path
 # --- CONFIGURATION ---
 OIDN_URL = "https://github.com/RenderKit/oidn/releases/download/v2.3.0/oidn-2.3.0.x64.windows.zip"
 OIDN_DIR = "oidn"
+ASSETS_DIR = "assets"
+ASSETS = {
+    "bmw": "https://casual-effects.com/g3d/data10/research/model/bmw/bmw.zip",
+    "bunny": "https://casual-effects.com/g3d/data10/research/model/bunny/bunny.zip",
+    "dragon": "https://casual-effects.com/g3d/data10/research/model/dragon/dragon.zip",
+    "erato": "https://casual-effects.com/g3d/data10/research/model/erato/erato.zip"
+}
 BUILD_DIR = Path("build")
 MODULE_NAME = "cpp_engine"
 
@@ -57,6 +64,56 @@ def install_oidn():
 
     except Exception as e:
         print(f"   ❌ Erreur OIDN : {e}")
+
+# --- 1b. GESTION ASSETS ---
+def install_assets():
+    if not os.path.exists(ASSETS_DIR):
+        os.makedirs(ASSETS_DIR)
+        print(f"   ✔ Création du dossier '{ASSETS_DIR}'")
+
+    def reporthook(blocknum, blocksize, totalsize):
+        readsofar = blocknum * blocksize
+        if totalsize > 0:
+            percent = readsofar * 100 / totalsize
+            sys.stdout.write(f"\r   Progress: {percent:.1f}%")
+            sys.stdout.flush()
+
+    # Configure opener with User-Agent to avoid 406
+    opener = urllib.request.build_opener()
+    opener.addheaders = [('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/93.0.4577.63 Safari/537.36')]
+    urllib.request.install_opener(opener)
+
+    for name, url in ASSETS.items():
+        target_dir = os.path.join(ASSETS_DIR, name)
+        # On vérifie si le dossier existe et n'est pas vide
+        if os.path.exists(target_dir) and os.listdir(target_dir):
+            print(f"   ✔ Asset '{name}' déjà présent.")
+            continue
+            
+        step(f"Téléchargement de l'asset '{name}'...")
+        zip_name = f"{name}.zip"
+        
+        try:
+            print(f"   Source: {url}")
+            urllib.request.urlretrieve(url, zip_name, reporthook)
+            print(f"\n   ✔ Téléchargement terminé.")
+
+            print("   Extraction...")
+            # On crée le dossier cible
+            if not os.path.exists(target_dir):
+                os.makedirs(target_dir)
+
+            with zipfile.ZipFile(zip_name, 'r') as zip_ref:
+                # On extrait tout dans le dossier cible
+                zip_ref.extractall(target_dir)
+            
+            print(f"   ✔ Extrait dans {target_dir}")
+            
+            if os.path.exists(zip_name): os.remove(zip_name)
+            
+        except Exception as e:
+            print(f"   ❌ Erreur Asset {name}: {e}")
+
 
 # --- 2. BUILD SYSTEM (Nanobind + CMake) ---
 def check_uv():
@@ -108,6 +165,7 @@ def main():
     try:
         check_uv()
         install_oidn()
+        install_assets()
         run_cmake_build()
         copy_artifact()
         print("\n✅ PRÊT. Lance: uv run main.py")

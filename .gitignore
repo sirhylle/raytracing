@@ -24,3 +24,6 @@ oidn/
 
 # Python C++ compiled modules
 *.pyd
+
+# Assets
+assets/
