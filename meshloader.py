@@ -3,7 +3,8 @@ import numpy as np
 import os
 import cpp_engine
 
-def load_mesh_to_engine(engine, file_path, scale=1.0, translation=[0,0,0], auto_center=False):
+def load_mesh_to_engine(engine, file_path, scale=1.0, translation=[0,0,0], auto_center=False,
+                        override_mat=None, override_color=None, override_ior=None):
     """
     Charge un fichier 3D (.obj, .glb, .stl) et l'envoie au moteur C++.
     Gère la conversion automatique des matériaux (.mtl -> PBR).
@@ -99,6 +100,17 @@ def load_mesh_to_engine(engine, file_path, scale=1.0, translation=[0,0,0], auto_
                     shininess = getattr(mat, 'shininess', 50.0)
                     fuzz = max(0.0, min(1.0, 1.0 - (shininess / 1000.0)))
 
+        # --- OVERRIDES MANUELS ---
+        if override_mat is not None:
+            mat_type = override_mat
+            
+        if override_color is not None:
+            # On s'assure que c'est une liste si jamais l'utilisateur passe un array numpy
+            color = override_color
+            
+        if override_ior is not None:
+            ior = override_ior
+
         # --- B. Nettoyage Géométrie ---
         
         # Important : Appliquer les transformations locales (si on vient d'une Scene)
@@ -106,11 +118,16 @@ def load_mesh_to_engine(engine, file_path, scale=1.0, translation=[0,0,0], auto_
         # Ici on simplifie en assumant que geom.vertices est déjà en World Space
         # ou Local Space.
         
-        # 1. Triangulation (S'assurer qu'on n'a pas de Quads)
+        # 1. Astuce : Parfois les normales ne sont pas générées par défaut.
+        # On demande à trimesh de les calculer si besoin.
+        
+        # 2. Triangulation (S'assurer qu'on n'a pas de Quads)
         # trimesh le fait souvent au chargement, mais on force pour être sûr
         # (Note: trimesh stocke toujours en triangles, les quads sont divisés)
         
-        # 2. Transformations manuelles (Scale / Translation / Centrage)
+        # 3. Transformations manuelles (Scale / Translation / Centrage)
+
+        geom.fix_normals()
         verts = geom.vertices.copy()
         
         if auto_center:
@@ -119,8 +136,13 @@ def load_mesh_to_engine(engine, file_path, scale=1.0, translation=[0,0,0], auto_
         verts *= scale
         verts += np.array(translation)
         
+        # Récupération des Normales
+        # vertex_normals est un array (N, 3) qui matche les vertices
+        norms = geom.vertex_normals.copy()
+        
         # 3. Préparation pour C++ (Contiguous Array + Float32/Int32)
         c_verts = np.ascontiguousarray(verts, dtype=np.float32)
+        c_norms = np.ascontiguousarray(norms, dtype=np.float32)
         c_faces = np.ascontiguousarray(geom.faces, dtype=np.int32)
 
         # --- C. Envoi au Moteur ---
@@ -134,6 +156,6 @@ def load_mesh_to_engine(engine, file_path, scale=1.0, translation=[0,0,0], auto_
         vec_color = cpp_engine.Vec3(float(color[0]), float(color[1]), float(color[2]))
 
         # Enfin, on envoie tout à add_mesh
-        engine.add_mesh(c_verts, c_faces, mat_type, vec_color, float(fuzz), float(ior))       
+        engine.add_mesh(c_verts, c_faces, c_norms, mat_type, vec_color, float(fuzz), float(ior))       
         
     print(f"[Loader] Finished. Loaded {len(geometries)} parts.")

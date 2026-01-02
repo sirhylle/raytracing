@@ -15,6 +15,7 @@ dependencies = [
     "cmake>=3.20",
     "ninja",
     "trimesh>=4.10.1",
+    "scipy>=1.15.3",
 ]
 
 [build-system]

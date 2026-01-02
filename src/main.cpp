@@ -305,11 +305,12 @@ public:
 
 class Triangle : public Hittable {
 public:
-  Vec3 v0, v1, v2;
-  Vec3 normal;
+  Vec3 v0, v1, v2; // Les 3 sommets
+  Vec3 n0, n1, n2; // Les 3 normales aux sommets
   std::shared_ptr<Material> mat_ptr;
 
-  Triangle(Vec3 _v0, Vec3 _v1, Vec3 _v2, std::shared_ptr<Material> m);
+  Triangle(Vec3 _v0, Vec3 _v1, Vec3 _v2, Vec3 _n0, Vec3 _n1, Vec3 _n2,
+           std::shared_ptr<Material> m);
 
   virtual bool hit(const Ray &r, Real t_min, Real t_max,
                    HitRecord &rec) const override;
@@ -852,12 +853,11 @@ bool HittableList::hit(const Ray &r, Real t_min, Real t_max,
 
 // --- IMPLÉMENTATION TRIANGLE ---
 
-Triangle::Triangle(Vec3 _v0, Vec3 _v1, Vec3 _v2, std::shared_ptr<Material> m)
-    : v0(_v0), v1(_v1), v2(_v2), mat_ptr(m) {
-  // Calcul de la normale géométrique une seule fois à la construction
-  auto edge1 = v1 - v0;
-  auto edge2 = v2 - v0;
-  normal = unit_vector(cross(edge1, edge2));
+Triangle::Triangle(Vec3 _v0, Vec3 _v1, Vec3 _v2, Vec3 _n0, Vec3 _n1, Vec3 _n2,
+                   std::shared_ptr<Material> m)
+    : v0(_v0), v1(_v1), v2(_v2), n0(_n0), n1(_n1), n2(_n2), mat_ptr(m) {
+  // On ne pas la normale géométrique ici, on fait confiance aux
+  // données
 }
 
 bool Triangle::hit(const Ray &r, Real t_min, Real t_max, HitRecord &rec) const {
@@ -868,7 +868,7 @@ bool Triangle::hit(const Ray &r, Real t_min, Real t_max, HitRecord &rec) const {
   Real a = dot(edge1, h);
 
   if (a > -EPSILON && a < EPSILON)
-    return false; // Rayon parallèle
+    return false;
 
   Real f = 1.0f / a;
   Vec3 s = r.orig - v0;
@@ -885,9 +885,17 @@ bool Triangle::hit(const Ray &r, Real t_min, Real t_max, HitRecord &rec) const {
   if (t > t_min && t < t_max) {
     rec.t = t;
     rec.p = r.at(t);
-    rec.set_face_normal(r, normal);
+
+    // --- Interpolation de Phong (Smooth Shading) ---
+    // On utilise les coordonnées barycentriques (u, v) et w = 1-u-v
+    // pour mélanger les normales des 3 sommets.
+    Vec3 smooth_normal = (1.0f - u - v) * n0 + u * n1 + v * n2;
+
+    // Important : Il faut re-normaliser car l'interpolation linéaire raccourcit
+    // les vecteurs
+    rec.set_face_normal(r, unit_vector(smooth_normal));
+
     rec.mat_ptr = mat_ptr.get();
-    // Coordonnées barycentriques pour les textures futures
     rec.u = u;
     rec.v = v;
     return true;
@@ -1655,6 +1663,7 @@ public:
 
   void add_mesh(nb::ndarray<float, nb::shape<-1, 3>> vertices,
                 nb::ndarray<int, nb::shape<-1, 3>> indices,
+                nb::ndarray<float, nb::shape<-1, 3>> normals, // <--- NOUVEAU
                 std::string mat_type, const Vec3 &color, Real fuzz = 0.0f,
                 Real ir = 1.5f) {
 
@@ -1673,9 +1682,9 @@ public:
     else
       mat = std::make_shared<Lambertian>(Vec3(0.5, 0.5, 0.5)); // Fallback gris
 
-    // 2. Accès direct à la mémoire Numpy (Zéro copie = Performance Max)
     auto v_view = vertices.view();
     auto i_view = indices.view();
+    auto n_view = normals.view();
 
     size_t num_triangles = i_view.shape(0);
 
@@ -1691,7 +1700,11 @@ public:
       Vec3 v1(v_view(idx1, 0), v_view(idx1, 1), v_view(idx1, 2));
       Vec3 v2(v_view(idx2, 0), v_view(idx2, 1), v_view(idx2, 2));
 
-      auto tri = std::make_shared<Triangle>(v0, v1, v2, mat);
+      Vec3 n0(n_view(idx0, 0), n_view(idx0, 1), n_view(idx0, 2));
+      Vec3 n1(n_view(idx1, 0), n_view(idx1, 1), n_view(idx1, 2));
+      Vec3 n2(n_view(idx2, 0), n_view(idx2, 1), n_view(idx2, 2));
+
+      auto tri = std::make_shared<Triangle>(v0, v1, v2, n0, n1, n2, mat);
       world.add(tri);
 
       // Si c'est une lumière, on l'ajoute aussi à la liste des émetteurs pour
@@ -2019,9 +2032,11 @@ NB_MODULE(cpp_engine, m) {
       .def("add_checker_sphere", &PyScene::add_checker_sphere)
       .def("add_quad", &PyScene::add_quad)
       .def("add_mesh", &PyScene::add_mesh,
-           "Ajoute un mesh (Vertices Nx3, Indices Mx3)", nb::arg("vertices"),
-           nb::arg("indices"), nb::arg("mat_type"), nb::arg("color"),
-           nb::arg("fuzz") = 0.0f, nb::arg("ir") = 1.5f)
+           "Ajoute un mesh avec normales (Vertices Nx3, Indices Mx3, Normals "
+           "Nx3)",
+           nb::arg("vertices"), nb::arg("indices"), nb::arg("normals"),
+           nb::arg("mat_type"), nb::arg("color"), nb::arg("fuzz") = 0.0f,
+           nb::arg("ir") = 1.5f)
       .def("set_camera", &PyScene::set_camera)
       .def("set_environment", &PyScene::set_environment)
       .def("set_env_levels", &PyScene::set_env_levels,

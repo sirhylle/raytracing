@@ -256,30 +256,32 @@ class MeshTestScene(Scene):
     def setup(self, engine):
         # 1. Sol (Checker)
         engine.add_checker_sphere(
-            cpp_engine.Vec3(0.0, -100.5, -1.0), # Centre
-            100.0,                              # Rayon
-            cpp_engine.Vec3(0.2, 0.3, 0.1),     # Couleur 1
-            cpp_engine.Vec3(0.9, 0.9, 0.9),     # Couleur 2
-            10.0                                # Échelle
+            cpp_engine.Vec3(0.0, -100.5, -1.0), 
+            100.0,
+            cpp_engine.Vec3(0.2, 0.3, 0.1), 
+            cpp_engine.Vec3(0.9, 0.9, 0.9), 
+            10.0
         )
         
-        # 2. Chargement du Mesh (ex: un dragon, une théière, ou le Stanford Bunny)
+        # 2. Le Lapin en Verre
         meshloader.load_mesh_to_engine(
             engine, 
-            "assets/bunny/bunny.obj", 
+            "assets/bunny/bunny.obj",
             scale=1.0, 
             translation=[0, 0, 0],
-            auto_center=True # Pratique pour recentrer l'objet en (0,0,0)
+            auto_center=True,
+            override_mat="dielectric",
+            override_color=[0.7, 0.9, 0.85],
+            override_ior=1.5
         )
 
-        # 3. Caméra
-        # On recule un peu pour bien voir l'objet
+        # 3. Éclairage
+        # Le verre adore les environnements contrastés pour créer des reflets
         return SceneConfig(
             lookfrom=[0, 2, 5], 
             lookat=[0, 0, 0], 
             vfov=40.0,
-            #env_map="env-dock-sun.hdr",
-            # On active un peu d'ambiance pour voir les zones d'ombres
+            env_map="env-dock-sun.hdr",
             env_direct_level=0.5
         )
 
