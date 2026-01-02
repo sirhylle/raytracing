@@ -134,6 +134,7 @@ def load_mesh_to_engine(engine, file_path, scale=1.0, translation=[0,0,0], auto_
             verts -= center_mass
         
         verts *= scale
+        print_bounds(os.path.basename(file_path), verts)
         verts += np.array(translation)
         
         # Récupération des Normales
@@ -159,3 +160,100 @@ def load_mesh_to_engine(engine, file_path, scale=1.0, translation=[0,0,0], auto_
         engine.add_mesh(c_verts, c_faces, c_norms, mat_type, vec_color, float(fuzz), float(ior))       
         
     print(f"[Loader] Finished. Loaded {len(geometries)} parts.")
+
+
+def load_asset(engine, asset_name, file_path, override_mat=None, override_color=None):
+    """
+    Charge un fichier 3D et le stocke dans la mémoire du moteur sous le nom 'asset_name'.
+    Il ne sera PAS visible tant qu'on ne crée pas d'instance.
+    """
+    if not os.path.exists(file_path):
+        print(f"[Error] Mesh file not found: {file_path}")
+        return
+
+    print(f"[Loader] Loading Asset '{asset_name}' from: {file_path}...")
+    try:
+        scene_or_mesh = trimesh.load(file_path, force=None)
+    except Exception as e:
+        print(f"[Error] Failed to load mesh: {e}")
+        return
+
+    geometries = []
+    if isinstance(scene_or_mesh, trimesh.Scene):
+        geometries = list(scene_or_mesh.geometry.values())
+    else:
+        geometries = [scene_or_mesh]
+
+    # Pour les assets, on force souvent le centrage pour que la rotation se fasse autour du centre
+    all_verts = []
+    for g in geometries: all_verts.append(g.vertices)
+    if all_verts:
+        center_mass = np.vstack(all_verts).mean(axis=0)
+    else:
+        center_mass = np.array([0,0,0])
+
+    for geom in geometries:
+        # 1. Matériaux (Simplifié pour l'asset)
+        mat_type = "lambertian"
+        color = [0.8, 0.8, 0.8]
+        fuzz = 0.0
+        ior = 1.5
+
+        if hasattr(geom.visual, 'material'):
+            mat = geom.visual.material
+            if hasattr(mat, 'diffuse'):
+                rgba = mat.diffuse
+                if rgba.dtype == np.uint8: color = rgba[:3] / 255.0
+                else: color = rgba[:3]
+        
+        # Overrides
+        if override_mat: mat_type = override_mat
+        if override_color: color = override_color
+
+        # 2. Géométrie
+        # On évite fix_normals pour ne pas dépendre de scipy, on lit juste
+        _ = geom.vertex_normals 
+        
+        verts = geom.vertices.copy()
+        verts -= center_mass # IMPORTANT : On centre l'asset localement !
+        
+        print_bounds(f"Asset: {asset_name}", verts)
+        norms = geom.vertex_normals.copy()
+        
+        c_verts = np.ascontiguousarray(verts, dtype=np.float32)
+        c_norms = np.ascontiguousarray(norms, dtype=np.float32)
+        c_faces = np.ascontiguousarray(geom.faces, dtype=np.int32)
+
+        if isinstance(color, np.ndarray): color = color.tolist()
+        vec_color = cpp_engine.Vec3(float(color[0]), float(color[1]), float(color[2]))
+
+        # APPEL A LA NOUVELLE METHODE C++
+        engine.load_mesh_asset(asset_name, c_verts, c_faces, c_norms, 
+                               mat_type, vec_color, float(fuzz), float(ior))
+
+    print(f"[Loader] Asset '{asset_name}' ready.")
+
+def print_bounds(name, verts):
+    """Affiche les dimensions de l'objet par rapport à son point de pivot (0,0,0)."""
+    # Calcul des min/max sur les 3 axes
+    min_v = verts.min(axis=0)
+    max_v = verts.max(axis=0)
+    
+    # Largeurs totales
+    width = max_v[0] - min_v[0]
+    height = max_v[1] - min_v[1]
+    depth = max_v[2] - min_v[2]
+
+    print(f"--- 📏 BOUNDARIES : '{name}' ---")
+    print(f"  • X (Largeur) : {width:.4f}")
+    print(f"    └─ Centre -> Gauche : {abs(min_v[0]):.4f}")
+    print(f"    └─ Centre -> Droite : {max_v[0]:.4f}")
+    
+    print(f"  • Y (Hauteur) : {height:.4f}")
+    print(f"    └─ Centre -> Bas    : {abs(min_v[1]):.4f}")
+    print(f"    └─ Centre -> Haut   : {max_v[1]:.4f}")
+    
+    print(f"  • Z (Profondeur): {depth:.4f}")
+    print(f"    └─ Centre -> Arrière: {abs(min_v[2]):.4f}")
+    print(f"    └─ Centre -> Avant  : {max_v[2]:.4f}")
+    print("-----------------------------------")

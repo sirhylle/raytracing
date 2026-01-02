@@ -11,6 +11,7 @@
 #include <cmath>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <memory>
 #include <omp.h>
 #include <random>
@@ -77,7 +78,6 @@ struct Vec3 {
     return *this;
   }
 
-  // Utilisation de 1.0f pour éviter la promotion implicite en double
   Vec3 &operator/=(Real t) { return *this *= (1.0f / t); }
 
   Real length_squared() const {
@@ -127,7 +127,7 @@ inline Real soft_clamp(Real x, Real limit) { return x * limit / (x + limit); }
 
 // Random Utils
 thread_local std::mt19937 generator{std::random_device{}()};
-// Distribution reste correcte, elle templatera sur float
+
 thread_local std::uniform_real_distribution<Real> distribution(0.0f, 1.0f);
 
 inline Real random_real() { return distribution(generator); }
@@ -176,6 +176,45 @@ inline Vec3 refract(const Vec3 &uv, const Vec3 &n, Real etai_over_etat) {
       -std::sqrt(std::fabs(1.0f - r_out_perp.length_squared())) * n;
   return r_out_perp + r_out_parallel;
 }
+
+struct Matrix4 {
+  Real m[4][4];
+
+  Matrix4() {
+    for (int i = 0; i < 4; i++)
+      for (int j = 0; j < 4; j++)
+        m[i][j] = (i == j) ? 1.0f : 0.0f;
+  }
+
+  // Multiplication Matrice * Point (w=1)
+  Vec3 point(const Vec3 &p) const {
+    Real x = p.x(), y = p.y(), z = p.z();
+    Real tx = m[0][0] * x + m[0][1] * y + m[0][2] * z + m[0][3];
+    Real ty = m[1][0] * x + m[1][1] * y + m[1][2] * z + m[1][3];
+    Real tz = m[2][0] * x + m[2][1] * y + m[2][2] * z + m[2][3];
+    // On ignore la division perspective (w) pour les transformations affines
+    // standards
+    return Vec3(tx, ty, tz);
+  }
+
+  // Multiplication Matrice * Vecteur (w=0) - Pour les directions
+  Vec3 vector(const Vec3 &v) const {
+    Real x = v.x(), y = v.y(), z = v.z();
+    Real tx = m[0][0] * x + m[0][1] * y + m[0][2] * z;
+    Real ty = m[1][0] * x + m[1][1] * y + m[1][2] * z;
+    Real tz = m[2][0] * x + m[2][1] * y + m[2][2] * z;
+    return Vec3(tx, ty, tz);
+  }
+
+  // Transposée (utile pour les normales)
+  Matrix4 transpose() const {
+    Matrix4 res;
+    for (int i = 0; i < 4; i++)
+      for (int j = 0; j < 4; j++)
+        res.m[i][j] = m[j][i];
+    return res;
+  }
+};
 
 // ===============================================================================================
 // RAY & HIT
@@ -981,8 +1020,6 @@ public:
   BVHNode(std::vector<std::shared_ptr<Hittable>> &objects, size_t start,
           size_t end) {
 
-    // PLUS DE COPIE ICI ! On travaille directement sur la référence.
-
     // 1. Calculer la bbox de tous les objets actuels pour trouver le meilleur
     // axe
     AABB total_box;
@@ -1054,6 +1091,88 @@ public:
 
   virtual bool bounding_box(AABB &output_box) const override {
     output_box = box;
+    return true;
+  }
+};
+
+// ===============================================================================================
+// Instance
+// ===============================================================================================
+
+class Instance : public Hittable {
+public:
+  std::shared_ptr<Hittable> object; // L'objet original (ex: le lapin)
+  Matrix4 transform;     // World -> Instance (inutilisé ici mais stocké)
+  Matrix4 inv_transform; // Instance -> World (pour transformer le rayon)
+  Matrix4 normal_matrix; // Pour transformer les normales correctement
+
+  Instance(std::shared_ptr<Hittable> obj, const Matrix4 &m,
+           const Matrix4 &inv_m)
+      : object(obj), transform(m), inv_transform(inv_m) {
+    // La matrice pour les normales est la transposée de l'inverse
+    normal_matrix = inv_transform.transpose();
+  }
+
+  virtual bool hit(const Ray &r, Real t_min, Real t_max,
+                   HitRecord &rec) const override {
+    // 1. Transformer le rayon du Monde vers l'Objet
+    Vec3 o_local = inv_transform.point(r.orig);
+    Vec3 d_local = inv_transform.vector(r.dir);
+
+    // Note: d_local n'est pas normalisé si il y a du scale, ce qui affecte 't'.
+    // Mais pour un BVH, c'est acceptable tant que t est cohérent.
+    Ray r_local(o_local, d_local, r.tm);
+
+    // 2. Intersecter l'objet original
+    if (!object->hit(r_local, t_min, t_max, rec))
+      return false;
+
+    // 3. Retransformer le résultat vers le Monde
+    Vec3 p_world = transform.point(rec.p);
+    // Normale : On utilise la matrice normale (Inverse Transpose)
+    Vec3 n_world = normal_matrix.vector(rec.normal);
+    n_world = unit_vector(n_world);
+
+    rec.p = p_world;
+    rec.set_face_normal(r, n_world); // On garde l'orientation face au rayon
+
+    return true;
+  }
+
+  virtual bool bounding_box(AABB &output_box) const override {
+    // On récupère la boite de l'objet original
+    AABB obj_box;
+    if (!object->bounding_box(obj_box))
+      return false;
+
+    // On transforme les 8 coins de la boite
+    Vec3 min = Vec3(std::numeric_limits<Real>::infinity(),
+                    std::numeric_limits<Real>::infinity(),
+                    std::numeric_limits<Real>::infinity());
+    Vec3 max = -min;
+
+    Vec3 corners[8];
+    corners[0] = Vec3(obj_box.min.x(), obj_box.min.y(), obj_box.min.z());
+    corners[1] = Vec3(obj_box.max.x(), obj_box.min.y(), obj_box.min.z());
+    corners[2] = Vec3(obj_box.min.x(), obj_box.max.y(), obj_box.min.z());
+    corners[3] = Vec3(obj_box.max.x(), obj_box.max.y(), obj_box.min.z());
+    corners[4] = Vec3(obj_box.min.x(), obj_box.min.y(), obj_box.max.z());
+    corners[5] = Vec3(obj_box.max.x(), obj_box.min.y(), obj_box.max.z());
+    corners[6] = Vec3(obj_box.min.x(), obj_box.max.y(), obj_box.max.z());
+    corners[7] = Vec3(obj_box.max.x(), obj_box.max.y(), obj_box.max.z());
+
+    for (int i = 0; i < 8; i++) {
+      Vec3 p_new = transform.point(corners[i]);
+      min.e[0] = std::fmin(min.e[0], p_new.x());
+      min.e[1] = std::fmin(min.e[1], p_new.y());
+      min.e[2] = std::fmin(min.e[2], p_new.z());
+
+      max.e[0] = std::fmax(max.e[0], p_new.x());
+      max.e[1] = std::fmax(max.e[1], p_new.y());
+      max.e[2] = std::fmax(max.e[2], p_new.z());
+    }
+
+    output_box = AABB(min, max);
     return true;
   }
 };
@@ -1595,6 +1714,9 @@ public:
   std::shared_ptr<Camera> camera;
   std::shared_ptr<EnvironmentMap> background;
 
+  // Map pour stocker les meshes chargés par nom
+  std::map<std::string, std::shared_ptr<Hittable>> mesh_assets;
+
   // Progress tracking
   std::atomic<int> completed_scanlines{0};
   std::atomic<int> total_scanlines{1};
@@ -1713,6 +1835,85 @@ public:
         lights.add(tri);
       }
     }
+  }
+
+  void load_mesh_asset(std::string name,
+                       nb::ndarray<float, nb::shape<-1, 3>> vertices,
+                       nb::ndarray<int, nb::shape<-1, 3>> indices,
+                       nb::ndarray<float, nb::shape<-1, 3>> normals,
+                       std::string mat_type, const Vec3 &color,
+                       Real fuzz = 0.0f, Real ir = 1.5f) {
+
+    // 1. On crée une liste temporaire pour contenir les triangles
+    HittableList mesh_list;
+
+    // 2. Création du matériau (Déclaration explicite de 'mat')
+    std::shared_ptr<Material> mat;
+
+    if (mat_type == "lambertian")
+      mat = std::make_shared<Lambertian>(color);
+    else if (mat_type == "metal")
+      mat = std::make_shared<Metal>(color, fuzz);
+    else if (mat_type == "dielectric")
+      mat = std::make_shared<Dielectric>(ir, color);
+    else if (mat_type == "plastic")
+      mat = std::make_shared<Plastic>(color, ir, fuzz);
+    else
+      mat = std::make_shared<Lambertian>(Vec3(0.5, 0.5, 0.5));
+
+    auto v_view = vertices.view();
+    auto i_view = indices.view();
+    auto n_view = normals.view();
+    size_t num_triangles = i_view.shape(0);
+
+    for (size_t k = 0; k < num_triangles; ++k) {
+      int idx0 = i_view(k, 0);
+      int idx1 = i_view(k, 1);
+      int idx2 = i_view(k, 2);
+      Vec3 v0(v_view(idx0, 0), v_view(idx0, 1), v_view(idx0, 2));
+      Vec3 v1(v_view(idx1, 0), v_view(idx1, 1), v_view(idx1, 2));
+      Vec3 v2(v_view(idx2, 0), v_view(idx2, 1), v_view(idx2, 2));
+      Vec3 n0(n_view(idx0, 0), n_view(idx0, 1), n_view(idx0, 2));
+      Vec3 n1(n_view(idx1, 0), n_view(idx1, 1), n_view(idx1, 2));
+      Vec3 n2(n_view(idx2, 0), n_view(idx2, 1), n_view(idx2, 2));
+
+      auto tri = std::make_shared<Triangle>(v0, v1, v2, n0, n1, n2, mat);
+      mesh_list.add(tri);
+    }
+
+    // 2. IMPORTANT : On emballe le tout dans un BVHNode immédiatement !
+    // Sinon chaque instance devra tester 100k triangles un par un, ce qui
+    // annule le gain.
+    auto mesh_bvh = std::make_shared<BVHNode>(mesh_list);
+
+    // 3. On stocke dans le dictionnaire
+    mesh_assets[name] = mesh_bvh;
+  }
+
+  void add_instance(std::string mesh_name,
+                    nb::ndarray<float, nb::shape<4, 4>> transform_array,
+                    nb::ndarray<float, nb::shape<4, 4>> inv_transform_array) {
+
+    if (mesh_assets.find(mesh_name) == mesh_assets.end()) {
+      std::cerr << "Error: Mesh asset '" << mesh_name << "' not found!\n";
+      return;
+    }
+
+    // Conversion Numpy -> Matrix4 C++
+    auto t_view = transform_array.view();
+    auto i_view = inv_transform_array.view();
+
+    Matrix4 m, inv;
+    for (int r = 0; r < 4; r++) {
+      for (int c = 0; c < 4; c++) {
+        m.m[r][c] = t_view(r, c);
+        inv.m[r][c] = i_view(r, c);
+      }
+    }
+
+    // Création et ajout de l'instance
+    auto instance = std::make_shared<Instance>(mesh_assets[mesh_name], m, inv);
+    world.add(instance);
   }
 
   void set_camera(const Vec3 &lookfrom, const Vec3 &lookat, const Vec3 &vup,
@@ -2037,6 +2238,12 @@ NB_MODULE(cpp_engine, m) {
            nb::arg("vertices"), nb::arg("indices"), nb::arg("normals"),
            nb::arg("mat_type"), nb::arg("color"), nb::arg("fuzz") = 0.0f,
            nb::arg("ir") = 1.5f)
+      .def("load_mesh_asset", &PyScene::load_mesh_asset, nb::arg("name"),
+           nb::arg("vertices"), nb::arg("indices"), nb::arg("normals"),
+           nb::arg("mat_type"), nb::arg("color"), nb::arg("fuzz") = 0.0f,
+           nb::arg("ir") = 1.5f)
+      .def("add_instance", &PyScene::add_instance, nb::arg("mesh_name"),
+           nb::arg("transform"), nb::arg("inv_transform"))
       .def("set_camera", &PyScene::set_camera)
       .def("set_environment", &PyScene::set_environment)
       .def("set_env_levels", &PyScene::set_env_levels,

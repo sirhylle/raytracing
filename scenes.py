@@ -4,6 +4,8 @@ import random
 from dataclasses import dataclass
 from typing import Optional, List, Tuple
 import meshloader
+import transforms as tf
+import math
 
 random.seed(60)
 
@@ -252,7 +254,7 @@ class MaterialsShowcase(Scene):
             env_indirect_level=2.0
         )
 
-class MeshTestScene(Scene):
+class MeshScene1(Scene):
     def setup(self, engine):
         # 1. Sol (Checker)
         engine.add_checker_sphere(
@@ -281,8 +283,69 @@ class MeshTestScene(Scene):
             lookfrom=[0, 2, 5], 
             lookat=[0, 0, 0], 
             vfov=40.0,
+            env_map="env-dock-sun.hdr"
+        )
+
+class MeshScene2(Scene):
+    def setup(self, engine):
+        # 1. Le Sol
+        engine.add_checker_sphere(
+            cpp_engine.Vec3(0.0, -100.5, -1.0), 100.0,
+            cpp_engine.Vec3(0.2, 0.3, 0.1), cpp_engine.Vec3(0.9, 0.9, 0.9), 10.0
+        )
+
+        # 2. Chargement des Assets (Mémoire seule, pas d'affichage)
+        # On charge deux versions : une brute, une en verre
+        meshloader.load_asset(engine, "bunny_glass", "assets/dragon/dragon.obj", override_mat="dielectric", override_color=[0.9, 0.95, 1.0])
+        meshloader.load_asset(engine, "bunny_metal", "assets/dragon/dragon.obj", override_mat="metal", override_color=[0.8, 0.6, 0.2])
+
+        # 3. Le Roi Lapin (Centre)
+        # Scale x1
+        M = tf.translate(0, 0, 0) @ tf.scale(1.0, 1.0, 1.0) 
+        # On calcule l'inverse pour les rayons
+        InvM = np.linalg.inv(M)
+        
+        # Passage au C++ (Numpy -> C++ Array)
+        # ascontiguousarray est vital pour les matrices !
+        engine.add_instance("bunny_glass", 
+                            np.ascontiguousarray(M, dtype=np.float32), 
+                            np.ascontiguousarray(InvM, dtype=np.float32))
+
+        # 4. La Garde Royale (Cercle autour)
+        radius = 2.0
+        count = 8
+        for i in range(count):
+            angle = (360.0 / count) * i
+            
+            # Calcul de la position sur le cercle
+            x = radius * math.cos(math.radians(angle))
+            z = radius * math.sin(math.radians(angle))
+            
+            # Matrice de Transformation (Ordre: Scale -> Rotate -> Translate)
+            # 1. On le diminue (x0.5)
+            # 2. On le tourne pour qu'il regarde le centre (-angle + offset selon l'orientation du modele)
+            # 3. On le place sur le cercle
+            
+            # Note: Le modèle bunny regarde souvent vers +Z ou -Z par défaut. 
+            # On ajuste la rotation -angle - 90 pour qu'il regarde le centre.
+            M_instance = tf.translate(x, -0.25, z) @ tf.rotate_y(-angle - 90) @ tf.scale(.5, .5, .5)
+            
+            InvM_instance = np.linalg.inv(M_instance)
+            
+            engine.add_instance("bunny_metal", 
+                                np.ascontiguousarray(M_instance, dtype=np.float32), 
+                                np.ascontiguousarray(InvM_instance, dtype=np.float32))
+
+        return SceneConfig(
+            lookfrom=[-0.9, 0.7, 3.93], 
+            lookat=[-0.73, 0.5, 2.96], 
+            vfov=50.0,
+            aperture=0.1,
+            focus_dist=3.72,
             env_map="env-dock-sun.hdr",
-            env_direct_level=0.5
+            env_background_level=1.0,
+            env_direct_level=0.6,
+            env_indirect_level=2.0
         )
 
 # Registry
@@ -290,5 +353,6 @@ AVAILABLE_SCENES = {
     "cornell": CornellBox(),
     "random": RandomSpheres(),
     "showcase": MaterialsShowcase(),
-    "mesh": MeshTestScene()
+    "mesh1": MeshScene1(),
+    "mesh2": MeshScene2()
 }
