@@ -960,14 +960,20 @@ public:
   std::shared_ptr<Hittable> right;
   AABB box;
 
-  // Constructeur principal pour l'extérieur
-  BVHNode(const HittableList &list)
+  // 1. Constructeur Public (Point d'entrée)
+  // On prend 'HittableList list' par VALEUR pour forcer une copie unique ici.
+  // Ensuite on délègue le travail au constructeur récursif qui travaillera sur
+  // cette copie.
+  BVHNode(HittableList list)
       : BVHNode(list.owned_objects, 0, list.owned_objects.size()) {}
 
-  // Constructeur récursif interne
-  BVHNode(const std::vector<std::shared_ptr<Hittable>> &src_objects,
-          size_t start, size_t end) {
-    auto objects = src_objects; // Copie locale modifiable pour le tri
+  // 2. Constructeur Récursif Interne
+  // IMPORTANT : On prend 'objects' par RÉFÉRENCE (std::vector<...>&) pour ne
+  // plus copier !
+  BVHNode(std::vector<std::shared_ptr<Hittable>> &objects, size_t start,
+          size_t end) {
+
+    // PLUS DE COPIE ICI ! On travaille directement sur la référence.
 
     // 1. Calculer la bbox de tous les objets actuels pour trouver le meilleur
     // axe
@@ -993,7 +999,7 @@ public:
                              const std::shared_ptr<Hittable> &b) {
       AABB box_a, box_b;
       if (!a->bounding_box(box_a) || !b->bounding_box(box_b))
-        std::cerr << "Objet sans boite englobante dans le BVH.\n";
+        return false; // Sécurité
       return box_a.min[axis] < box_b.min[axis];
     };
 
@@ -1010,8 +1016,12 @@ public:
         right = objects[start];
       }
     } else {
+      // Tri sur place (In-place sort) de la section du vecteur
       std::sort(objects.begin() + start, objects.begin() + end, comparator);
+
       size_t mid = start + object_span / 2;
+
+      // Récursion : on repasse la même référence 'objects'
       left = std::make_shared<BVHNode>(objects, start, mid);
       right = std::make_shared<BVHNode>(objects, mid, end);
     }
@@ -1025,14 +1035,10 @@ public:
 
   virtual bool hit(const Ray &r, Real t_min, Real t_max,
                    HitRecord &rec) const override {
-    // 1. Si on rate la boite, on s'arrête immédiatement
     if (!box.hit(r, t_min, t_max))
       return false;
 
-    // 2. Sinon on teste les enfants
     bool hit_left = left->hit(r, t_min, t_max, rec);
-    // Optimisation : si on touche à gauche à 'rec.t', on n'a besoin de chercher
-    // à droite que ce qui est plus proche que 'rec.t'.
     bool hit_right = right->hit(r, t_min, hit_left ? rec.t : t_max, rec);
 
     return hit_left || hit_right;
@@ -1647,8 +1653,8 @@ public:
       lights.add(quad);
   }
 
-  void add_mesh(nb::ndarray<float, nb::shape<nb::any, 3>> vertices,
-                nb::ndarray<int, nb::shape<nb::any, 3>> indices,
+  void add_mesh(nb::ndarray<float, nb::shape<-1, 3>> vertices,
+                nb::ndarray<int, nb::shape<-1, 3>> indices,
                 std::string mat_type, const Vec3 &color, Real fuzz = 0.0f,
                 Real ir = 1.5f) {
 

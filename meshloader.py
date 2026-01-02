@@ -1,6 +1,7 @@
 import trimesh
 import numpy as np
 import os
+import cpp_engine
 
 def load_mesh_to_engine(engine, file_path, scale=1.0, translation=[0,0,0], auto_center=False):
     """
@@ -125,8 +126,14 @@ def load_mesh_to_engine(engine, file_path, scale=1.0, translation=[0,0,0], auto_
         # --- C. Envoi au Moteur ---
         # On utilise la méthode add_mesh
         # Note : on passe des listes Python pour la couleur si c'est un array numpy
-        if isinstance(color, np.ndarray): color = color.tolist()
-        
-        engine.add_mesh(c_verts, c_faces, mat_type, color, float(fuzz), float(ior))
+
+        # On s'assure d'abord d'avoir une liste
+        if isinstance(color, np.ndarray): 
+            color = color.tolist()
+        # ET SURTOUT : On convertit la liste en cpp_engine.Vec3
+        vec_color = cpp_engine.Vec3(float(color[0]), float(color[1]), float(color[2]))
+
+        # Enfin, on envoie tout à add_mesh
+        engine.add_mesh(c_verts, c_faces, mat_type, vec_color, float(fuzz), float(ior))       
         
     print(f"[Loader] Finished. Loaded {len(geometries)} parts.")

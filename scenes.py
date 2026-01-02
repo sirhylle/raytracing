@@ -255,13 +255,18 @@ class MaterialsShowcase(Scene):
 class MeshTestScene(Scene):
     def setup(self, engine):
         # 1. Sol (Checker)
-        engine.add_checker_sphere([0, -100.5, -1], 100, [0.2, 0.3, 0.1], [0.9, 0.9, 0.9], 10.0)
+        engine.add_checker_sphere(
+            cpp_engine.Vec3(0.0, -100.5, -1.0), # Centre
+            100.0,                              # Rayon
+            cpp_engine.Vec3(0.2, 0.3, 0.1),     # Couleur 1
+            cpp_engine.Vec3(0.9, 0.9, 0.9),     # Couleur 2
+            10.0                                # Échelle
+        )
         
         # 2. Chargement du Mesh (ex: un dragon, une théière, ou le Stanford Bunny)
-        # Assure-toi d'avoir un fichier 'assets/model.obj'
-        mesh_loader.load_mesh_to_engine(
+        meshloader.load_mesh_to_engine(
             engine, 
-            "assets/teapot.obj", 
+            "assets/bunny/bunny.obj", 
             scale=1.0, 
             translation=[0, 0, 0],
             auto_center=True # Pratique pour recentrer l'objet en (0,0,0)
@@ -269,10 +274,11 @@ class MeshTestScene(Scene):
 
         # 3. Caméra
         # On recule un peu pour bien voir l'objet
-        return RenderConfig(
+        return SceneConfig(
             lookfrom=[0, 2, 5], 
             lookat=[0, 0, 0], 
             vfov=40.0,
+            #env_map="env-dock-sun.hdr",
             # On active un peu d'ambiance pour voir les zones d'ombres
             env_direct_level=0.5
         )
@@ -282,4 +288,5 @@ AVAILABLE_SCENES = {
     "cornell": CornellBox(),
     "random": RandomSpheres(),
     "showcase": MaterialsShowcase(),
+    "mesh": MeshTestScene()
 }

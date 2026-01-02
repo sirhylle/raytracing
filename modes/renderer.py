@@ -12,6 +12,16 @@ import glob
 
 SAVE_INTERMEDIATE_IMAGES = False
 
+# --- OUTPUT DIRECTORIES ---
+OUTPUT_ROOT = "outputs"
+IMG_DIR = os.path.join(OUTPUT_ROOT, "images")
+FRAME_DIR = os.path.join(OUTPUT_ROOT, "frames")
+VIDEO_DIR = os.path.join(OUTPUT_ROOT, "videos")
+
+def ensure_dir(path):
+    if not os.path.exists(path):
+        os.makedirs(path)
+
 # ===============================================================================================
 # UTILS & POST-PROCESSING
 # ===============================================================================================
@@ -140,11 +150,10 @@ def run_single_frame(engine, conf, pool_threads):
     duration = time.time() - t0
     print(f"Render complete in {duration:.2f}s")
 
-    timestamp = ""
+    timestamp = datetime.datetime.now().strftime("_%Y%m%d_%H%M%S")
     overlay_txt = None
 
     if conf.param_stamp:
-        timestamp = datetime.datetime.now().strftime("_%Y%m%d_%H%M%S")
         ren_txt = f"Size: {conf.width}x{conf.height} | SPP: {conf.spp} | Depth: {conf.depth} | Time: {duration:.2f}s"
         sun_txt = f"Sun-Int: {conf.auto_sun_intensity:.2f} | Sun-Rad: {conf.auto_sun_radius:.2f} | Sun-Dist: {conf.auto_sun_dist:.2f} | Sun-Env: {conf.auto_sun_env_level:.2f}" if conf.auto_sun else "Sun: Off"
         env_txt = f"Env-Dir: {conf.env_direct_level:.2f} |  Env-Ind: {conf.env_indirect_level:.2f} | Env-Bg: {conf.env_background_level:.2f}"
@@ -153,30 +162,34 @@ def run_single_frame(engine, conf, pool_threads):
         overlay_txt = f"{ren_txt}\n{sun_txt}\n{env_txt}\n{cam_txt}"
     
     print("Processing outputs...")
+    ensure_dir(IMG_DIR)
+    
     if SAVE_INTERMEDIATE_IMAGES: 
-        save_image(pixels, f'output_raw{timestamp}.png', overlay_txt)
+        save_image(pixels, os.path.join(IMG_DIR, f'output_raw{timestamp}.png'), overlay_txt)
 
     if albedo is not None and SAVE_INTERMEDIATE_IMAGES:
-        save_debug_layer(albedo, f'output_albedo{timestamp}.png', is_normal=False)
+        save_debug_layer(albedo, os.path.join(IMG_DIR, f'output_albedo{timestamp}.png'), is_normal=False)
     
     if normal is not None and SAVE_INTERMEDIATE_IMAGES:
-        save_debug_layer(normal, f'output_normal{timestamp}.png', is_normal=True)
+        save_debug_layer(normal, os.path.join(IMG_DIR, f'output_normal{timestamp}.png'), is_normal=True)
     
     # Denoise
     denoised_pixels = try_denoise(pixels, albedo=albedo, normal=normal)
     
     if denoised_pixels is not None:
         print("Denoising success (with Feature Buffers).")
-        save_image(denoised_pixels, f'output_denoised{timestamp}.png', overlay_txt)
+        save_image(denoised_pixels, os.path.join(IMG_DIR, f'output_denoised{timestamp}.png'), overlay_txt)
     else:
         print("Skipping denoise output (failed or module missing). 保存 l'image raw.")
-        save_image(pixels, f'output_denoised{timestamp}.png', overlay_txt)
+        save_image(pixels, os.path.join(IMG_DIR, f'output_denoised{timestamp}.png'), overlay_txt)
 
 def run_animation(engine, conf, pool_threads):
     import imageio
     
-    output_dir = "animation_frames"
-    os.makedirs(output_dir, exist_ok=True)
+    ensure_dir(FRAME_DIR)
+    ensure_dir(VIDEO_DIR)
+    
+    output_dir = FRAME_DIR
     
     frames_data = [] 
     start_frame = 0
@@ -241,8 +254,10 @@ def run_animation(engine, conf, pool_threads):
 
     if frames_data:
         print("Compiling video...")
-        imageio.mimsave('animation.mp4', frames_data, fps=conf.fps, ffmpeg_params=['-crf', '18'])
-        print("Done: animation.mp4")
+        timestamp = datetime.datetime.now().strftime("_%Y%m%d_%H%M%S")
+        vid_path = os.path.join(VIDEO_DIR, f'animation{timestamp}.mp4')
+        imageio.mimsave(vid_path, frames_data, fps=conf.fps, ffmpeg_params=['-crf', '18'])
+        print(f"Done: {vid_path}")
 
 def run(engine, config):
     # Calcul Threads
