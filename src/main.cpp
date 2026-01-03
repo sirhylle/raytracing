@@ -2161,7 +2161,8 @@ public:
 
   // Retourne un Numpy Array (H, W, 3) directement utilisable par
   // OpenCV/Matplotlib
-  nb::ndarray<nb::numpy, float> render_preview(int width, int height,
+  // mode 0 = Normales (RGB), mode 1 = Clay (Gris)
+  nb::ndarray<nb::numpy, float> render_preview(int width, int height, int mode,
                                                int n_threads) {
 
     // 1. Vérifications de sécurité
@@ -2207,26 +2208,28 @@ public:
           // Intersection rapide (BVH)
           if (world_bvh->hit(r, 0.001f, std::numeric_limits<Real>::infinity(),
                              rec)) {
-            // --- MODE NORMALES ---
-            // Visualisation de la géométrie (r,g,b) = (nx, ny, nz) mappé en
-            // [0,1]
-            pixel_color = 0.5f * (unit_vector(rec.normal) + Vec3(1, 1, 1));
-          } else {
-            // --- MODE FOND ---
-            // Si une map HDRI est chargée, on l'utilise (rapide)
-            if (background) {
-              // 1. On échantillonne la HDRI (Mode 0 = Visible)
-              Vec3 hdri_color = background->sample(r.dir, 0);
 
-              // 2. TONE MAPPING SIMPLIFIÉ (Reinhard)
-              // Les HDRIs ont des valeurs > 1.0 (le soleil peut être à 20.0).
-              // Si on ne fait rien, tout sera blanc. On compresse doucement : x
-              // / (1+x)
+            if (mode == 1) {
+              // --- MODE CLAY (1) ---
+              Vec3 light_dir = unit_vector(Vec3(-1.0f, 1.0f, 1.0f));
+              Vec3 n = unit_vector(rec.normal);
+              float diff = std::max(0.0f, dot(n, light_dir));
+              float intensity = 0.2f + (0.7f * diff);
+              pixel_color = Vec3(intensity, intensity, intensity);
+            } else {
+              // --- MODE NORMALES (0) ---
+              pixel_color = 0.5f * (unit_vector(rec.normal) + Vec3(1, 1, 1));
+            }
+
+          } else {
+            // --- FOND (Commun) ---
+            if (background) {
+              Vec3 hdri_color = background->sample(r.dir, 0);
+              // Tone mapping simple pour le fond
               pixel_color = Vec3(hdri_color.x() / (1.0f + hdri_color.x()),
                                  hdri_color.y() / (1.0f + hdri_color.y()),
                                  hdri_color.z() / (1.0f + hdri_color.z()));
             } else {
-              // Fallback : Dégradé par défaut si pas de map chargée
               Vec3 unit_dir = unit_vector(r.dir);
               auto t = 0.5f * (unit_dir.y() + 1.0f);
               pixel_color = (1.0f - t) * Vec3(1.0f, 1.0f, 1.0f) +
@@ -2341,8 +2344,8 @@ NB_MODULE(cpp_engine, m) {
            nb::arg("width"), nb::arg("height"), nb::arg("mouse_x"),
            nb::arg("mouse_y"))
       .def("render_preview", &PyScene::render_preview,
-           "Rendu temps réel (Normales)", nb::arg("width"), nb::arg("height"),
-           nb::arg("n_threads") = 0)
+           "Rendu temps réel. Mode 0=Normales, 1=Clay", nb::arg("width"),
+           nb::arg("height"), nb::arg("mode") = 0, nb::arg("n_threads") = 0)
       .def("render_accumulate", &PyScene::render_accumulate, nb::arg("width"),
            nb::arg("height"), nb::arg("n_threads") = 0)
       .def("reset_accumulation", &PyScene::reset_accumulation);

@@ -11,6 +11,9 @@ KEY_P = ord('p')
 KEY_U = ord('u')
 KEY_J = ord('j')
 KEY_L = ord('l')  # Touche de verrouillage
+KEY_M = ord('m')  # Mode (Normales/Clay)
+KEY_PLUS  = ord('+')
+KEY_MINUS = ord('-')
 
 # Codes Flèches (Compatible waitKeyEx)
 # On garde vos codes spécifiques + les standards
@@ -52,9 +55,11 @@ class CameraController:
         self.aperture = getattr(conf, 'aperture', 0.0) 
         if self.aperture is None: self.aperture = 0.0
         
-        self.base_speed = length * 0.5 
-        self.mouse_sensitivity = 0.003
+        # Vitesse de base initiale
+        self.initial_speed = length * 0.5 
+        self.base_speed = self.initial_speed
         
+        self.mouse_sensitivity = 0.003
         # Flag pour savoir si la caméra a changé depuis le dernier update moteur
         self.dirty = True 
 
@@ -135,18 +140,23 @@ def run(engine, config):
     
     print(f"[Viewer] Starting Adaptive Preview {W}x{H}...")
     
-    # --- RÉAFFICHAGE DES CONTRÔLES ---
+    # --- AFFICHAGE DES CONTRÔLES ---
     print("\n" + "="*40)
     print("      HYBRID VIEWER CONTROLS      ")
     print("="*40)
-    print(" [Souris]      : Orienter la caméra")
-    print(" [Molette]     : Zoomer / Dézoomer (FOV)")
-    print(" [Flèches/ZQS] : Se déplacer (Maintenir)")
+    print("\n<MOVEMENTS>")
+    print(" [Arrows/ZQSD] : Se déplacer (Maintenir)")
     print(" [Pavé 1 / 0]  : Monter / Descendre")
+    print(" [+/-]         : Vitesse (+ Rapide / - Lent)")
+    print("\n<CAMERA>")
+    print(" [Souris]      : Orienter la caméra")
     print(" [U / J]       : Focus Distance (+/-)")
     print(" [O / P]       : Aperture (Flou) (+/-)")
-    print(" [L]           : LOCK Preview (Mode rapide forcé)")
+    print(" [Molette]     : Zoomer / Dézoomer (FOV)")
     print(" [Clic Droit]  : Auto-Focus sur l'objet")
+    print("\n<RENDERING>")
+    print(" [M]           : Toggle Preview Mode (Normals/Clay)")
+    print(" [L]           : LOCK Preview Mode")
     print(" [ESC]         : Quitter")
     print("="*40 + "\n")
     
@@ -162,6 +172,7 @@ def run(engine, config):
     # État Système
     last_interaction_time = time.time() 
     locked_preview = False
+    preview_mode = 0 # 0 = Normals, 1 = Clay
     
     # --- INPUT SMOOTHING ---
     # On garde l'état des touches en mémoire
@@ -232,9 +243,24 @@ def run(engine, config):
         except: break
             
         if key == KEY_ESC: break
+
+        # --- GESTION DES MODES ---
         if key == KEY_L: 
             locked_preview = not locked_preview
             last_interaction_time = current_time
+        
+        if key == KEY_M:
+            preview_mode = (preview_mode + 1) % 2 
+            last_interaction_time = current_time
+
+        # --- GESTION VITESSE ---
+        if key == KEY_PLUS:
+            cam.base_speed *= 2.0
+            print(f"Speed UP: {cam.base_speed:.2f}")
+        
+        if key == KEY_MINUS:
+            cam.base_speed /= 2.0
+            print(f"Speed DOWN: {cam.base_speed:.2f}")
         
         # A. Détection des Touches (Met à jour l'intention)
         if key != -1:
@@ -257,8 +283,8 @@ def run(engine, config):
             # Paramètres ponctuels
             if key == KEY_U: cam.update_focus_dist(0.5)
             if key == KEY_J: cam.update_focus_dist(-0.5)
-            if key == KEY_O: cam.update_aperture(0.05)
-            if key == KEY_P: cam.update_aperture(-0.05)
+            if key == KEY_O: cam.update_aperture(0.01)
+            if key == KEY_P: cam.update_aperture(-0.01)
         
         # B. Gestion du Timeout (Relâchement des touches)
         # Si aucune touche détectée depuis KEY_TIMEOUT, on arrête le mouvement
@@ -303,7 +329,7 @@ def run(engine, config):
             pH = max(1, H // current_scale)
             
             t_start = time.time()
-            img_rgb = engine.render_preview(pW, pH, 0)
+            img_rgb = engine.render_preview(pW, pH, preview_mode, 0)
             render_duration = time.time() - t_start
             
             # Logique d'hystérésis simple
@@ -314,9 +340,11 @@ def run(engine, config):
                 
             img_small_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
             img_bgr = cv2.resize(img_small_bgr, (W, H), interpolation=cv2.INTER_NEAREST)
+
+            mode_name = "CLAY" if preview_mode == 1 else "NORMALS"
             
             if locked_preview:
-                status_text = "LOCKED PREVIEW"
+                status_text = f"LOCKED ({mode_name})"
                 status_color = (0, 165, 255)
             elif time_since_action <= PT_DELAY:
                 percent = time_since_action / PT_DELAY
@@ -336,7 +364,8 @@ def run(engine, config):
 
         # --- 4. OVERLAYS ---
         real_fps = 1.0 / dt if dt > 0 else 0
-        info_line = f"FPS: {real_fps:.0f} | SCL: 1/{current_scale} | FOC: {cam.focus_dist:.1f}m | AP: {cam.aperture:.2f}"
+        speed_mult = cam.base_speed / cam.initial_speed
+        info_line = f"FPS: {real_fps:.0f} | SCL: 1/{current_scale} | SPD: {speed_mult:.2f}x | FOC: {cam.focus_dist:.1f}m | AP: {cam.aperture:.2f} | FOV: {cam.vfov:.1f}"
         draw_text(img_bgr, info_line, (10, H - 15), (220, 220, 220), scale=0.5, thickness=1)
         draw_text(img_bgr, status_text, (10, 30), status_color, scale=0.6, thickness=2)
 
