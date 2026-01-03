@@ -1721,6 +1721,12 @@ public:
   std::atomic<int> completed_scanlines{0};
   std::atomic<int> total_scanlines{1};
 
+  // --- PROGRESSIVE RENDERING ---
+  std::vector<float> accumulation_buffer; // Stocke la somme des couleurs
+  int accumulated_spp = 0;                // Compteur de samples
+  int acc_width = 0; // Pour détecter le changement de taille
+  int acc_height = 0;
+
   PyScene() {
     // Default black environment map 1x1
     std::vector<Real> d = {0, 0, 0};
@@ -1916,6 +1922,12 @@ public:
     world.add(instance);
   }
 
+  // Vide le buffer (à appeler quand la caméra bouge)
+  void reset_accumulation() {
+    std::fill(accumulation_buffer.begin(), accumulation_buffer.end(), 0.0f);
+    accumulated_spp = 0;
+  }
+
   void set_camera(const Vec3 &lookfrom, const Vec3 &lookat, const Vec3 &vup,
                   Real vfov, Real aspect, Real aperture, Real dist) {
     camera = std::make_shared<Camera>(lookfrom, lookat, vup, vfov, aspect,
@@ -1984,6 +1996,75 @@ public:
       return background->find_sun_hotspot();
     }
     return {Vec3(0, 1, 0), Vec3(0, 0, 0)};
+  }
+
+  // Calcule 1 sample de plus et retourne l'image moyennée
+  nb::ndarray<nb::numpy, float> render_accumulate(int width, int height,
+                                                  int n_threads) {
+
+    size_t num_pixels = (size_t)width * height;
+
+    // 1. Initialisation / Redimensionnement si la fenêtre change
+    if (width != acc_width || height != acc_height ||
+        accumulation_buffer.size() != num_pixels * 3) {
+      accumulation_buffer.assign(num_pixels * 3, 0.0f);
+      accumulated_spp = 0;
+      acc_width = width;
+      acc_height = height;
+    }
+
+    // Buffer temporaire pour renvoyer l'image à Python (la moyenne)
+    float *display_buffer = new float[num_pixels * 3];
+
+    try {
+      nb::gil_scoped_release release;
+      if (n_threads > 0)
+        omp_set_num_threads(n_threads);
+
+// 2. Boucle de rendu (1 seul sample par pixel !)
+#pragma omp parallel for schedule(dynamic)
+      for (int j = 0; j < height; ++j) {
+        for (int i = 0; i < width; ++i) {
+
+          // Jitter aléatoire (Anti-aliasing) essentiel pour l'accumulation
+          auto u = (i + random_real()) / (width - 1);
+          auto v = (j + random_real()) / (height - 1);
+
+          Ray r = camera->get_ray(u, v);
+          r.is_primary = true;
+
+          // On lance le rayon (Depth 6 est un bon compromis vitesse/qualité
+          // pour la preview)
+          Vec3 pixel_color =
+              ray_color(r, *world_bvh, lights, background.get(), 6, true);
+
+          // 3. Accumulation dans le buffer persistant
+          int idx = ((height - 1 - j) * width + i) * 3;
+
+          // Pas besoin de mutex car chaque thread écrit dans un pixel unique
+          accumulation_buffer[idx + 0] += pixel_color.x();
+          accumulation_buffer[idx + 1] += pixel_color.y();
+          accumulation_buffer[idx + 2] += pixel_color.z();
+
+          // 4. Calcul de la moyenne pour l'affichage
+          float count = (float)(accumulated_spp + 1);
+          display_buffer[idx + 0] = accumulation_buffer[idx + 0] / count;
+          display_buffer[idx + 1] = accumulation_buffer[idx + 1] / count;
+          display_buffer[idx + 2] = accumulation_buffer[idx + 2] / count;
+        }
+      }
+    } catch (...) {
+      delete[] display_buffer;
+      throw;
+    }
+
+    accumulated_spp++; // On a réussi une passe de plus
+
+    // Encapsulation pour Python
+    nb::capsule owner(display_buffer,
+                      [](void *p) noexcept { delete[] (float *)p; });
+    size_t shape[3] = {(size_t)height, (size_t)width, 3ul};
+    return nb::ndarray<nb::numpy, float>(display_buffer, 3, shape, owner);
   }
 
   // Changez le type de retour : nb::ndarray -> nb::dict
@@ -2261,7 +2342,10 @@ NB_MODULE(cpp_engine, m) {
            nb::arg("mouse_y"))
       .def("render_preview", &PyScene::render_preview,
            "Rendu temps réel (Normales)", nb::arg("width"), nb::arg("height"),
-           nb::arg("n_threads") = 0);
+           nb::arg("n_threads") = 0)
+      .def("render_accumulate", &PyScene::render_accumulate, nb::arg("width"),
+           nb::arg("height"), nb::arg("n_threads") = 0)
+      .def("reset_accumulation", &PyScene::reset_accumulation);
 
   nb::class_<Vec3>(m, "Vec3")
       .def(nb::init<Real, Real, Real>())
