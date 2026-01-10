@@ -9,47 +9,54 @@ def main():
     parser = argparse.ArgumentParser(description='Python Path Tracer (C++ Core)')
     
     # --- Arguments Généraux ---
-    parser.add_argument('--scene', type=str, default=None, choices=scenes.AVAILABLE_SCENES.keys())
-    parser.add_argument('--preview', action='store_true', help="Lance le mode prévisualisation temps réel")
+    group_general = parser.add_argument_group("General")
+    group_general.add_argument('--scene', type=str, default=None, choices=scenes.AVAILABLE_SCENES.keys(), help="Choice of the scene to render (default: cornell, or defined in scenes.py)")
+    group_general.add_argument('--preview', action='store_true', help="Enable real-time preview mode")
     
     # --- Arguments de Rendu (Config) ---
-    parser.add_argument('--width', type=int)
-    parser.add_argument('--height', type=int)
-    parser.add_argument('--spp', type=int)
-    parser.add_argument('--depth', type=int)
+    group_render = parser.add_argument_group("Rendering Configuration")
+    group_render.add_argument('--width', type=int, help="Output image width in pixels")
+    group_render.add_argument('--height', type=int, help="Output image height in pixels")
+    group_render.add_argument('--spp', type=int, help="Samples per pixel (default: 100, higher = better quality and slower)")
+    group_render.add_argument('--depth', type=int, help="Maximum recursion depth for light bounces (default: 50)")
     
     # --- Environment ---
-    parser.add_argument('--env', type=str, dest='env_map')
-    parser.add_argument('--env-background-level', type=float)
-    parser.add_argument('--env-direct-level', type=float)
-    parser.add_argument('--env-indirect-level', type=float)
+    group_env = parser.add_argument_group("Environment")
+    group_env.add_argument('--env', type=str, dest='env_map', help="Path to HDR environment map file")
+    group_env.add_argument('--env-background-level', type=float, help="Background light intensity multiplier")
+    group_env.add_argument('--env-direct-level', type=float, help="Direct lighting intensity from environment")
+    group_env.add_argument('--env-indirect-level', type=float, help="Indirect lighting intensity from environment")
     
     # --- Camera ---
-    parser.add_argument('--lookfrom', nargs=3, type=float, help="Position caméra (ex: 0 1 5)")
-    parser.add_argument('--lookat', nargs=3, type=float, help="Cible caméra (ex: 0 1 0)")
-    parser.add_argument('--vup', nargs=3, type=float, help="Vecteur haut (ex: 0 1 0)")
-    parser.add_argument('--vfov', type=float, help="FOV vertical en degrés")
-    parser.add_argument('--aperture', type=float)
-    parser.add_argument('--focus_dist', type=float)
+    group_cam = parser.add_argument_group("Camera")
+    group_cam.add_argument('--lookfrom', nargs=3, type=float, help="Camera position (x y z)")
+    group_cam.add_argument('--lookat', nargs=3, type=float, help="Camera target point (x y z)")
+    group_cam.add_argument('--vup', nargs=3, type=float, help="Camera up vector (x y z)")
+    group_cam.add_argument('--vfov', type=float, help="Vertical Field of View in degrees (default: 40)")
+    group_cam.add_argument('--aperture', type=float, help="Camera aperture radius (default: 0.0, for pinhole)")
+    group_cam.add_argument('--focus_dist', type=float, help="Distance to focus plane (default: 10)")
     
     # --- Auto-Sun ---
-    parser.add_argument('--auto-sun', nargs='?', const=True, default=None, help='Active le soleil. Optionnel: string compacte "I50.0 R50 D1000 E0.2"')
-    parser.add_argument('--auto-sun-intensity', type=float)
-    parser.add_argument('--auto-sun-radius', type=float)
-    parser.add_argument('--auto-sun-dist', type=float)
-    parser.add_argument('--auto-sun-env_level', type=float)
+    group_sun = parser.add_argument_group("Auto-Sun")
+    group_sun.add_argument('--auto-sun', nargs='?', const=True, default=None, help='Enable physical sun. Optional config string: "I50.0 R50 D1000 E0.2"')
+    group_sun.add_argument('--auto-sun-intensity', type=float, help="Intensity of the physical sun (default: 50)")
+    group_sun.add_argument('--auto-sun-radius', type=float, help="Radius of the physical sun (default: 50, affects soft shadows)")
+    group_sun.add_argument('--auto-sun-dist', type=float, help="Distance of the sun from origin (default: 1000)")
+    group_sun.add_argument('--auto-sun-env_level', type=float, help="Environment map multiplier when sun is active (default: 0.2)")
     
     # --- Animation ---
-    parser.add_argument('--animate', action='store_true')
-    parser.add_argument('--frames', type=int)
-    parser.add_argument('--fps', type=int)
-    parser.add_argument('--radius', type=float)
+    group_anim = parser.add_argument_group("Animation")
+    group_anim.add_argument('--animate', action='store_true', help="Enable animation mode (turntable)")
+    group_anim.add_argument('--frames', type=int, help="Number of frames for animation")
+    group_anim.add_argument('--fps', type=int, help="Frames per second for video output")
+    group_anim.add_argument('--radius', type=float, help="Turntable radius for camera orbit")
     
     # --- System ---
-    parser.add_argument('--threads', type=int, default=0)
-    parser.add_argument('--leave-cores', type=int, default=2)
-    parser.add_argument('--param-stamp', action='store_true', help="Incruste les params sur l'image et un timestamp")
-    parser.add_argument('--save-raw', action='store_true', help="Sauvegarde les images intermédiaires (raw, albedo, normal)")
+    group_sys = parser.add_argument_group("System")
+    group_sys.add_argument('--threads', type=int, default=0, help="Number of threads to use (0 = auto)")
+    group_sys.add_argument('--leave-cores', type=int, default=2, help="Number of cores to leave free when using auto-threads (default: 2)")
+    group_sys.add_argument('--param-stamp', action='store_true', help="Writes parameters inside the image, adds a timestamp to the filename")
+    group_sys.add_argument('--save-raw', action='store_true', help="Save intermediate images (raw, albedo, normal)")
 
     args = parser.parse_args()
 

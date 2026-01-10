@@ -5,7 +5,7 @@ from typing import Optional, List
 class RenderConfig:
     # --- Canvas ---
     width: int = 800
-    height: int = 800
+    height: int = 600
     spp: int = 100
     depth: int = 50
     
