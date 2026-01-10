@@ -10,7 +10,7 @@ import math
 from tqdm import tqdm
 import glob
 
-SAVE_INTERMEDIATE_IMAGES = False
+
 
 # --- OUTPUT DIRECTORIES ---
 OUTPUT_ROOT = "outputs"
@@ -164,13 +164,13 @@ def run_single_frame(engine, conf, pool_threads):
     print("Processing outputs...")
     ensure_dir(IMG_DIR)
     
-    if SAVE_INTERMEDIATE_IMAGES: 
+    if conf.save_raw: 
         save_image(pixels, os.path.join(IMG_DIR, f'output_raw{timestamp}.png'), overlay_txt)
 
-    if albedo is not None and SAVE_INTERMEDIATE_IMAGES:
+    if albedo is not None and conf.save_raw:
         save_debug_layer(albedo, os.path.join(IMG_DIR, f'output_albedo{timestamp}.png'), is_normal=False)
     
-    if normal is not None and SAVE_INTERMEDIATE_IMAGES:
+    if normal is not None and conf.save_raw:
         save_debug_layer(normal, os.path.join(IMG_DIR, f'output_normal{timestamp}.png'), is_normal=True)
     
     # Denoise

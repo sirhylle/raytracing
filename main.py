@@ -49,6 +49,7 @@ def main():
     parser.add_argument('--threads', type=int, default=0)
     parser.add_argument('--leave-cores', type=int, default=2)
     parser.add_argument('--param-stamp', action='store_true', help="Incruste les params sur l'image et un timestamp")
+    parser.add_argument('--save-raw', action='store_true', help="Sauvegarde les images intermédiaires (raw, albedo, normal)")
 
     args = parser.parse_args()
 

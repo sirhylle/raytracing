@@ -39,6 +39,7 @@ class RenderConfig:
     threads: int = 0
     leave_cores: int = 2
     param_stamp: bool = False
+    save_raw: bool = False
 
 def build_configuration(args, scene_config):
     final_conf = RenderConfig()
