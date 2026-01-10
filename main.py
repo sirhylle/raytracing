@@ -62,11 +62,11 @@ def main():
 
     # 1. Init Moteur & Scène (Loader)
     # C'est ici que toute la magie d'initialisation opère
-    engine, config = loader.initialize_scene_and_engine(args)
+    engine, config, builder = loader.initialize_scene_and_engine(args)
     
     # 2. Dispatch selon le mode
     if args.preview:
-        final_cam = viewer.run(engine, config)
+        final_cam = viewer.run(engine, config, builder)
         if final_cam:
             print("\n" + "="*60)
             print("CAMERA STATE CAPTURED")

@@ -3,268 +3,579 @@ import numpy as np
 import time
 import math
 import cpp_engine
+import transforms as tf 
 
-# --- HELPER UI : TEXTE AVEC CONTOUR (Style OpenCV) ---
-def draw_text_outlined(surface, text, font, pos, color, outline_col=(0,0,0)):
-    x, y = pos
-    # On dessine le contour (noir) en décalé
-    for dx, dy in [(-1,-1), (-1,1), (1,-1), (1,1), (0,2)]: # Contour épais
-        outline = font.render(text, True, outline_col)
-        surface.blit(outline, (x + dx, y + dy))
-    
-    # On dessine le texte principal par dessus
-    txt_surf = font.render(text, True, color)
-    surface.blit(txt_surf, (x, y))
+# ===============================================================================================
+# CONFIGURATION UI (STYLE "DARK PRO")
+# ===============================================================================================
 
-# --- LOGIQUE CAMÉRA ---
-class CameraController:
-    def __init__(self, conf):
-        # 1. Initialisation Position & Orientation
-        self.pos = np.array(conf.lookfrom, dtype=np.float32)
-        target = np.array(conf.lookat, dtype=np.float32)
-        
-        direction = target - self.pos
-        length = np.linalg.norm(direction)
-        direction = direction / length if length > 0 else np.array([0, 0, -1])
-        
-        self.pitch = math.asin(direction[1])
-        self.yaw = math.atan2(direction[0], direction[2])
-        
-        # 2. Paramètres Optiques
-        self.vfov = conf.vfov
-        self.focus_dist = conf.focus_dist
-        self.aperture = getattr(conf, 'aperture', 0.0) or 0.0
-        
-        # 3. Vitesse de base
-        self.initial_speed = length * 0.5 if length > 0 else 5.0
-        self.base_speed = self.initial_speed
-        self.mouse_sensitivity = 0.003
-        
-        self.dirty = True 
+COL_BG      = (43, 43, 43)
+COL_PANEL   = (50, 50, 50)
+COL_HEADER  = (30, 30, 30)
+COL_TEXT    = (220, 220, 220)
+COL_TEXT_DIM= (150, 150, 150)
 
-    def handle_input(self, keys, mouse_dx, mouse_dy, dt):
-        # --- A. ORIENTATION (Si Clic Gauche maintenu) ---
-        if mouse_dx != 0 or mouse_dy != 0:
-            self.yaw -= mouse_dx * self.mouse_sensitivity 
-            self.pitch -= mouse_dy * self.mouse_sensitivity
-            self.pitch = max(-1.5, min(1.5, self.pitch))
-            self.dirty = True
+COL_BTN     = (70, 70, 70)
+COL_BTN_HOV = (90, 90, 90)
+COL_BTN_ACT = (58, 110, 165) # Bleu Acier
+COL_BTN_DIS = (40, 40, 40)
+COL_FIELD   = (30, 30, 30)   # Fond des champs texte
+COL_FIELD_ACT= (0, 100, 150) # Fond champ actif
+COL_BORDER  = (30, 30, 30)
+COL_ACCENT  = (255, 165, 0)
 
-        # --- B. CALCUL VECTEURS LOCAUX ---
-        fx = math.sin(self.yaw) * math.cos(self.pitch)
-        fy = math.sin(self.pitch)
-        fz = math.cos(self.yaw) * math.cos(self.pitch)
-        fwd = np.array([fx, fy, fz], dtype=np.float32)
-        
-        global_up = np.array([0, 1, 0], dtype=np.float32)
-        right = np.cross(fwd, global_up)
-        nm = np.linalg.norm(right)
-        if nm > 0: right /= nm
-        
-        # --- C. DÉPLACEMENT (Flèches) ---
-        move = np.array([0.0, 0.0, 0.0])
-        
-        if keys[pygame.K_UP]:    move += fwd
-        if keys[pygame.K_DOWN]:  move -= fwd
-        if keys[pygame.K_LEFT]:  move -= right
-        if keys[pygame.K_RIGHT]: move += right
-        
-        # --- D. ALTITUDE (Pavé Numérique) ---
-        if keys[pygame.K_KP1]:   move += np.array([0, 1, 0])
-        if keys[pygame.K_KP0]:   move -= np.array([0, 1, 0])
+VIEW_W, VIEW_H = 800, 600
+PANEL_W = 320
+WIN_W = VIEW_W + PANEL_W
+WIN_H = VIEW_H
 
-        # --- E. FOCUS / APERTURE ---
-        if keys[pygame.K_u]: self.focus_dist += 5.0 * dt; self.dirty = True
-        if keys[pygame.K_j]: self.focus_dist = max(0.1, self.focus_dist - 5.0 * dt); self.dirty = True
-        if keys[pygame.K_o]: self.aperture += 0.5 * dt; self.dirty = True
-        if keys[pygame.K_p]: self.aperture = max(0.0, self.aperture - 0.5 * dt); self.dirty = True
+# ===============================================================================================
+# UI FRAMEWORK (AVEC SAISIE TEXTE)
+# ===============================================================================================
 
-        # Application
-        if np.linalg.norm(move) > 0:
-            self.pos += move * self.base_speed * dt
-            self.dirty = True
+class UIElement:
+    def draw(self, screen, fonts): pass
+    def handle_event(self, event, state): return False
 
-    def apply_to_engine(self, engine, aspect_ratio):
-        if self.dirty:
-            fx = math.sin(self.yaw) * math.cos(self.pitch)
-            fy = math.sin(self.pitch)
-            fz = math.cos(self.yaw) * math.cos(self.pitch)
-            lookat = self.pos + np.array([fx, fy, fz], dtype=np.float32)
+class Button(UIElement):
+    def __init__(self, x, y, w, h, text, callback=None, data=None, toggle=False, group=None):
+        self.rect = pygame.Rect(x, y, w, h)
+        self.text = text
+        self.callback = callback
+        self.data = data
+        self.hover = False
+        self.active = False
+        self.toggle = toggle
+        self.group = group 
+        self.enabled = True 
+
+    def draw(self, screen, fonts):
+        col = COL_BTN_DIS if not self.enabled else (COL_BTN_ACT if self.active else (COL_BTN_HOV if self.hover else COL_BTN))
+        pygame.draw.rect(screen, col, self.rect, border_radius=4)
+        pygame.draw.rect(screen, COL_BORDER, self.rect, 1, border_radius=4)
+        
+        txt_col = COL_TEXT_DIM if not self.enabled else COL_TEXT
+        f = fonts.get(14)
+        txt_surf = f.render(self.text, True, txt_col)
+        txt_rect = txt_surf.get_rect(center=self.rect.center)
+        screen.blit(txt_surf, txt_rect)
+
+    def handle_event(self, event, state):
+        if not self.enabled: return False
+        
+        if event.type == pygame.MOUSEMOTION:
+            self.hover = self.rect.collidepoint(event.pos)
             
-            orig_cpp = cpp_engine.Vec3(self.pos[0], self.pos[1], self.pos[2])
-            targ_cpp = cpp_engine.Vec3(lookat[0], lookat[1], lookat[2])
-            up_cpp   = cpp_engine.Vec3(0, 1, 0)
+        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self.hover:
+                if self.toggle:
+                    if self.group is not None:
+                        for btn in self.group: btn.active = False
+                    self.active = True
+                else:
+                    self.active = True
+                
+                if self.callback:
+                    if self.data is not None: self.callback(self.data)
+                    else: self.callback()
+                return True
+                
+        elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+            if not self.toggle: self.active = False
             
-            engine.set_camera(orig_cpp, targ_cpp, up_cpp, 
-                              self.vfov, aspect_ratio, self.aperture, self.focus_dist)
-            self.dirty = False
+        return False
+
+class Label(UIElement):
+    def __init__(self, x, y, text, font_size=16, color=COL_TEXT, align="left", width=0):
+        self.pos = (x, y)
+        self.text = text
+        self.color = color
+        self.font_size = font_size
+        self.align = align 
+        self.width = width 
+        self.enabled = True 
+
+    def draw(self, screen, fonts):
+        f = fonts.get(self.font_size)
+        surf = f.render(self.text, True, self.color)
+        draw_pos = list(self.pos)
+        if self.align == "center" and self.width > 0:
+            txt_w = surf.get_width()
+            draw_pos[0] = self.pos[0] + (self.width // 2) - (txt_w // 2)
+        screen.blit(surf, draw_pos)
+
+class NumberField(UIElement):
+    """Champ de saisie numérique."""
+    def __init__(self, x, y, w, h, get_cb, set_cb):
+        self.rect = pygame.Rect(x, y, w, h)
+        self.get_cb = get_cb 
+        self.set_cb = set_cb 
+        self.active = False
+        self.text_buffer = ""
+        self.enabled = True
+
+    def draw(self, screen, fonts):
+        if not self.enabled: return 
+        
+        col = COL_FIELD_ACT if self.active else COL_FIELD
+        pygame.draw.rect(screen, col, self.rect, border_radius=4)
+        pygame.draw.rect(screen, COL_BORDER, self.rect, 1, border_radius=4)
+        
+        if self.active:
+            display_txt = self.text_buffer
+        else:
+            val = self.get_cb()
+            display_txt = f"{val:.2f}"
+            
+        f = fonts.get(14)
+        surf = f.render(display_txt, True, COL_TEXT)
+        screen.blit(surf, (self.rect.x + 5, self.rect.centery - surf.get_height()//2))
+
+    def handle_event(self, event, state):
+        if not self.enabled: return False
+
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self.rect.collidepoint(event.pos):
+                self.active = True
+                self.text_buffer = str(self.get_cb()) 
+                state.typing_mode = True 
+                return True
+            else:
+                if self.active: self.confirm(state) 
+                return False
+                
+        elif event.type == pygame.KEYDOWN and self.active:
+            if event.key == pygame.K_RETURN or event.key == pygame.K_KP_ENTER:
+                self.confirm(state)
+            elif event.key == pygame.K_ESCAPE:
+                self.active = False
+                state.typing_mode = False
+            elif event.key == pygame.K_BACKSPACE:
+                self.text_buffer = self.text_buffer[:-1]
+            else:
+                if event.unicode in "0123456789.-":
+                    self.text_buffer += event.unicode
             return True
         return False
 
-    def get_final_params(self):
-        fx = math.sin(self.yaw) * math.cos(self.pitch)
-        fy = math.sin(self.pitch)
-        fz = math.cos(self.yaw) * math.cos(self.pitch)
-        lookat = self.pos + np.array([fx, fy, fz])
-        return {
-            'lookfrom': self.pos.tolist(),
-            'lookat': lookat.tolist(),
-            'vfov': self.vfov,
-            'focus_dist': self.focus_dist,
-            'aperture': self.aperture
-        }
+    def confirm(self, state):
+        try:
+            val = float(self.text_buffer)
+            self.set_cb(val)
+            state.dirty = True
+        except ValueError:
+            pass 
+        self.active = False
+        state.typing_mode = False
 
-# --- BOUCLE PRINCIPALE ---
-def run(engine, config):
+# ===============================================================================================
+# ÉTAT DE L'ÉDITEUR
+# ===============================================================================================
+
+class EditorState:
+    def __init__(self, conf, builder):
+        self.builder = builder 
+        self.res_scale = 1 
+        self.res_auto = False
+        self.preview_mode = 0 
+        
+        # Camera
+        self.cam_pos = np.array(conf.lookfrom, dtype=np.float32)
+        target = np.array(conf.lookat, dtype=np.float32)
+        direction = target - self.cam_pos
+        length = np.linalg.norm(direction)
+        direction = direction / length if length > 0 else np.array([0, 0, -1])
+        self.pitch = math.asin(np.clip(direction[1], -0.99, 0.99))
+        self.yaw = math.atan2(direction[0], direction[2])
+        self.vfov = conf.vfov
+        self.aperture = conf.aperture
+        self.focus_dist = conf.focus_dist
+        self.move_speed = 5.0
+        
+        # Tools
+        self.tool_mode = "CAM"
+        self.selected_id = -1
+        self.gizmo_mode = "MOVE"
+        self.typing_mode = False 
+        
+        self.dirty = True
+        self.accum_spp = 0
+
+    def get_selected_info(self):
+        if self.selected_id != -1 and self.selected_id in self.builder.registry:
+            return self.builder.registry[self.selected_id]
+        return None
+
+# ===============================================================================================
+# MAIN
+# ===============================================================================================
+
+def update_transform(engine, state):
+    data = state.get_selected_info()
+    if not data: return
+
+    pos = data['pos']
+    rot = data['rot']
+    scl = data['scale']
+
+    M = tf.translate(pos[0], pos[1], pos[2]) @ \
+        tf.rotate_y(rot[1]) @ \
+        tf.rotate_x(rot[0]) @ \
+        tf.rotate_z(rot[2]) @ \
+        tf.scale(scl[0], scl[1], scl[2])
+    InvM = np.linalg.inv(M)
+    
+    engine.update_instance_transform(state.selected_id, 
+                                     np.ascontiguousarray(M, dtype=np.float32), 
+                                     np.ascontiguousarray(InvM, dtype=np.float32))
+    state.dirty = True
+
+def run(engine, config, builder):
     pygame.init()
-    W, H = 800, 600
-    screen = pygame.display.set_mode((W, H))
-    pygame.display.set_caption("Raytracer Viewer")
+    screen = pygame.display.set_mode((WIN_W, WIN_H))
+    pygame.display.set_caption("Raytracer Studio - Interactive Editor")
     clock = pygame.time.Clock()
     
-    # Police système "Gras" pour imiter le look technique
-    font = pygame.font.SysFont("Arial", 16, bold=True)
+    fonts = { 12: pygame.font.SysFont("Arial", 12), 14: pygame.font.SysFont("Arial", 14), 18: pygame.font.SysFont("Arial", 18, bold=True) }
+    state = EditorState(config, builder)
     
-    cam = CameraController(config)
+    ui = [] 
+    
+    def btn(x, y, w, h, txt, cb, data=None, toggle=False, grp=None, active=False):
+        b = Button(VIEW_W + x, y, w, h, txt, cb, data, toggle, grp)
+        if active: b.active = True
+        if grp is not None: grp.append(b) 
+        ui.append(b)
+        return b
+    
+    def lbl(x, y, txt, sz=16, col=COL_TEXT, align="left", width=0):
+        ui.append(Label(VIEW_W + x, y, txt, sz, col, align, width))
+
+    # HEADER COMPACT
+    y = 12
+    l_fps = Label(VIEW_W + 10, y, "FPS: --", 14, COL_TEXT_DIM); ui.append(l_fps)
+    l_spp = Label(VIEW_W + 100, y, "SPP: --", 14, COL_TEXT_DIM); ui.append(l_spp)
+    y += 35 
+    
+    # PREVIEW
+    lbl(10, y, "PREVIEW QUALITY", 18, COL_ACCENT)
+    y += 25
+    def set_res(v): 
+        if v == 'AUTO': state.res_auto = True
+        else: state.res_auto = False; state.res_scale = v
+        state.dirty = True
+    grp_res = []
+    btn(10, y, 50, 24, "AUTO", set_res, 'AUTO', True, grp_res, False)
+    btn(65, y, 40, 24, "1:1", set_res, 1, True, grp_res, True)
+    btn(110, y, 40, 24, "1:2", set_res, 2, True, grp_res)
+    btn(155, y, 40, 24, "1:4", set_res, 4, True, grp_res)
+    y += 30
+    
+    def set_mode(m): state.preview_mode = m; state.dirty = True
+    grp_mode = []
+    btn(10, y, 90, 24, "NORMALS", set_mode, 0, True, grp_mode, True)
+    btn(105, y, 70, 24, "CLAY", set_mode, 1, True, grp_mode)
+    btn(180, y, 70, 24, "RAY", set_mode, 2, True, grp_mode)
+    y += 35
+    
+    # TOOLS
+    lbl(10, y, "MAIN TOOLS", 18, COL_ACCENT)
+    y += 25
+    def set_tool(t): state.tool_mode = t
+    grp_tool = []
+    # On garde les références pour le changement auto
+    b_cam = btn(10, y, 90, 24, "CAMERA", set_tool, "CAM", True, grp_tool, True)
+    b_sel = btn(105, y, 90, 24, "SELECT", set_tool, "SEL", True, grp_tool)
+    b_foc = btn(200, y, 90, 24, "FOCUS", set_tool, "FOCUS", True, grp_tool)
+    y += 50
+    
+    # CAMERA SETTINGS
+    lbl(10, y, "CAMERA SETTINGS", 18, COL_ACCENT)
+    y += 25
+    def adj_cam(data):
+        attr, d = data 
+        setattr(state, attr, getattr(state, attr) + d)
+        state.dirty = True
+    
+    # Compact Labels
+    l_fov = Label(VIEW_W+10, y, "FOV", 12, align="center", width=90); ui.append(l_fov)
+    l_apt = Label(VIEW_W+115, y, "Ap", 12, align="center", width=90); ui.append(l_apt)
+    l_foc = Label(VIEW_W+220, y, "Dist", 12, align="center", width=90); ui.append(l_foc)
+    y += 15 
+    
+    # Boutons +/-
+    wb, hb, gb = 42, 24, 5
+    btn(10, y, wb, hb, "-", adj_cam, ('vfov', -5)); btn(10+wb+gb, y, wb, hb, "+", adj_cam, ('vfov', 5))
+    btn(115, y, wb, hb, "-", adj_cam, ('aperture', -0.05)); btn(115+wb+gb, y, wb, hb, "+", adj_cam, ('aperture', 0.05))
+    btn(220, y, wb, hb, "-", adj_cam, ('focus_dist', -0.5)); btn(220+wb+gb, y, wb, hb, "+", adj_cam, ('focus_dist', 0.5))
+    y += 40
+    
+    # INSPECTOR
+    lbl(10, y, "OBJECT INSPECTOR", 18, COL_ACCENT); y += 25
+    l_name = Label(VIEW_W+10, y, "No Selection", 14, COL_TEXT_DIM); ui.append(l_name); y += 25
+    
+    # Gizmo Modes
+    def set_gizmo(g): 
+        state.gizmo_mode = g
+        # [MODIF] Auto-switch vers SELECT si on clic sur un outil Gizmo
+        if state.tool_mode != "SEL":
+            state.tool_mode = "SEL"
+            # Update visuel des boutons
+            b_cam.active = False
+            b_sel.active = True
+            b_foc.active = False
+
+    grp_gizmo = []
+    b_move = btn(10, y, 65, 24, "MOVE", set_gizmo, "MOVE", True, grp_gizmo, True)
+    b_lift = btn(80, y, 65, 24, "LIFT", set_gizmo, "LIFT", True, grp_gizmo) 
+    b_rot  = btn(150, y, 65, 24, "ROT", set_gizmo, "ROT", True, grp_gizmo)
+    b_scl  = btn(220, y, 65, 24, "SCALE", set_gizmo, "SCALE", True, grp_gizmo)
+    y += 35
+    
+    # CHAMPS NUMÉRIQUES
+    def get_v(idx_name, idx_axis):
+        d = state.get_selected_info()
+        return d[idx_name][idx_axis] if d else 0.0
+    def set_v(val, idx_name, idx_axis):
+        d = state.get_selected_info()
+        if d: d[idx_name][idx_axis] = val; update_transform(engine, state)
+
+    fields = []
+    props = ["pos", "rot", "scale"]
+    prop_names = ["Pos", "Rot", "Scl"]
+    
+    field_w = 60
+    gap = 40
+    start_x = 50
+    
+    for i, prop in enumerate(props):
+        lbl(10, y+4, prop_names[i], 14, COL_TEXT_DIM)
+        for j in range(3):
+            f = NumberField(VIEW_W + start_x + j*(field_w+gap), y, field_w, 22,
+                            lambda p=prop, axis=j: get_v(p, axis),
+                            lambda v, p=prop, axis=j: set_v(v, p, axis))
+            ui.append(f); fields.append(f)
+        y += 28
+
+    y += 10 # Remonté un peu
+    # CONTROLS
+    lbl(10, y, "CONTROLS", 18, COL_ACCENT); y += 25
+    lbl(10, y, "Arrows: Move Cam | R-Click: Rotate Cam", 12, COL_TEXT_DIM); y+=15
+    lbl(10, y, "Mid-Click: Elevate Cam | Wheel: Zoom", 12, COL_TEXT_DIM); y+=15
+    lbl(10, y, "Shift+LeftClick: Select Obj", 12, COL_TEXT_DIM); y+=15
+    lbl(10, y, "Ctrl+LeftClick: Move Obj | Shift+RClick: Focus", 12, COL_TEXT_DIM); y+=15
+
+    # ===========================================================================================
+    # LOOP
+    # ===========================================================================================
     
     running = True
-    pygame.mouse.set_visible(True)
-    pygame.event.set_grab(False)
+    last_time = time.time()
+    gizmo_buttons = [b_move, b_lift, b_rot, b_scl]
     
-    mouse_down = False
-    current_scale = 1
-    preview_mode = 0
-    locked_preview = False
-    
-    last_interaction_time = time.time()
-    PT_DELAY = 0.5 
-
     while running:
-        dt = clock.tick(60) / 1000.0
-        current_time = time.time()
+        clock.tick() 
+        now = time.time()
+        dt = now - last_time
+        last_time = now
         
-        # --- 1. EVENTS ---
+        keys = pygame.key.get_pressed()
+        mouse_pos = pygame.mouse.get_pos()
+        mouse_btns = pygame.mouse.get_pressed()
+        in_viewport = mouse_pos[0] < VIEW_W
+        
+        is_shift = keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]
+        is_ctrl  = keys[pygame.K_LCTRL] or keys[pygame.K_RCTRL]
+        
         mouse_dx, mouse_dy = 0, 0
         
         for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                running = False
-            
+            if event.type == pygame.QUIT: running = False
             elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE: running = False
-                elif event.key == pygame.K_m:
-                    preview_mode = (preview_mode + 1) % 2
-                    last_interaction_time = current_time
-                elif event.key == pygame.K_l:
-                    locked_preview = not locked_preview
-                    last_interaction_time = current_time
-                elif event.key == pygame.K_KP_PLUS or event.key == pygame.K_PLUS:
-                    cam.base_speed *= 1.5
-                    print(f"Speed UP: {cam.base_speed:.2f}")
-                elif event.key == pygame.K_KP_MINUS or event.key == pygame.K_MINUS:
-                    cam.base_speed /= 1.5
-                    print(f"Speed DOWN: {cam.base_speed:.2f}")
-                elif event.key == pygame.K_p: 
-                    print(cam.get_final_params())
+                ui_captured = False
+                for widget in ui:
+                    if widget.handle_event(event, state):
+                        ui_captured = True
+                        state.dirty = True 
+                
+                if not state.typing_mode and not ui_captured:
+                    if event.key == pygame.K_ESCAPE: running = False
+                    
+                    # [MODIF] Fix crash: on retire les raccourcis objets ici
+                    # PageUp/Down sont maintenant gérés uniquement par la caméra en bas
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
-                if event.button == 1: # Clic Gauche
-                    mouse_down = True
-                    pygame.event.set_grab(True)
-                    pygame.mouse.set_visible(False)
-                elif event.button == 3: # Clic Droit (Auto-Focus)
-                    mx, my = event.pos
-                    cam.apply_to_engine(engine, W/H)
-                    res = engine.pick_focus_distance(W, H, mx, my)
-                    if res[0] > 0:
-                        cam.focus_dist = res[0]
-                        cam.dirty = True
-                        last_interaction_time = current_time
+                ui_hit = False
+                if not in_viewport:
+                    for widget in ui:
+                        if widget in fields and state.selected_id == -1: continue
+                        if widget in gizmo_buttons and state.selected_id == -1: continue
+                        
+                        if widget.handle_event(event, state):
+                            ui_hit = True
+                            state.dirty = True 
+                
+                else: 
+                    if event.button == 1 and not ui_hit:
+                        if state.tool_mode == "SEL" or (state.tool_mode == "CAM" and is_shift):
+                            pid = engine.pick_instance_id(VIEW_W, VIEW_H, mouse_pos[0], mouse_pos[1])
+                            state.selected_id = pid
+                            state.dirty = True
+                        elif state.tool_mode == "FOCUS":
+                            res = engine.pick_focus_distance(VIEW_W, VIEW_H, mouse_pos[0], mouse_pos[1])
+                            if res[0] > 0:
+                                state.focus_dist = res[0]; state.dirty = True;
+                        
+                    elif event.button == 3:
+                        if is_shift:
+                            res = engine.pick_focus_distance(VIEW_W, VIEW_H, mouse_pos[0], mouse_pos[1])
+                            if res[0] > 0: state.focus_dist = res[0]; state.dirty = True
+                        else:
+                            pygame.event.set_grab(True); pygame.mouse.set_visible(False)
+                    
+                    elif event.button == 2:
+                        pygame.event.set_grab(True); pygame.mouse.set_visible(False)
 
             elif event.type == pygame.MOUSEBUTTONUP:
                 if event.button == 1:
-                    mouse_down = False
-                    pygame.event.set_grab(False)
-                    pygame.mouse.set_visible(True)
+                    for widget in ui: widget.handle_event(event, state) 
+                elif event.button == 3 or event.button == 2:
+                    pygame.event.set_grab(False); pygame.mouse.set_visible(True)
 
             elif event.type == pygame.MOUSEMOTION:
-                if mouse_down:
-                    mouse_dx, mouse_dy = event.rel
-                    
+                if not in_viewport:
+                    for widget in ui: widget.handle_event(event, state)
+                
+                if mouse_btns[2] and not is_shift:
+                    dx, dy = event.rel
+                    state.yaw -= dx * 0.003
+                    state.pitch -= dy * 0.003
+                    state.pitch = max(-1.5, min(1.5, state.pitch))
+                    state.dirty = True
+                
+                if mouse_btns[1]:
+                    dx, dy = event.rel
+                    state.cam_pos[1] -= dy * 0.05 
+                    state.dirty = True
+
+                elif mouse_btns[0] and in_viewport and state.selected_id != -1:
+                    if state.tool_mode != "CAM" or is_ctrl:
+                         dx, dy = event.rel
+                         data = state.get_selected_info()
+                         if data:
+                             scale_factor = 0.01 * (state.focus_dist / 5.0)
+                             
+                             if state.gizmo_mode == "MOVE":
+                                 flat_yaw = state.yaw
+                                 fx = math.sin(flat_yaw); fz = math.cos(flat_yaw)
+                                 rx = math.cos(flat_yaw); rz = -math.sin(flat_yaw)
+                                 data['pos'][0] += rx * -dx * scale_factor + fx * -dy * scale_factor
+                                 data['pos'][2] += rz * -dx * scale_factor + fz * -dy * scale_factor
+                                 
+                             elif state.gizmo_mode == "LIFT":
+                                 data['pos'][1] -= dy * scale_factor 
+                                 
+                             elif state.gizmo_mode == "ROT":
+                                 data['rot'][1] += dx * 0.5 
+                                 
+                             elif state.gizmo_mode == "SCALE":
+                                 s = 1.0 + (dx * 0.01)
+                                 data['scale'] = [v * s for v in data['scale']]
+                                 
+                             update_transform(engine, state)
+
             elif event.type == pygame.MOUSEWHEEL:
-                cam.vfov -= event.y * 2.0
-                cam.vfov = max(5.0, min(160.0, cam.vfov))
-                cam.dirty = True
-                last_interaction_time = current_time
+                if in_viewport:
+                    fx = math.sin(state.yaw) * math.cos(state.pitch)
+                    fy = math.sin(state.pitch)
+                    fz = math.cos(state.yaw) * math.cos(state.pitch)
+                    state.cam_pos += np.array([fx, fy, fz]) * event.y * 1.0
+                    state.dirty = True
 
-        # --- 2. UPDATE ---
-        keys = pygame.key.get_pressed()
-        cam.handle_input(keys, mouse_dx, mouse_dy, dt)
-        
-        scene_changed = cam.apply_to_engine(engine, W/H)
-        if scene_changed:
-            if hasattr(engine, 'reset_accumulation'): engine.reset_accumulation()
-            last_interaction_time = current_time
-
-        # --- 3. RENDER ---
-        time_since = current_time - last_interaction_time
-        accumulate = (time_since > PT_DELAY) and (not locked_preview)
-        
-        img_surface = None
-        status_text = ""
-        status_color = (255, 255, 255)
-
-        if not accumulate:
-            # === PREVIEW ===
-            pW, pH = max(1, W // current_scale), max(1, H // current_scale)
-            t0 = time.time()
-            raw = engine.render_preview(pW, pH, preview_mode, 4)
-            render_dt = time.time() - t0
+        if not state.typing_mode: 
+            fx = math.sin(state.yaw) * math.cos(state.pitch)
+            fy = math.sin(state.pitch)
+            fz = math.cos(state.yaw) * math.cos(state.pitch)
+            fwd = np.array([fx, fy, fz])
+            right = np.cross(fwd, np.array([0,1,0]))
+            if np.linalg.norm(right) > 0: right /= np.linalg.norm(right)
             
-            # Hystérésis
-            if render_dt > 0.05: current_scale = min(16, current_scale * 2) 
-            elif render_dt < 0.020: current_scale = max(1, current_scale // 2)
+            move = np.array([0.0,0.0,0.0])
+            
+            if keys[pygame.K_UP]:    move += fwd
+            if keys[pygame.K_DOWN]:  move -= fwd
+            if keys[pygame.K_LEFT]:  move -= right
+            if keys[pygame.K_RIGHT]: move += right
+            if keys[pygame.K_PAGEUP]:   move[1] += 1.0
+            if keys[pygame.K_PAGEDOWN]: move[1] -= 1.0
+            
+            if np.linalg.norm(move) > 0:
+                state.cam_pos += move * state.move_speed * dt
+                state.dirty = True
+        
+        if state.dirty:
+            fx = math.sin(state.yaw) * math.cos(state.pitch)
+            fy = math.sin(state.pitch)
+            fz = math.cos(state.yaw) * math.cos(state.pitch)
+            lookat = state.cam_pos + np.array([fx, fy, fz])
+            engine.set_camera(cpp_engine.Vec3(*state.cam_pos), cpp_engine.Vec3(*lookat), cpp_engine.Vec3(0,1,0),
+                              state.vfov, VIEW_W/VIEW_H, state.aperture, state.focus_dist)
+            if hasattr(engine, 'reset_accumulation'): engine.reset_accumulation()
+            state.accum_spp = 0; state.dirty = False
 
+        surface = None
+        scale = state.res_scale
+        if state.res_auto:
+            if dt > 0.06: scale = 4
+            elif dt > 0.03: scale = 2
+            else: scale = 1
+            
+        if state.preview_mode == 2:
+            raw = engine.render_accumulate(VIEW_W, VIEW_H, 4)
+            img = (np.clip(raw,0,1)*255).astype(np.uint8)
+            surface = pygame.surfarray.make_surface(np.transpose(img, (1,0,2)))
+            state.accum_spp += 1
+        else:
+            pW, pH = max(1, VIEW_W//scale), max(1, VIEW_H//scale)
+            raw = engine.render_preview(pW, pH, state.preview_mode, 4)
             img = (np.clip(raw,0,1)*255).astype(np.uint8)
             surf = pygame.surfarray.make_surface(np.transpose(img, (1,0,2)))
-            
-            if current_scale > 1:
-                img_surface = pygame.transform.scale(surf, (W, H))
-            else:
-                img_surface = surf
-                
-            mode_str = "CLAY" if preview_mode == 1 else "NORMALS"
-            if locked_preview:
-                status_text = f"LOCKED ({mode_str})"
-                status_color = (0, 150, 255)
-            else:
-                status_text = f"PREVIEW ({mode_str})"
-        else:
-            # === PATH TRACING ===
-            current_scale = 1 
-            if hasattr(engine, 'render_accumulate'):
-                raw = engine.render_accumulate(W, H, 4)
-                img = (np.clip(raw,0,1)*255).astype(np.uint8)
-                img_surface = pygame.surfarray.make_surface(np.transpose(img, (1,0,2)))
-                status_text = "PATH TRACING"
-                status_color = (0, 255, 0)
+            surface = pygame.transform.scale(surf, (VIEW_W, VIEW_H)) if scale > 1 else surf
+            state.accum_spp = 0
 
-        # --- 4. DRAW ---
-        if img_surface: screen.blit(img_surface, (0,0))
+        screen.blit(surface, (0,0))
+        pygame.draw.rect(screen, COL_PANEL, (VIEW_W, 0, PANEL_W, WIN_H))
+        pygame.draw.line(screen, COL_BORDER, (VIEW_W, 0), (VIEW_W, WIN_H))
         
-        # Ligne de Statut (Haut Gauche)
-        draw_text_outlined(screen, status_text, font, (10, 10), status_color)
+        l_fps.text = f"FPS: {clock.get_fps():.0f}"
+        l_spp.text = f"SPP: {state.accum_spp}"
+        l_fov.text = f"FOV: {state.vfov:.0f}"
+        l_apt.text = f"Ap: {state.aperture:.2f}"
+        l_foc.text = f"Dist: {state.focus_dist:.1f}"
         
-        # Ligne d'Infos Techniques (Bas Gauche) - Identique à l'ancien viewer
-        real_fps = 1.0 / dt if dt > 0 else 0
-        speed_mult = cam.base_speed / cam.initial_speed
+        sel_data = state.get_selected_info()
+        has_sel = (sel_data is not None)
         
-        info_line = f"FPS: {real_fps:.0f} | SCL: 1/{current_scale} | SPD: {speed_mult:.2f}x | FOC: {cam.focus_dist:.1f}m | AP: {cam.aperture:.2f} | FOV: {cam.vfov:.1f}"
+        for b in gizmo_buttons: b.enabled = has_sel
+        for f in fields: f.enabled = has_sel
+
+        if has_sel:
+            name = sel_data.get('name', sel_data.get('type', 'Unknown'))
+            l_name.text = f"ID {state.selected_id}: {name}"
+        else:
+            l_name.text = "No Selection"
+            
+        pygame.draw.rect(screen, COL_HEADER, (VIEW_W, 0, PANEL_W, 40))
         
-        # Positionnement dynamique en bas (H - 25px)
-        draw_text_outlined(screen, info_line, font, (10, H - 25), (220, 220, 220))
-        
+        for w in ui: w.draw(screen, fonts)
+
         pygame.display.flip()
 
     pygame.quit()
-    return cam.get_final_params()
+    return {
+        'lookfrom': state.cam_pos.tolist(),
+        'lookat': (state.cam_pos + np.array([math.sin(state.yaw), math.sin(state.pitch), math.cos(state.yaw)])).tolist(),
+        'vfov': state.vfov,
+        'aperture': state.aperture,
+        'focus_dist': state.focus_dist
+    }
