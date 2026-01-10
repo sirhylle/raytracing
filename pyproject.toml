@@ -16,6 +16,7 @@ dependencies = [
     "ninja",
     "trimesh>=4.10.1",
     "scipy>=1.15.3",
+    "pygame-ce>=2.5.6",
 ]
 
 [build-system]

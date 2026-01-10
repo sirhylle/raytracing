@@ -1,7 +1,8 @@
 import argparse
 import scenes
 import loader
-from modes import renderer, viewer
+from modes import renderer
+from modes import viewer_pygames as viewer
 import gc
 
 def main():
