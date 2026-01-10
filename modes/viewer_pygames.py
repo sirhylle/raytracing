@@ -2,8 +2,10 @@ import pygame
 import numpy as np
 import time
 import math
+import threading # Pour le rendu en arrière-plan
 import cpp_engine
-import transforms as tf 
+import transforms as tf
+from modes import renderer # On importe le moteur de rendu offline
 
 # ===============================================================================================
 # CONFIGURATION UI (STYLE "DARK PRO")
@@ -19,10 +21,11 @@ COL_BTN     = (70, 70, 70)
 COL_BTN_HOV = (90, 90, 90)
 COL_BTN_ACT = (58, 110, 165) # Bleu Acier
 COL_BTN_DIS = (40, 40, 40)
-COL_FIELD   = (30, 30, 30)   # Fond des champs texte
-COL_FIELD_ACT= (0, 100, 150) # Fond champ actif
+COL_FIELD   = (30, 30, 30)   
+COL_FIELD_ACT= (0, 100, 150) 
 COL_BORDER  = (30, 30, 30)
 COL_ACCENT  = (255, 165, 0)
+COL_OVERLAY = (0, 0, 0, 180) # Fond semi-transparent pour l'overlay de rendu
 
 VIEW_W, VIEW_H = 800, 600
 PANEL_W = 320
@@ -30,7 +33,7 @@ WIN_W = VIEW_W + PANEL_W
 WIN_H = VIEW_H
 
 # ===============================================================================================
-# UI FRAMEWORK (AVEC SAISIE TEXTE)
+# UI FRAMEWORK
 # ===============================================================================================
 
 class UIElement:
@@ -105,7 +108,6 @@ class Label(UIElement):
         screen.blit(surf, draw_pos)
 
 class NumberField(UIElement):
-    """Champ de saisie numérique."""
     def __init__(self, x, y, w, h, get_cb, set_cb):
         self.rect = pygame.Rect(x, y, w, h)
         self.get_cb = get_cb 
@@ -198,8 +200,10 @@ class EditorState:
         self.gizmo_mode = "MOVE"
         self.typing_mode = False 
         
+        # Rendering State
         self.dirty = True
         self.accum_spp = 0
+        self.is_rendering = False # True quand le rendu offline tourne
 
     def get_selected_info(self):
         if self.selected_id != -1 and self.selected_id in self.builder.registry:
@@ -230,6 +234,19 @@ def update_transform(engine, state):
                                      np.ascontiguousarray(InvM, dtype=np.float32))
     state.dirty = True
 
+# Thread de rendu pour ne pas freezer l'UI
+def render_thread_task(engine, config, state):
+    print(">>> Starting Offline Render...")
+    try:
+        # On lance le rendu classique (qui sauvegarde l'image)
+        renderer.run(engine, config)
+    except Exception as e:
+        print(f"Render Error: {e}")
+    finally:
+        print(">>> Render Finished.")
+        state.is_rendering = False
+        state.dirty = True # Pour rafraichir la vue au retour
+
 def run(engine, config, builder):
     pygame.init()
     screen = pygame.display.set_mode((WIN_W, WIN_H))
@@ -250,6 +267,23 @@ def run(engine, config, builder):
     
     def lbl(x, y, txt, sz=16, col=COL_TEXT, align="left", width=0):
         ui.append(Label(VIEW_W + x, y, txt, sz, col, align, width))
+
+    # --- FONCTION START RENDER (Définie ici pour capturer le scope) ---
+    def start_full_render():
+        if state.is_rendering: return
+        state.is_rendering = True
+        
+        config.lookfrom = state.cam_pos.tolist()
+        fx = math.sin(state.yaw) * math.cos(state.pitch)
+        fy = math.sin(state.pitch)
+        fz = math.cos(state.yaw) * math.cos(state.pitch)
+        config.lookat = (state.cam_pos + np.array([fx, fy, fz])).tolist()
+        config.vfov = state.vfov
+        config.aperture = state.aperture
+        config.focus_dist = state.focus_dist
+        
+        t = threading.Thread(target=render_thread_task, args=(engine, config, state))
+        t.start()
 
     # HEADER COMPACT
     y = 12
@@ -283,10 +317,9 @@ def run(engine, config, builder):
     y += 25
     def set_tool(t): state.tool_mode = t
     grp_tool = []
-    # On garde les références pour le changement auto
-    b_cam = btn(10, y, 90, 24, "CAMERA", set_tool, "CAM", True, grp_tool, True)
-    b_sel = btn(105, y, 90, 24, "SELECT", set_tool, "SEL", True, grp_tool)
-    b_foc = btn(200, y, 90, 24, "FOCUS", set_tool, "FOCUS", True, grp_tool)
+    b_cam = btn(10, y, 90, 40, "CAMERA", set_tool, "CAM", True, grp_tool, True)
+    b_sel = btn(105, y, 90, 40, "SELECT", set_tool, "SEL", True, grp_tool)
+    b_foc = btn(200, y, 90, 40, "FOCUS", set_tool, "FOCUS", True, grp_tool)
     y += 50
     
     # CAMERA SETTINGS
@@ -297,13 +330,11 @@ def run(engine, config, builder):
         setattr(state, attr, getattr(state, attr) + d)
         state.dirty = True
     
-    # Compact Labels
     l_fov = Label(VIEW_W+10, y, "FOV", 12, align="center", width=90); ui.append(l_fov)
     l_apt = Label(VIEW_W+115, y, "Ap", 12, align="center", width=90); ui.append(l_apt)
     l_foc = Label(VIEW_W+220, y, "Dist", 12, align="center", width=90); ui.append(l_foc)
     y += 15 
     
-    # Boutons +/-
     wb, hb, gb = 42, 24, 5
     btn(10, y, wb, hb, "-", adj_cam, ('vfov', -5)); btn(10+wb+gb, y, wb, hb, "+", adj_cam, ('vfov', 5))
     btn(115, y, wb, hb, "-", adj_cam, ('aperture', -0.05)); btn(115+wb+gb, y, wb, hb, "+", adj_cam, ('aperture', 0.05))
@@ -314,13 +345,10 @@ def run(engine, config, builder):
     lbl(10, y, "OBJECT INSPECTOR", 18, COL_ACCENT); y += 25
     l_name = Label(VIEW_W+10, y, "No Selection", 14, COL_TEXT_DIM); ui.append(l_name); y += 25
     
-    # Gizmo Modes
     def set_gizmo(g): 
         state.gizmo_mode = g
-        # [MODIF] Auto-switch vers SELECT si on clic sur un outil Gizmo
         if state.tool_mode != "SEL":
             state.tool_mode = "SEL"
-            # Update visuel des boutons
             b_cam.active = False
             b_sel.active = True
             b_foc.active = False
@@ -332,7 +360,6 @@ def run(engine, config, builder):
     b_scl  = btn(220, y, 65, 24, "SCALE", set_gizmo, "SCALE", True, grp_gizmo)
     y += 35
     
-    # CHAMPS NUMÉRIQUES
     def get_v(idx_name, idx_axis):
         d = state.get_selected_info()
         return d[idx_name][idx_axis] if d else 0.0
@@ -355,15 +382,18 @@ def run(engine, config, builder):
                             lambda p=prop, axis=j: get_v(p, axis),
                             lambda v, p=prop, axis=j: set_v(v, p, axis))
             ui.append(f); fields.append(f)
-        y += 28
+        y += 26
 
-    y += 10 # Remonté un peu
-    # CONTROLS
+    y += 5 
     lbl(10, y, "CONTROLS", 18, COL_ACCENT); y += 25
     lbl(10, y, "Arrows: Move Cam | R-Click: Rotate Cam", 12, COL_TEXT_DIM); y+=15
     lbl(10, y, "Mid-Click: Elevate Cam | Wheel: Zoom", 12, COL_TEXT_DIM); y+=15
     lbl(10, y, "Shift+LeftClick: Select Obj", 12, COL_TEXT_DIM); y+=15
     lbl(10, y, "Ctrl+LeftClick: Move Obj | Shift+RClick: Focus", 12, COL_TEXT_DIM); y+=15
+
+    # BOUTON RENDER FINAL (Fixe en bas)
+    # On le place manuellement à WIN_H - 45px
+    btn(10, WIN_H - 45, 300, 35, "RENDER FINAL IMAGE", start_full_render)
 
     # ===========================================================================================
     # LOOP
@@ -371,11 +401,42 @@ def run(engine, config, builder):
     
     running = True
     last_time = time.time()
+    
+    # Initialisation de la surface de rendu (noire au début)
+    surface = pygame.Surface((VIEW_W, VIEW_H))
+    surface.fill((0,0,0))
+    
+    # Variable pour stocker le dt du DERNIER rendu effectif (pour l'hystérésis)
+    last_render_dt = 0.03
+    
     gizmo_buttons = [b_move, b_lift, b_rot, b_scl]
     
     while running:
-        clock.tick() 
+        clock.tick() # Limite FPS si besoin (ex 60), évite CPU 100%
         now = time.time()
+        
+        # Si un rendu offline est en cours, on bloque les events et on dessine un overlay
+        if state.is_rendering:
+            pygame.event.pump() # Garde la fenêtre vivante
+            
+            # Dessin Overlay
+            overlay = pygame.Surface((WIN_W, WIN_H), pygame.SRCALPHA)
+            overlay.fill(COL_OVERLAY)
+            screen.blit(overlay, (0,0))
+            
+            # Texte Loading
+            txt = fonts.get(18).render("RENDERING IN PROGRESS... PLEASE WAIT", True, COL_ACCENT)
+            r = txt.get_rect(center=(WIN_W//2, WIN_H//2))
+            screen.blit(txt, r)
+            pygame.display.flip()
+            
+            # Skip le reste de la boucle
+            last_time = now # Pour éviter un saut temporel géant au retour
+            continue
+
+        # --- BOUCLE NORMALE ---
+        
+        # Calcul du dt réel pour les mouvements de caméra
         dt = now - last_time
         last_time = now
         
@@ -400,9 +461,6 @@ def run(engine, config, builder):
                 
                 if not state.typing_mode and not ui_captured:
                     if event.key == pygame.K_ESCAPE: running = False
-                    
-                    # [MODIF] Fix crash: on retire les raccourcis objets ici
-                    # PageUp/Down sont maintenant gérés uniquement par la caméra en bas
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 ui_hit = False
@@ -513,6 +571,7 @@ def run(engine, config, builder):
                 state.cam_pos += move * state.move_speed * dt
                 state.dirty = True
         
+        scene_changed = state.dirty
         if state.dirty:
             fx = math.sin(state.yaw) * math.cos(state.pitch)
             fy = math.sin(state.pitch)
@@ -523,31 +582,64 @@ def run(engine, config, builder):
             if hasattr(engine, 'reset_accumulation'): engine.reset_accumulation()
             state.accum_spp = 0; state.dirty = False
 
-        surface = None
-        scale = state.res_scale
-        if state.res_auto:
-            if dt > 0.06: scale = 4
-            elif dt > 0.03: scale = 2
-            else: scale = 1
+        # --- LOGIQUE DE RENDU OPTIMISÉE ---
+        
+        should_render = False
+        
+        # 1. Vérification si on doit rendre
+        if state.preview_mode == 2: # RAY
+            # On continue tant que SPP < config ou si ça a bougé
+            # Note: accumulation par passes de 4 samples (d'où le *4 possible, mais on simplifie)
+            if scene_changed or state.accum_spp < config.spp:
+                should_render = True
+        else: # CLAY / NORMALS
+            if scene_changed:
+                should_render = True
+        
+        # 2. Rendu conditionnel
+        if should_render:
+            render_start = time.time()
             
-        if state.preview_mode == 2:
-            raw = engine.render_accumulate(VIEW_W, VIEW_H, 4)
-            img = (np.clip(raw,0,1)*255).astype(np.uint8)
-            surface = pygame.surfarray.make_surface(np.transpose(img, (1,0,2)))
-            state.accum_spp += 1
-        else:
-            pW, pH = max(1, VIEW_W//scale), max(1, VIEW_H//scale)
-            raw = engine.render_preview(pW, pH, state.preview_mode, 4)
-            img = (np.clip(raw,0,1)*255).astype(np.uint8)
-            surf = pygame.surfarray.make_surface(np.transpose(img, (1,0,2)))
-            surface = pygame.transform.scale(surf, (VIEW_W, VIEW_H)) if scale > 1 else surf
-            state.accum_spp = 0
+            scale = state.res_scale
+            if state.res_auto:
+                # Hystérésis basé sur le dernier temps de rendu CONNU
+                if scale == 1 and last_render_dt > 0.06: scale = 2
+                elif scale == 2 and last_render_dt > 0.06: scale = 4
+                elif scale == 4 and last_render_dt < 0.016: scale = 2
+                elif scale == 2 and last_render_dt < 0.016: scale = 1
+                else: scale = 1
+                
+            if state.preview_mode == 2:
+                # On passe config.depth ici si on veut (ex: 50)
+                # Mais tu as dit "je ne vais pas implémenter l'ajout du paramètre depth"
+                # Donc on laisse l'appel standard (qui utilisera le defaut=6 du C++)
+                raw = engine.render_accumulate(VIEW_W, VIEW_H, 4)
+                img = (np.clip(raw,0,1)*255).astype(np.uint8)
+                surface = pygame.surfarray.make_surface(np.transpose(img, (1,0,2)))
+                state.accum_spp += 4 # On compte 4 par 4 car le C++ fait 4 passes
+            else:
+                pW, pH = max(1, VIEW_W//scale), max(1, VIEW_H//scale)
+                raw = engine.render_preview(pW, pH, state.preview_mode, 4)
+                img = (np.clip(raw,0,1)*255).astype(np.uint8)
+                surf = pygame.surfarray.make_surface(np.transpose(img, (1,0,2)))
+                surface = pygame.transform.scale(surf, (VIEW_W, VIEW_H)) if scale > 1 else surf
+                state.accum_spp = 0
+            
+            # Mise à jour du temps de rendu pour l'hystérésis
+            last_render_dt = time.time() - render_start
+            
+            # Mise à jour FPS UI seulement quand on rend
+            l_fps.text = f"FPS: {1.0/max(0.001, last_render_dt):.0f}"
+        
+        # Si on ne rend pas, on garde 'surface' telle quelle (dernière image connue)
+        # et on ne met PAS à jour l_fps.text (il garde sa dernière valeur)
 
+        # --- DRAW ---
         screen.blit(surface, (0,0))
         pygame.draw.rect(screen, COL_PANEL, (VIEW_W, 0, PANEL_W, WIN_H))
         pygame.draw.line(screen, COL_BORDER, (VIEW_W, 0), (VIEW_W, WIN_H))
         
-        l_fps.text = f"FPS: {clock.get_fps():.0f}"
+        # Labels dynamiques
         l_spp.text = f"SPP: {state.accum_spp}"
         l_fov.text = f"FOV: {state.vfov:.0f}"
         l_apt.text = f"Ap: {state.aperture:.2f}"
