@@ -2,11 +2,11 @@ import pygame
 import numpy as np
 import time
 import math
-import threading # Pour le rendu en arrière-plan
+import threading
+import multiprocessing
 import cpp_engine
 import transforms as tf
-from modes import renderer # On importe le moteur de rendu offline
-import multiprocessing
+from modes import renderer
 
 # ===============================================================================================
 # CONFIGURATION UI (STYLE "DARK PRO")
@@ -14,7 +14,7 @@ import multiprocessing
 
 COL_BG      = (43, 43, 43)
 COL_PANEL   = (50, 50, 50)
-COL_HEADER  = (30, 30, 30)
+COL_HEADER  = (30, 30, 30) # Fond sombre pour les titres de section
 COL_TEXT    = (220, 220, 220)
 COL_TEXT_DIM= (150, 150, 150)
 
@@ -22,11 +22,14 @@ COL_BTN     = (70, 70, 70)
 COL_BTN_HOV = (90, 90, 90)
 COL_BTN_ACT = (58, 110, 165) # Bleu Acier
 COL_BTN_DIS = (40, 40, 40)
+COL_TAB_ACT = (60, 60, 60)   
+COL_TAB_INA = (35, 35, 35)   
+
 COL_FIELD   = (30, 30, 30)   
 COL_FIELD_ACT= (0, 100, 150) 
 COL_BORDER  = (30, 30, 30)
-COL_ACCENT  = (255, 165, 0)
-COL_OVERLAY = (0, 0, 0, 180) # Fond semi-transparent pour l'overlay de rendu
+COL_ACCENT  = (255, 165, 0) # Orange pour les titres
+COL_OVERLAY = (0, 0, 0, 180) 
 
 VIEW_W, VIEW_H = 800, 600
 PANEL_W = 320
@@ -42,7 +45,7 @@ class UIElement:
     def handle_event(self, event, state): return False
 
 class Button(UIElement):
-    def __init__(self, x, y, w, h, text, callback=None, data=None, toggle=False, group=None):
+    def __init__(self, x, y, w, h, text, callback=None, data=None, toggle=False, group=None, color_override=None):
         self.rect = pygame.Rect(x, y, w, h)
         self.text = text
         self.callback = callback
@@ -51,15 +54,20 @@ class Button(UIElement):
         self.active = False
         self.toggle = toggle
         self.group = group 
-        self.enabled = True 
+        self.enabled = True
+        self.color_override = color_override
 
     def draw(self, screen, fonts):
-        col = COL_BTN_DIS if not self.enabled else (COL_BTN_ACT if self.active else (COL_BTN_HOV if self.hover else COL_BTN))
+        if self.color_override:
+            col = self.color_override if not self.active else COL_BTN_ACT
+        else:
+            col = COL_BTN_DIS if not self.enabled else (COL_BTN_ACT if self.active else (COL_BTN_HOV if self.hover else COL_BTN))
+        
         pygame.draw.rect(screen, col, self.rect, border_radius=4)
         pygame.draw.rect(screen, COL_BORDER, self.rect, 1, border_radius=4)
         
         txt_col = COL_TEXT_DIM if not self.enabled else COL_TEXT
-        f = fonts.get(14)
+        f = fonts.get(13) # Légèrement plus petit pour tout faire rentrer
         txt_surf = f.render(self.text, True, txt_col)
         txt_rect = txt_surf.get_rect(center=self.rect.center)
         screen.blit(txt_surf, txt_rect)
@@ -181,6 +189,11 @@ class EditorState:
         self.res_scale = 1 
         self.res_auto = False
         self.preview_mode = 0 
+
+        # --- VIEWPORT LOGIC ---
+        # On calcule le ratio cible (ex: 16/9)
+        self.target_aspect = conf.width / conf.height
+        self.viewport_rect = pygame.Rect(0, 0, VIEW_W, VIEW_H) # Sera mis à jour
         
         # Camera
         self.cam_pos = np.array(conf.lookfrom, dtype=np.float32)
@@ -193,27 +206,51 @@ class EditorState:
         self.vfov = conf.vfov
         self.aperture = conf.aperture
         self.focus_dist = conf.focus_dist
-        self.move_speed = 5.0
+        self.move_speed = 5.0 # TODO permettre de le modifier via l'UI
         
-        # Tools
+        # Tools & Tabs
         self.tool_mode = "CAM"
         self.selected_id = -1
         self.gizmo_mode = "MOVE"
+        self.active_tab = "SCENE" # "SCENE" ou "OBJECT"
         self.typing_mode = False 
         
         # Rendering State
         self.dirty = True
         self.accum_spp = 0
-        self.is_rendering = False # True quand le rendu offline tourne
-
-        # Nombre de rayons lancés par passe (Dynamique)
-        self.ray_batch_size = 2 # On commence doucement
-        
+        self.is_rendering = False
+        self.ray_batch_size = 2 
 
     def get_selected_info(self):
         if self.selected_id != -1 and self.selected_id in self.builder.registry:
             return self.builder.registry[self.selected_id]
         return None
+
+# ===============================================================================================
+# HELPER: VIEWPORT CALCULATION (Letterboxing)
+# ===============================================================================================
+
+def calculate_viewport(state):
+    """Calcule le rectangle d'affichage pour respecter le ratio cible."""
+    window_ratio = VIEW_W / VIEW_H
+    target_ratio = state.target_aspect
+    
+    if window_ratio > target_ratio:
+        # La fenêtre est plus large que l'image -> Bandes verticales (Pillarbox)
+        # (Rare avec 800x600 et du 16:9, mais possible si image verticale)
+        h = VIEW_H
+        w = int(h * target_ratio)
+        x = (VIEW_W - w) // 2
+        y = 0
+    else:
+        # La fenêtre est plus haute que l'image -> Bandes horizontales (Letterbox)
+        # Cas classique 16:9 dans 4:3
+        w = VIEW_W
+        h = int(w / target_ratio)
+        x = 0
+        y = (VIEW_H - h) // 2
+        
+    state.viewport_rect = pygame.Rect(x, y, w, h)
 
 # ===============================================================================================
 # MAIN
@@ -239,18 +276,16 @@ def update_transform(engine, state):
                                      np.ascontiguousarray(InvM, dtype=np.float32))
     state.dirty = True
 
-# Thread de rendu pour ne pas freezer l'UI
 def render_thread_task(engine, config, state):
     print(">>> Starting Offline Render...")
     try:
-        # On lance le rendu classique (qui sauvegarde l'image)
         renderer.run(engine, config)
     except Exception as e:
         print(f"Render Error: {e}")
     finally:
         print(">>> Render Finished.")
         state.is_rendering = False
-        state.dirty = True # Pour rafraichir la vue au retour
+        state.dirty = True 
 
 def run(engine, config, builder):
     pygame.init()
@@ -258,123 +293,149 @@ def run(engine, config, builder):
     pygame.display.set_caption("Raytracer Studio - Interactive Editor")
     clock = pygame.time.Clock()
     
-    fonts = { 12: pygame.font.SysFont("Arial", 12), 14: pygame.font.SysFont("Arial", 14), 18: pygame.font.SysFont("Arial", 18, bold=True) }
+    fonts = { 12: pygame.font.SysFont("Arial", 12), 13: pygame.font.SysFont("Arial", 13), 14: pygame.font.SysFont("Arial", 14), 18: pygame.font.SysFont("Arial", 18, bold=True) }
     state = EditorState(config, builder)
 
-    # --- CONFIGURATION THREADS (CLI) ---
+    # Calcul initial du viewport
+    calculate_viewport(state)
+
+    # --- CLI THREADS ---
     render_threads = config.threads
     if render_threads <= 0:
-        # Si config.threads est 0 (auto), on utilise leave_cores
         total_cores = multiprocessing.cpu_count()
-        leave = getattr(config, 'leave_cores', 2) # Défaut 2 si pas défini
+        leave = getattr(config, 'leave_cores', 2) 
         render_threads = max(1, total_cores - leave)
 
     print(f"[Viewer] Using {render_threads} threads for interactive rendering.")
     
-    ui = [] 
+    # --- UI CONTAINERS ---
+    ui_header = [] 
+    ui_scene = [] 
+    ui_object = [] 
+    ui_footer = [] 
     
-    def btn(x, y, w, h, txt, cb, data=None, toggle=False, grp=None, active=False):
-        b = Button(VIEW_W + x, y, w, h, txt, cb, data, toggle, grp)
+    def btn(target_list, x, y, w, h, txt, cb, data=None, toggle=False, grp=None, active=False, col_ov=None):
+        b = Button(VIEW_W + x, y, w, h, txt, cb, data, toggle, grp, col_ov)
         if active: b.active = True
         if grp is not None: grp.append(b) 
-        ui.append(b)
+        target_list.append(b)
         return b
     
-    def lbl(x, y, txt, sz=16, col=COL_TEXT, align="left", width=0):
-        ui.append(Label(VIEW_W + x, y, txt, sz, col, align, width))
+    def lbl(target_list, x, y, txt, sz=16, col=COL_TEXT, align="left", width=0):
+        target_list.append(Label(VIEW_W + x, y, txt, sz, col, align, width))
 
-    # --- FONCTION START RENDER (Définie ici pour capturer le scope) ---
-    def start_full_render():
-        if state.is_rendering: return
-        state.is_rendering = True
-        
-        config.lookfrom = state.cam_pos.tolist()
-        fx = math.sin(state.yaw) * math.cos(state.pitch)
-        fy = math.sin(state.pitch)
-        fz = math.cos(state.yaw) * math.cos(state.pitch)
-        config.lookat = (state.cam_pos + np.array([fx, fy, fz])).tolist()
-        config.vfov = state.vfov
-        config.aperture = state.aperture
-        config.focus_dist = state.focus_dist
-        
-        t = threading.Thread(target=render_thread_task, args=(engine, config, state))
-        t.start()
+    # ================= UI LAYOUT DEFINITION =================
 
-    # HEADER COMPACT
-    y = 12
-    l_fps = Label(VIEW_W + 10, y, "FPS: --", 14, COL_TEXT_DIM); ui.append(l_fps)
-    l_spp = Label(VIEW_W + 100, y, "SPP: --", 14, COL_TEXT_DIM); ui.append(l_spp)
-    y += 35 
-    
-    # PREVIEW
-    lbl(10, y, "PREVIEW QUALITY", 18, COL_ACCENT)
+    # --- 1. MONITORING (Tout en haut) ---
+    y = 10
+    l_fps = Label(VIEW_W + 10, y, "FPS: --", 14, COL_TEXT_DIM); ui_header.append(l_fps)
+    l_spp = Label(VIEW_W + 100, y, "SPP: --", 14, COL_TEXT_DIM); ui_header.append(l_spp)
     y += 25
+
+    # --- 2. RENDER SETTINGS ---
+    # Fond sombre pour le titre
+    # lbl(ui_header, 10, y, "RENDER SETTINGS", 14, COL_ACCENT)
+    # y += 20
+    
+    # Ligne 1 : Quality
     def set_res(v): 
         if v == 'AUTO': state.res_auto = True
         else: state.res_auto = False; state.res_scale = v
         state.dirty = True
     grp_res = []
-    btn(10, y, 50, 24, "AUTO", set_res, 'AUTO', True, grp_res, False)
-    btn(65, y, 40, 24, "1:1", set_res, 1, True, grp_res, True)
-    btn(110, y, 40, 24, "1:2", set_res, 2, True, grp_res)
-    btn(155, y, 40, 24, "1:4", set_res, 4, True, grp_res)
-    y += 30
     
+    lbl(ui_header, 10, y+3, "Qual", 12, COL_TEXT_DIM)
+    btn(ui_header, 50, y, 45, 20, "Auto", set_res, 'AUTO', True, grp_res, False)
+    btn(ui_header, 100, y, 35, 20, "1:1", set_res, 1, True, grp_res, True)
+    btn(ui_header, 140, y, 35, 20, "1:2", set_res, 2, True, grp_res)
+    btn(ui_header, 180, y, 35, 20, "1:4", set_res, 4, True, grp_res)
+    y += 26
+
+    # Ligne 2 : Mode (Retour du bouton Normals !)
     def set_mode(m): state.preview_mode = m; state.dirty = True
     grp_mode = []
-    btn(10, y, 90, 24, "NORMALS", set_mode, 0, True, grp_mode, True)
-    btn(105, y, 70, 24, "CLAY", set_mode, 1, True, grp_mode)
-    btn(180, y, 70, 24, "RAY", set_mode, 2, True, grp_mode)
-    y += 35
     
-    # TOOLS
-    lbl(10, y, "MAIN TOOLS", 18, COL_ACCENT)
-    y += 25
+    lbl(ui_header, 10, y+3, "Mode", 12, COL_TEXT_DIM)
+    btn(ui_header, 50, y, 60, 20, "Normals", set_mode, 0, True, grp_mode, True)
+    btn(ui_header, 115, y, 60, 20, "Clay", set_mode, 1, True, grp_mode)
+    btn(ui_header, 180, y, 60, 20, "Ray", set_mode, 2, True, grp_mode)
+    y += 45
+
+    # --- 3. TOOLS (Cam/Select/Focus) ---
+    lbl(ui_header, 10, y, "INTERACTION TOOLS", 14, COL_ACCENT)
+    y += 20
+    
     def set_tool(t): state.tool_mode = t
     grp_tool = []
-    b_cam = btn(10, y, 90, 40, "CAMERA", set_tool, "CAM", True, grp_tool, True)
-    b_sel = btn(105, y, 90, 40, "SELECT", set_tool, "SEL", True, grp_tool)
-    b_foc = btn(200, y, 90, 40, "FOCUS", set_tool, "FOCUS", True, grp_tool)
-    y += 50
+    # On met tout sur une ligne
+    b_cam = btn(ui_header, 10, y, 95, 30, "CAMERA", set_tool, "CAM", True, grp_tool, True)
+    b_sel = btn(ui_header, 110, y, 95, 30, "SELECT", set_tool, "SEL", True, grp_tool)
+    b_foc = btn(ui_header, 210, y, 95, 30, "FOCUS", set_tool, "FOCUS", True, grp_tool)
+    y += 45
+
+    # --- 4. TABS (Zone Onglets) ---
+    def set_tab(t): state.active_tab = t
+    grp_tabs = []
     
-    # CAMERA SETTINGS
-    lbl(10, y, "CAMERA SETTINGS", 18, COL_ACCENT)
-    y += 25
+    # Boutons collés pour effet onglet
+    btn_scene = btn(ui_header, 10, y, 150, 28, "SCENE GLOBAL", set_tab, "SCENE", True, grp_tabs, True, COL_TAB_INA)
+    btn_object = btn(ui_header, 160, y, 150, 28, "OBJECT DATA", set_tab, "OBJECT", True, grp_tabs, False, COL_TAB_INA)
+    
+    y += 40 # Marge après les onglets
+
+    # --- CONTENT: TAB SCENE ---
+    ys = y
+    lbl(ui_scene, 10, ys, "CAMERA", 14, COL_ACCENT)
+    ys += 20
+    
     def adj_cam(data):
         attr, d = data 
         setattr(state, attr, getattr(state, attr) + d)
         state.dirty = True
     
-    l_fov = Label(VIEW_W+10, y, "FOV", 12, align="center", width=90); ui.append(l_fov)
-    l_apt = Label(VIEW_W+115, y, "Ap", 12, align="center", width=90); ui.append(l_apt)
-    l_foc = Label(VIEW_W+220, y, "Dist", 12, align="center", width=90); ui.append(l_foc)
-    y += 15 
+    # FOV
+    lbl(ui_scene, 10, ys+4, "FOV", 12, COL_TEXT)
+    btn(ui_scene, 80, ys, 30, 20, "-", adj_cam, ('vfov', -5)); 
+    l_fov = Label(VIEW_W+115, ys+2, "40", 12, align="center", width=40); ui_scene.append(l_fov)
+    btn(ui_scene, 160, ys, 30, 20, "+", adj_cam, ('vfov', 5))
+    ys += 26
     
-    wb, hb, gb = 42, 24, 5
-    btn(10, y, wb, hb, "-", adj_cam, ('vfov', -5)); btn(10+wb+gb, y, wb, hb, "+", adj_cam, ('vfov', 5))
-    btn(115, y, wb, hb, "-", adj_cam, ('aperture', -0.05)); btn(115+wb+gb, y, wb, hb, "+", adj_cam, ('aperture', 0.05))
-    btn(220, y, wb, hb, "-", adj_cam, ('focus_dist', -0.5)); btn(220+wb+gb, y, wb, hb, "+", adj_cam, ('focus_dist', 0.5))
-    y += 40
-    
-    # INSPECTOR
-    lbl(10, y, "OBJECT INSPECTOR", 18, COL_ACCENT); y += 25
-    l_name = Label(VIEW_W+10, y, "No Selection", 14, COL_TEXT_DIM); ui.append(l_name); y += 25
-    
-    def set_gizmo(g): 
-        state.gizmo_mode = g
-        if state.tool_mode != "SEL":
-            state.tool_mode = "SEL"
-            b_cam.active = False
-            b_sel.active = True
-            b_foc.active = False
+    # Aperture
+    lbl(ui_scene, 10, ys+4, "Aperture", 12, COL_TEXT)
+    btn(ui_scene, 80, ys, 30, 20, "-", adj_cam, ('aperture', -0.05)); 
+    l_apt = Label(VIEW_W+115, ys+2, "0.00", 12, align="center", width=40); ui_scene.append(l_apt)
+    btn(ui_scene, 160, ys, 30, 20, "+", adj_cam, ('aperture', 0.05))
+    ys += 26
 
-    grp_gizmo = []
-    b_move = btn(10, y, 65, 24, "MOVE", set_gizmo, "MOVE", True, grp_gizmo, True)
-    b_lift = btn(80, y, 65, 24, "LIFT", set_gizmo, "LIFT", True, grp_gizmo) 
-    b_rot  = btn(150, y, 65, 24, "ROT", set_gizmo, "ROT", True, grp_gizmo)
-    b_scl  = btn(220, y, 65, 24, "SCALE", set_gizmo, "SCALE", True, grp_gizmo)
-    y += 35
+    # Focus Dist
+    lbl(ui_scene, 10, ys+4, "Focus Dist", 12, COL_TEXT)
+    btn(ui_scene, 80, ys, 30, 20, "-", adj_cam, ('focus_dist', -0.5)); 
+    l_foc = Label(VIEW_W+115, ys+2, "10.0", 12, align="center", width=40); ui_scene.append(l_foc)
+    btn(ui_scene, 160, ys, 30, 20, "+", adj_cam, ('focus_dist', 0.5))
+    ys += 35
     
+    # Environment (Placeholder)
+    lbl(ui_scene, 10, ys, "ENVIRONMENT", 14, COL_ACCENT)
+    ys += 20
+    lbl(ui_scene, 10, ys, "(Coming Soon: Sun & HDR)", 12, COL_TEXT_DIM)
+
+    # --- CONTENT: TAB OBJECT ---
+    yo = y
+    
+    l_name = Label(VIEW_W+10, yo, "No Selection", 14, COL_ACCENT); ui_object.append(l_name)
+    yo += 25
+
+    lbl(ui_object, 10, yo, "TRANSFORMS", 12, COL_TEXT_DIM)
+    yo += 20
+
+    def set_gizmo(g): state.gizmo_mode = g
+    grp_gizmo = []
+    b_move = btn(ui_object, 10, yo, 65, 24, "MOVE", set_gizmo, "MOVE", True, grp_gizmo, True)
+    b_lift = btn(ui_object, 80, yo, 65, 24, "LIFT", set_gizmo, "LIFT", True, grp_gizmo) 
+    b_rot  = btn(ui_object, 150, yo, 65, 24, "ROT", set_gizmo, "ROT", True, grp_gizmo)
+    b_scl  = btn(ui_object, 220, yo, 65, 24, "SCALE", set_gizmo, "SCALE", True, grp_gizmo)
+    yo += 35
+
     def get_v(idx_name, idx_axis):
         d = state.get_selected_info()
         return d[idx_name][idx_axis] if d else 0.0
@@ -391,24 +452,36 @@ def run(engine, config, builder):
     start_x = 50
     
     for i, prop in enumerate(props):
-        lbl(10, y+4, prop_names[i], 14, COL_TEXT_DIM)
+        lbl(ui_object, 10, yo+4, prop_names[i], 12, COL_TEXT_DIM)
         for j in range(3):
-            f = NumberField(VIEW_W + start_x + j*(field_w+gap), y, field_w, 22,
+            f = NumberField(VIEW_W + start_x + j*(field_w+gap), yo, field_w, 22,
                             lambda p=prop, axis=j: get_v(p, axis),
                             lambda v, p=prop, axis=j: set_v(v, p, axis))
-            ui.append(f); fields.append(f)
-        y += 26
+            ui_object.append(f); fields.append(f)
+        yo += 26
+    
+    yo += 20
+    lbl(ui_object, 10, yo, "MATERIAL", 14, COL_ACCENT)
+    yo += 25
+    lbl(ui_object, 10, yo, "(Coming Soon)", 12, COL_TEXT_DIM)
 
-    y += 5 
-    lbl(10, y, "CONTROLS", 18, COL_ACCENT); y += 25
-    lbl(10, y, "Arrows: Move Cam | R-Click: Rotate Cam", 12, COL_TEXT_DIM); y+=15
-    lbl(10, y, "Mid-Click: Elevate Cam | Wheel: Zoom", 12, COL_TEXT_DIM); y+=15
-    lbl(10, y, "Shift+LeftClick: Select Obj", 12, COL_TEXT_DIM); y+=15
-    lbl(10, y, "Ctrl+LeftClick: Move Obj | Shift+RClick: Focus", 12, COL_TEXT_DIM); y+=15
 
-    # BOUTON RENDER FINAL (Fixe en bas)
-    # On le place manuellement à WIN_H - 45px
-    btn(10, WIN_H - 45, 300, 35, "RENDER FINAL IMAGE", start_full_render)
+    # --- FOOTER ---
+    def start_full_render():
+        if state.is_rendering: return
+        state.is_rendering = True
+        config.lookfrom = state.cam_pos.tolist()
+        fx = math.sin(state.yaw) * math.cos(state.pitch)
+        fy = math.sin(state.pitch)
+        fz = math.cos(state.yaw) * math.cos(state.pitch)
+        config.lookat = (state.cam_pos + np.array([fx, fy, fz])).tolist()
+        config.vfov = state.vfov
+        config.aperture = state.aperture
+        config.focus_dist = state.focus_dist
+        t = threading.Thread(target=render_thread_task, args=(engine, config, state))
+        t.start()
+
+    btn(ui_footer, 10, WIN_H - 45, 300, 35, "RENDER FINAL IMAGE", start_full_render)
 
     # ===========================================================================================
     # LOOP
@@ -416,60 +489,70 @@ def run(engine, config, builder):
     
     running = True
     last_time = time.time()
-    
-    # Initialisation de la surface de rendu (noire au début)
-    surface = pygame.Surface((VIEW_W, VIEW_H))
-    surface.fill((0,0,0))
-    
-    # Variable pour stocker le dt du DERNIER rendu effectif (pour l'hystérésis)
+
+    # Surface de rendu temporaire (sera redimensionnée à chaque frame selon le viewport)
+    # On ne l'initialise pas ici car sa taille dépend du viewport
+    #surface = pygame.Surface((VIEW_W, VIEW_H))
+    #surface.fill((0,0,0))
+
     last_render_dt = 0.03
     
+    # Boutons qui dépendent de la sélection
     gizmo_buttons = [b_move, b_lift, b_rot, b_scl]
     
     while running:
-        clock.tick() # Limite FPS si besoin (ex 60), évite CPU 100%
+        clock.tick() 
         now = time.time()
         
-        # Si un rendu offline est en cours, on bloque les events et on dessine un overlay
         if state.is_rendering:
-            pygame.event.pump() # Garde la fenêtre vivante
-            
-            # Dessin Overlay
+            pygame.event.pump() 
             overlay = pygame.Surface((WIN_W, WIN_H), pygame.SRCALPHA)
             overlay.fill(COL_OVERLAY)
             screen.blit(overlay, (0,0))
-            
-            # Texte Loading
             txt = fonts.get(18).render("RENDERING IN PROGRESS... PLEASE WAIT", True, COL_ACCENT)
             r = txt.get_rect(center=(WIN_W//2, WIN_H//2))
             screen.blit(txt, r)
             pygame.display.flip()
-            
-            # Skip le reste de la boucle
-            last_time = now # Pour éviter un saut temporel géant au retour
+            last_time = now 
             continue
 
-        # --- BOUCLE NORMALE ---
-        
-        # Calcul du dt réel pour les mouvements de caméra
         dt = now - last_time
         last_time = now
+        
+        # --- Gestion de l'UI active ---
+        active_ui_elements = ui_header + ui_footer
+        if state.active_tab == "SCENE": active_ui_elements += ui_scene
+        elif state.active_tab == "OBJECT": active_ui_elements += ui_object
+        
+        # Gestion des couleurs d'onglet
+        if state.active_tab == "SCENE":
+            btn_scene.color_override = COL_BTN_ACT
+            btn_object.color_override = COL_BTN
+        else:
+            btn_scene.color_override = COL_BTN
+            btn_object.color_override = COL_BTN_ACT
         
         keys = pygame.key.get_pressed()
         mouse_pos = pygame.mouse.get_pos()
         mouse_btns = pygame.mouse.get_pressed()
-        in_viewport = mouse_pos[0] < VIEW_W
+
+        # --- CORRECTION SOURIS ---
+        # On vérifie si la souris est DANS le viewport (l'image) ou dans les bandes noires
+        vp = state.viewport_rect
+        in_viewport = vp.collidepoint(mouse_pos)
+
+        # Coordonnées souris relatives à l'image (0,0 = coin haut-gauche de l'image, pas de la fenêtre)
+        mouse_x_rel = mouse_pos[0] - vp.x
+        mouse_y_rel = mouse_pos[1] - vp.y
         
         is_shift = keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]
         is_ctrl  = keys[pygame.K_LCTRL] or keys[pygame.K_RCTRL]
-        
-        mouse_dx, mouse_dy = 0, 0
         
         for event in pygame.event.get():
             if event.type == pygame.QUIT: running = False
             elif event.type == pygame.KEYDOWN:
                 ui_captured = False
-                for widget in ui:
+                for widget in active_ui_elements:
                     if widget.handle_event(event, state):
                         ui_captured = True
                         state.dirty = True 
@@ -479,8 +562,9 @@ def run(engine, config, builder):
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 ui_hit = False
-                if not in_viewport:
-                    for widget in ui:
+                if mouse_pos[0] > VIEW_W:
+                    for widget in active_ui_elements:
+                        # Désactiver les widgets d'objet si pas de sélection
                         if widget in fields and state.selected_id == -1: continue
                         if widget in gizmo_buttons and state.selected_id == -1: continue
                         
@@ -489,35 +573,44 @@ def run(engine, config, builder):
                             state.dirty = True 
                 
                 else: 
-                    if event.button == 1 and not ui_hit:
+                    if in_viewport and event.button == 1 and not ui_hit:
                         if state.tool_mode == "SEL" or (state.tool_mode == "CAM" and is_shift):
-                            pid = engine.pick_instance_id(VIEW_W, VIEW_H, mouse_pos[0], mouse_pos[1])
+                            pid = engine.pick_instance_id(vp.width, vp.height, mouse_x_rel, mouse_y_rel)
                             state.selected_id = pid
                             state.dirty = True
+                            
+                            # AUTO SWITCH TAB
+                            if pid != -1:
+                                state.active_tab = "OBJECT"
+                                state.tool_mode = "SEL"
+                                b_cam.active = False; b_sel.active = True; b_foc.active = False
+                            else:
+                                state.active_tab = "SCENE"
+                        
                         elif state.tool_mode == "FOCUS":
-                            res = engine.pick_focus_distance(VIEW_W, VIEW_H, mouse_pos[0], mouse_pos[1])
+                            res = engine.pick_focus_distance(vp.width, vp.height, mouse_x_rel, mouse_y_rel)
                             if res[0] > 0:
                                 state.focus_dist = res[0]; state.dirty = True;
                         
-                    elif event.button == 3:
+                    elif in_viewport and event.button == 3:
                         if is_shift:
-                            res = engine.pick_focus_distance(VIEW_W, VIEW_H, mouse_pos[0], mouse_pos[1])
+                            res = engine.pick_focus_distance(vp.width, vp.height, mouse_x_rel, mouse_y_rel)
                             if res[0] > 0: state.focus_dist = res[0]; state.dirty = True
                         else:
                             pygame.event.set_grab(True); pygame.mouse.set_visible(False)
                     
-                    elif event.button == 2:
+                    elif in_viewport and event.button == 2:
                         pygame.event.set_grab(True); pygame.mouse.set_visible(False)
 
             elif event.type == pygame.MOUSEBUTTONUP:
                 if event.button == 1:
-                    for widget in ui: widget.handle_event(event, state) 
+                    for widget in active_ui_elements: widget.handle_event(event, state) 
                 elif event.button == 3 or event.button == 2:
                     pygame.event.set_grab(False); pygame.mouse.set_visible(True)
 
             elif event.type == pygame.MOUSEMOTION:
                 if not in_viewport:
-                    for widget in ui: widget.handle_event(event, state)
+                    for widget in active_ui_elements: widget.handle_event(event, state)
                 
                 if mouse_btns[2] and not is_shift:
                     dx, dy = event.rel
@@ -532,29 +625,25 @@ def run(engine, config, builder):
                     state.dirty = True
 
                 elif mouse_btns[0] and in_viewport and state.selected_id != -1:
+                    # Logic GIZMO 3D (inchangée)
                     if state.tool_mode != "CAM" or is_ctrl:
                          dx, dy = event.rel
                          data = state.get_selected_info()
                          if data:
                              scale_factor = 0.01 * (state.focus_dist / 5.0)
-                             
                              if state.gizmo_mode == "MOVE":
                                  flat_yaw = state.yaw
                                  fx = math.sin(flat_yaw); fz = math.cos(flat_yaw)
                                  rx = math.cos(flat_yaw); rz = -math.sin(flat_yaw)
                                  data['pos'][0] += rx * -dx * scale_factor + fx * -dy * scale_factor
                                  data['pos'][2] += rz * -dx * scale_factor + fz * -dy * scale_factor
-                                 
                              elif state.gizmo_mode == "LIFT":
                                  data['pos'][1] -= dy * scale_factor 
-                                 
                              elif state.gizmo_mode == "ROT":
                                  data['rot'][1] += dx * 0.5 
-                                 
                              elif state.gizmo_mode == "SCALE":
                                  s = 1.0 + (dx * 0.01)
                                  data['scale'] = [v * s for v in data['scale']]
-                                 
                              update_transform(engine, state)
 
             elif event.type == pygame.MOUSEWHEEL:
@@ -565,6 +654,7 @@ def run(engine, config, builder):
                     state.cam_pos += np.array([fx, fy, fz]) * event.y * 1.0
                     state.dirty = True
 
+        # Keyboard Move
         if not state.typing_mode: 
             fx = math.sin(state.yaw) * math.cos(state.pitch)
             fy = math.sin(state.pitch)
@@ -572,20 +662,18 @@ def run(engine, config, builder):
             fwd = np.array([fx, fy, fz])
             right = np.cross(fwd, np.array([0,1,0]))
             if np.linalg.norm(right) > 0: right /= np.linalg.norm(right)
-            
             move = np.array([0.0,0.0,0.0])
-            
             if keys[pygame.K_UP]:    move += fwd
             if keys[pygame.K_DOWN]:  move -= fwd
             if keys[pygame.K_LEFT]:  move -= right
             if keys[pygame.K_RIGHT]: move += right
             if keys[pygame.K_PAGEUP]:   move[1] += 1.0
             if keys[pygame.K_PAGEDOWN]: move[1] -= 1.0
-            
             if np.linalg.norm(move) > 0:
                 state.cam_pos += move * state.move_speed * dt
                 state.dirty = True
         
+        # --- ENGINE UPDATE ---
         scene_changed = state.dirty
         if state.dirty:
             fx = math.sin(state.yaw) * math.cos(state.pitch)
@@ -593,111 +681,91 @@ def run(engine, config, builder):
             fz = math.cos(state.yaw) * math.cos(state.pitch)
             lookat = state.cam_pos + np.array([fx, fy, fz])
             engine.set_camera(cpp_engine.Vec3(*state.cam_pos), cpp_engine.Vec3(*lookat), cpp_engine.Vec3(0,1,0),
-                              state.vfov, VIEW_W/VIEW_H, state.aperture, state.focus_dist)
+                              state.vfov, state.target_aspect, state.aperture, state.focus_dist)
             if hasattr(engine, 'reset_accumulation'): engine.reset_accumulation()
             state.accum_spp = 0; state.dirty = False
 
-        # --- LOGIQUE DE RENDU OPTIMISÉE ---
-        
+        # --- RENDU ---
+        vp = state.viewport_rect
+        render_w = vp.width
+        render_h = vp.height
         should_render = False
-        
-        # 1. Vérification si on doit rendre
         if state.preview_mode == 2: # RAY
-            batch = state.ray_batch_size
-            # On continue tant que SPP < config ou si ça a bougé
-            # Note: accumulation par passes de 4 samples (d'où le *4 possible, mais on simplifie)
-            if scene_changed or state.accum_spp < config.spp:
-                should_render = True
+            if scene_changed or state.accum_spp < config.spp: should_render = True
         else: # CLAY / NORMALS
-            if scene_changed:
-                should_render = True
+            if scene_changed: should_render = True
         
-        # 2. Rendu conditionnel
         if should_render:
             render_start = time.time()
             
+            # Hysteresis Scale
             scale = state.res_scale
             if state.res_auto:
-                # Hystérésis basé sur le dernier temps de rendu CONNU
                 if scale == 1 and last_render_dt > 0.06: scale = 2
                 elif scale == 2 and last_render_dt > 0.06: scale = 4
                 elif scale == 4 and last_render_dt < 0.016: scale = 2
                 elif scale == 2 and last_render_dt < 0.016: scale = 1
                 else: scale = 1
+            rw = max(1, render_w // scale)
+            rh = max(1, render_h // scale)
                 
             if state.preview_mode == 2: # RAY
-                # On passe config.depth ici si on veut (ex: 50)
-                # Mais tu as dit "je ne vais pas implémenter l'ajout du paramètre depth"
-                # Donc on laisse l'appel standard (qui utilisera le defaut=6 du C++)
                 batch = state.ray_batch_size
-                raw = engine.render_accumulate(VIEW_W, VIEW_H, batch, render_threads)
+                raw = engine.render_accumulate(render_w, render_h, batch, render_threads)
                 state.accum_spp += batch
             else: # CLAY / NORMALS
                 pW, pH = max(1, VIEW_W//scale), max(1, VIEW_H//scale)
-                raw = engine.render_preview(pW, pH, state.preview_mode, render_threads)
+                raw = engine.render_preview(rw, rh, state.preview_mode, render_threads)
                 state.accum_spp = 0
             
-            # Tone mapping
-            if state.preview_mode == 0: # NORMALS
-                # PAS de Gamma, PAS de Tone Mapping. On veut les données brutes.
-                # (Si tes normales sortent en -1..1 du moteur, décommente la ligne suivante)
-                # corrected = (raw + 1.0) * 0.5
-                corrected = raw
-            elif state.preview_mode == 1: # CLAY
-                # Clay = Lumière simple. 
-                # On applique juste le Gamma 2.2 pour que ce ne soit pas trop sombre,
-                # mais on évite le ACES qui peut donner cet aspect "délavé" sur du gris.
-                corrected = np.power(np.clip(raw, 0, 1), 1.0/2.2)
-            else: # RAY (2)
-                # Ray = Photoréalisme HDR.
-                # Ici on veut la totale : ACES (gestion des hautes lumières) + Gamma.
-                corrected = renderer.apply_tone_mapping(raw)
+            # Post-Process
+            if state.preview_mode == 0: corrected = raw # Normals (Raw)
+            elif state.preview_mode == 1: corrected = np.power(np.clip(raw, 0, 1), 1.0/2.2) # Clay (Gamma Only)
+            else: corrected = renderer.apply_tone_mapping(raw) # Ray (ACES+Gamma)
 
-            # Conversion Uint8
             img_uint8 = (np.clip(corrected, 0, 1) * 255).astype(np.uint8)
-            # On transpose pour PyGame: (H, W, 3) -> (W, H, 3)
             img_transposed = np.transpose(img_uint8, (1, 0, 2))
 
+            # Surface Temporaire pour l'image
+            # Note : On recrée/resize une surface à chaque frame si scale change, 
+            # mais blit_array nécessite une surface de taille exacte.
+            # Vu qu'on a optimisé ailleurs, c'est acceptable ici.
+            img_surf = pygame.surfarray.make_surface(img_transposed)
+
             if scale > 1:
-                # Si on est en basse résolution, on doit scaler
-                # Pour scaler, on est obligé de créer une surface temporaire, 
-                # mais c'est beaucoup plus léger car l'image source est petite.
-                temp_surf = pygame.surfarray.make_surface(img_transposed)
-                pygame.transform.scale(temp_surf, (VIEW_W, VIEW_H), surface)
-            else:
-                # En pleine résolution, on écrit directement dans la mémoire vidéo
-                # C'est l'optimisation ultime : 0 allocation mémoire.
-                pygame.surfarray.blit_array(surface, img_transposed)
+                img_surf = pygame.transform.scale(img_surf, (render_w, render_h))
 
-            # Calcul des métriques de rendu pour la prochaine frame
+            # On stocke l'image finale prête à afficher
+            state.current_image = img_surf
+
+            # Metrics
             current_dt = time.time() - render_start
-            last_render_dt = current_dt # Mémorisation pour l'hystérésis scale
-
-            # Ajustement du Batch Size (Cible : 33ms soit 30 FPS)
-            if state.preview_mode == 2: # Seulement en mode Ray
+            last_render_dt = current_dt 
+            if state.preview_mode == 2: 
                 target_dt = 0.033 
-                # Règle de trois simple : Si on a mis 10ms avec 2 rayons, on peut en faire (33/10)*2 = 6.6
                 if current_dt > 0.001:
                     ideal_batch = state.ray_batch_size * (target_dt / current_dt)
-                    # On borne entre 1 (minimum vital) et 32 (pour pas freeze l'UI si on regarde le ciel vide)
                     state.ray_batch_size = max(1, min(32, int(ideal_batch)))
             
-            # Mise à jour FPS UI seulement quand on rend
             l_fps.text = f"FPS: {1.0/max(0.001, last_render_dt):.0f}"
         
-        # Si on ne rend pas, on garde 'surface' telle quelle (dernière image connue)
-        # et on ne met PAS à jour l_fps.text (il garde sa dernière valeur)
-
         # --- DRAW ---
-        screen.blit(surface, (0,0))
+        # 1. Fond Noir (Bandes noires)
+        screen.fill((0,0,0))
+
+        # 2. Blit de l'image centrée (si elle existe)
+        if hasattr(state, 'current_image'):
+            screen.blit(state.current_image, (vp.x, vp.y))
+
+        # 3. UI Panels
         pygame.draw.rect(screen, COL_PANEL, (VIEW_W, 0, PANEL_W, WIN_H))
         pygame.draw.line(screen, COL_BORDER, (VIEW_W, 0), (VIEW_W, WIN_H))
         
-        # Labels dynamiques
+        # Update Labels
         l_spp.text = f"SPP: {state.accum_spp}"
-        l_fov.text = f"FOV: {state.vfov:.0f}"
-        l_apt.text = f"Ap: {state.aperture:.2f}"
-        l_foc.text = f"Dist: {state.focus_dist:.1f}"
+        l_fov.text = f"{state.vfov:.0f}"
+        l_apt.text = f"{state.aperture:.2f}"
+        l_foc.text = f"{state.focus_dist:.1f}"
         
         sel_data = state.get_selected_info()
         has_sel = (sel_data is not None)
@@ -711,9 +779,11 @@ def run(engine, config, builder):
         else:
             l_name.text = "No Selection"
             
-        pygame.draw.rect(screen, COL_HEADER, (VIEW_W, 0, PANEL_W, 40))
+        pygame.draw.rect(screen, COL_HEADER, (VIEW_W, 0, PANEL_W, 100))
+        pygame.draw.line(screen, COL_BORDER, (VIEW_W, 100), (WIN_W, 100))
         
-        for w in ui: w.draw(screen, fonts)
+        # Draw Active UI
+        for w in active_ui_elements: w.draw(screen, fonts)
 
         pygame.display.flip()
 
