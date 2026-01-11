@@ -88,10 +88,14 @@ def save_debug_layer(data, filename, is_normal=False):
     """Sauvegarde une passe brute (Albedo ou Normal) pour inspection."""
     img_data = data.copy()
     if is_normal:
-        img_data = (img_data + 1.0) * 0.5
-        
-    img_data = np.clip(img_data, 0.0, 1.0)
-    img_data = np.power(img_data, 1.0/2.2) 
+        # img_data = (img_data + 1.0) * 0.5
+        # C++ envoie déjà du 0..1 => On ne touche à RIEN.
+        # Surtout pas de Gamma qui délave les vecteurs.
+        pass
+    else:
+        # Albedo (Couleur) => Besoin de Gamma pour être affiché correctement
+        img_data = np.clip(img_data, 0.0, 1.0)
+        img_data = np.power(img_data, 1.0/2.2)
     
     img_uint8 = (img_data * 255).astype(np.uint8)
     Image.fromarray(img_uint8, 'RGB').save(filename)

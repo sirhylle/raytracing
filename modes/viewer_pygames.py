@@ -204,6 +204,7 @@ class EditorState:
         self.dirty = True
         self.accum_spp = 0
         self.is_rendering = False # True quand le rendu offline tourne
+        
 
     def get_selected_info(self):
         if self.selected_id != -1 and self.selected_id in self.builder.registry:
@@ -614,17 +615,44 @@ def run(engine, config, builder):
                 # Mais tu as dit "je ne vais pas implémenter l'ajout du paramètre depth"
                 # Donc on laisse l'appel standard (qui utilisera le defaut=6 du C++)
                 raw = engine.render_accumulate(VIEW_W, VIEW_H, 4)
-                img = (np.clip(raw,0,1)*255).astype(np.uint8)
-                surface = pygame.surfarray.make_surface(np.transpose(img, (1,0,2)))
                 state.accum_spp += 4 # On compte 4 par 4 car le C++ fait 4 passes
             else:
                 pW, pH = max(1, VIEW_W//scale), max(1, VIEW_H//scale)
                 raw = engine.render_preview(pW, pH, state.preview_mode, 4)
-                img = (np.clip(raw,0,1)*255).astype(np.uint8)
-                surf = pygame.surfarray.make_surface(np.transpose(img, (1,0,2)))
-                surface = pygame.transform.scale(surf, (VIEW_W, VIEW_H)) if scale > 1 else surf
                 state.accum_spp = 0
             
+            # Tone mapping
+            if state.preview_mode == 0: # NORMALS
+                # PAS de Gamma, PAS de Tone Mapping. On veut les données brutes.
+                # (Si tes normales sortent en -1..1 du moteur, décommente la ligne suivante)
+                # corrected = (raw + 1.0) * 0.5
+                corrected = raw
+            elif state.preview_mode == 1: # CLAY
+                # Clay = Lumière simple. 
+                # On applique juste le Gamma 2.2 pour que ce ne soit pas trop sombre,
+                # mais on évite le ACES qui peut donner cet aspect "délavé" sur du gris.
+                corrected = np.power(np.clip(raw, 0, 1), 1.0/2.2)
+            else: # RAY (2)
+                # Ray = Photoréalisme HDR.
+                # Ici on veut la totale : ACES (gestion des hautes lumières) + Gamma.
+                corrected = renderer.apply_tone_mapping(raw)
+
+            # Conversion Uint8
+            img_uint8 = (np.clip(corrected, 0, 1) * 255).astype(np.uint8)
+            # On transpose pour PyGame: (H, W, 3) -> (W, H, 3)
+            img_transposed = np.transpose(img_uint8, (1, 0, 2))
+
+            if scale > 1:
+                # Si on est en basse résolution, on doit scaler
+                # Pour scaler, on est obligé de créer une surface temporaire, 
+                # mais c'est beaucoup plus léger car l'image source est petite.
+                temp_surf = pygame.surfarray.make_surface(img_transposed)
+                pygame.transform.scale(temp_surf, (VIEW_W, VIEW_H), surface)
+            else:
+                # En pleine résolution, on écrit directement dans la mémoire vidéo
+                # C'est l'optimisation ultime : 0 allocation mémoire.
+                pygame.surfarray.blit_array(surface, img_transposed)
+
             # Mise à jour du temps de rendu pour l'hystérésis
             last_render_dt = time.time() - render_start
             
