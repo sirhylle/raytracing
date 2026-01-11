@@ -156,7 +156,7 @@ def load_mesh_to_engine(engine, file_path, scale=1.0, translation=[0,0,0], auto_
     return None
 
 
-def load_asset(engine, asset_name, file_path, override_mat=None, override_color=None):
+def load_asset(engine, asset_name, file_path, override_mat=None, override_color=None, override_ior=None):
     """
     Charge un asset en mémoire (Engine.mesh_assets) SANS l'afficher.
     Applique une logique "Pieds à Zéro" : Le point (0,0,0) local sera aux pieds de l'objet.
@@ -188,13 +188,9 @@ def load_asset(engine, asset_name, file_path, override_mat=None, override_color=
 
     if all_verts_raw:
         combined = np.vstack(all_verts_raw)
-        # On aligne le bas (Y min) sur 0
         min_y = combined[:, 1].min()
-        # On centre X et Z
         mean_x = combined[:, 0].mean()
         mean_z = combined[:, 2].mean()
-        
-        # Ce vecteur sera soustrait aux vertices
         center_mass = np.array([mean_x, min_y, mean_z])
 
     for geom in geometries:
@@ -211,15 +207,16 @@ def load_asset(engine, asset_name, file_path, override_mat=None, override_color=
                 if rgba.dtype == np.uint8: color = rgba[:3] / 255.0
                 else: color = rgba[:3]
         
+        # --- APPLICATION DES OVERRIDES ---
         if override_mat: mat_type = override_mat
         if override_color: color = override_color
+        if override_ior is not None: ior = override_ior # <--- LIGNE AJOUTÉE
 
         # 2. Géométrie
-        # On évite fix_normals pour les assets (dépendance scipy optionnelle), on lit juste
         _ = geom.vertex_normals 
         
         verts = geom.vertices.copy()
-        verts -= center_mass # APPLICATION DU PIVOT "PIEDS À ZÉRO"
+        verts -= center_mass 
         
         all_final_verts.append(verts.copy())
         

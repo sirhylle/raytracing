@@ -190,23 +190,38 @@ class MaterialsShowcase(Scene):
         )
 
 class MeshScene1(Scene):
-    def setup(self, builder):
-        # Utilisation de l'engine brut pour meshloader (legacy / non-editable pour l'instant)
+    def setup(self, builder, config_overrides: dict = None) -> SceneConfig:
+        # 1. Le Sol
         builder.add_checker_sphere(
-            cpp_engine.Vec3(0.0, -100.5, -1.0), 100.0,
+            cpp_engine.Vec3(0.0, -100, -1.0), 100.0,
             [0.2, 0.3, 0.1], [0.9, 0.9, 0.9], 10.0
         )
         
-        # Note: Ces objets chargés via load_mesh_to_engine ne seront pas dans le registre du builder
-        # et donc pas éditables via le gizmo pour l'instant.
-        meshloader.load_mesh_to_engine(
-            builder.engine, "assets/bunny/bunny.obj",
-            scale=1.0, translation=[0, 0, 0], auto_center=True,
-            override_mat="dielectric", override_color=[0.7, 0.9, 0.85],
+        # 2. Chargement via le Builder (Système éditable)
+        # On définit l'asset (le modèle 3D + matériau de base)
+        builder.load_asset(
+            "my_bunny_asset",                  # Nom unique de l'asset
+            "assets/bunny/bunny.obj",          # Chemin
+            override_mat="dielectric", 
+            override_color=[0.7, 0.9, 0.85],
             override_ior=1.5
         )
 
-        return SceneConfig(lookfrom=[0, 2, 5], lookat=[0, 0, 0], vfov=40.0, env_map="env-dock-sun.hdr")
+        # 3. Instanciation (Placement dans la scène)
+        # C'est ici que l'objet est ajouté au registre Python et devient cliquable
+        builder.add_mesh_instance(
+            "my_bunny_asset",
+            pos=[0, 0, 0],
+            rot=[0, 0, 0],
+            scale=[1.0, 1.0, 1.0]
+        )
+
+        return SceneConfig(
+            lookfrom=[0, 2, 5], 
+            lookat=[0, 0, 0], 
+            vfov=40.0, 
+            env_map="env-dock-sun.hdr"
+        )
 
 class MeshScene2(Scene):
     def setup(self, builder):
