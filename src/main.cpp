@@ -508,7 +508,7 @@ public:
 
   // Rendu Progressif (Accumulate)
   nb::ndarray<nb::numpy, float> render_accumulate(int width, int height,
-                                                  int n_threads) {
+                                                  int spp, int n_threads) {
     size_t num_pixels = (size_t)width * height;
 
     if (width != acc_width || height != acc_height ||
@@ -537,17 +537,29 @@ public:
 #pragma omp parallel for schedule(dynamic)
       for (int j = 0; j < height; ++j) {
         for (int i = 0; i < width; ++i) {
-          auto u = (i + random_real()) / (width - 1);
-          auto v = (j + random_real()) / (height - 1);
-          Ray r = camera->get_ray(u, v);
-          r.is_primary = true;
-          Vec3 col =
-              ray_color(r, *world_bvh, lights, background.get(), 6, true);
+          Vec3 batch_color(0, 0, 0);
+
+          // BOUCLE DE SAMPLING (Le travail effectif)
+          // On lance 'spp' rayons pour ce pixel dans ce thread
+          for (int s = 0; s < spp; ++s) {
+            auto u = (i + random_real()) / (width - 1);
+            auto v = (j + random_real()) / (height - 1);
+            Ray r = camera->get_ray(u, v);
+            r.is_primary = true;
+            // Depth fixe à 6 pour la preview (ou paramétrable si besoin)
+            batch_color +=
+                ray_color(r, *world_bvh, lights, background.get(), 6, true);
+          }
+
           int idx = ((height - 1 - j) * width + i) * 3;
-          accumulation_buffer[idx + 0] += col.x();
-          accumulation_buffer[idx + 1] += col.y();
-          accumulation_buffer[idx + 2] += col.z();
-          float count = (float)(accumulated_spp + 1);
+
+          // Accumulation dans le buffer permanent
+          accumulation_buffer[idx + 0] += batch_color.x();
+          accumulation_buffer[idx + 1] += batch_color.y();
+          accumulation_buffer[idx + 2] += batch_color.z();
+
+          // Moyenne pour l'affichage (Total Accumulé / Nombre Total de Passes)
+          float count = (float)(accumulated_spp + spp);
           display[idx + 0] = accumulation_buffer[idx + 0] / count;
           display[idx + 1] = accumulation_buffer[idx + 1] / count;
           display[idx + 2] = accumulation_buffer[idx + 2] / count;
@@ -557,7 +569,10 @@ public:
       delete[] display;
       throw;
     }
-    accumulated_spp++;
+
+    // Mise à jour du compteur global
+    accumulated_spp += spp;
+
     nb::capsule owner(display, [](void *p) noexcept { delete[] (float *)p; });
     size_t shape[3] = {(size_t)height, (size_t)width, 3ul};
     return nb::ndarray<nb::numpy, float>(display, 3, shape, owner);
@@ -652,7 +667,7 @@ NB_MODULE(cpp_engine, m) {
       .def("render_preview", &PyScene::render_preview, nb::arg("width"),
            nb::arg("height"), nb::arg("mode") = 0, nb::arg("n_threads") = 0)
       .def("render_accumulate", &PyScene::render_accumulate, nb::arg("width"),
-           nb::arg("height"), nb::arg("n_threads") = 0)
+           nb::arg("height"), nb::arg("spp") = 1, nb::arg("n_threads") = 0)
       .def("reset_accumulation", &PyScene::reset_accumulation)
       .def("get_env_sun_info", &PyScene::get_env_sun_info)
       .def("pick_focus_distance", &PyScene::pick_focus_distance);

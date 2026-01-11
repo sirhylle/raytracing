@@ -6,6 +6,7 @@ import threading # Pour le rendu en arrière-plan
 import cpp_engine
 import transforms as tf
 from modes import renderer # On importe le moteur de rendu offline
+import multiprocessing
 
 # ===============================================================================================
 # CONFIGURATION UI (STYLE "DARK PRO")
@@ -204,6 +205,9 @@ class EditorState:
         self.dirty = True
         self.accum_spp = 0
         self.is_rendering = False # True quand le rendu offline tourne
+
+        # Nombre de rayons lancés par passe (Dynamique)
+        self.ray_batch_size = 2 # On commence doucement
         
 
     def get_selected_info(self):
@@ -256,6 +260,16 @@ def run(engine, config, builder):
     
     fonts = { 12: pygame.font.SysFont("Arial", 12), 14: pygame.font.SysFont("Arial", 14), 18: pygame.font.SysFont("Arial", 18, bold=True) }
     state = EditorState(config, builder)
+
+    # --- CONFIGURATION THREADS (CLI) ---
+    render_threads = config.threads
+    if render_threads <= 0:
+        # Si config.threads est 0 (auto), on utilise leave_cores
+        total_cores = multiprocessing.cpu_count()
+        leave = getattr(config, 'leave_cores', 2) # Défaut 2 si pas défini
+        render_threads = max(1, total_cores - leave)
+
+    print(f"[Viewer] Using {render_threads} threads for interactive rendering.")
     
     ui = [] 
     
@@ -589,6 +603,7 @@ def run(engine, config, builder):
         
         # 1. Vérification si on doit rendre
         if state.preview_mode == 2: # RAY
+            batch = state.ray_batch_size
             # On continue tant que SPP < config ou si ça a bougé
             # Note: accumulation par passes de 4 samples (d'où le *4 possible, mais on simplifie)
             if scene_changed or state.accum_spp < config.spp:
@@ -610,15 +625,16 @@ def run(engine, config, builder):
                 elif scale == 2 and last_render_dt < 0.016: scale = 1
                 else: scale = 1
                 
-            if state.preview_mode == 2:
+            if state.preview_mode == 2: # RAY
                 # On passe config.depth ici si on veut (ex: 50)
                 # Mais tu as dit "je ne vais pas implémenter l'ajout du paramètre depth"
                 # Donc on laisse l'appel standard (qui utilisera le defaut=6 du C++)
-                raw = engine.render_accumulate(VIEW_W, VIEW_H, 4)
-                state.accum_spp += 4 # On compte 4 par 4 car le C++ fait 4 passes
-            else:
+                batch = state.ray_batch_size
+                raw = engine.render_accumulate(VIEW_W, VIEW_H, batch, render_threads)
+                state.accum_spp += batch
+            else: # CLAY / NORMALS
                 pW, pH = max(1, VIEW_W//scale), max(1, VIEW_H//scale)
-                raw = engine.render_preview(pW, pH, state.preview_mode, 4)
+                raw = engine.render_preview(pW, pH, state.preview_mode, render_threads)
                 state.accum_spp = 0
             
             # Tone mapping
@@ -653,8 +669,18 @@ def run(engine, config, builder):
                 # C'est l'optimisation ultime : 0 allocation mémoire.
                 pygame.surfarray.blit_array(surface, img_transposed)
 
-            # Mise à jour du temps de rendu pour l'hystérésis
-            last_render_dt = time.time() - render_start
+            # Calcul des métriques de rendu pour la prochaine frame
+            current_dt = time.time() - render_start
+            last_render_dt = current_dt # Mémorisation pour l'hystérésis scale
+
+            # Ajustement du Batch Size (Cible : 33ms soit 30 FPS)
+            if state.preview_mode == 2: # Seulement en mode Ray
+                target_dt = 0.033 
+                # Règle de trois simple : Si on a mis 10ms avec 2 rayons, on peut en faire (33/10)*2 = 6.6
+                if current_dt > 0.001:
+                    ideal_batch = state.ray_batch_size * (target_dt / current_dt)
+                    # On borne entre 1 (minimum vital) et 32 (pour pas freeze l'UI si on regarde le ciel vide)
+                    state.ray_batch_size = max(1, min(32, int(ideal_batch)))
             
             # Mise à jour FPS UI seulement quand on rend
             l_fps.text = f"FPS: {1.0/max(0.001, last_render_dt):.0f}"
