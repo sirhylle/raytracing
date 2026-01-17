@@ -2,7 +2,7 @@ import trimesh
 import numpy as np
 import os
 import cpp_engine
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 # ==================================================================================
 # 1. Structure de données pour les métadonnées
@@ -18,6 +18,12 @@ class MeshInfo:
     max_coords: np.ndarray
     size: np.ndarray    # [width, height, depth]
     center: np.ndarray  # Le centre géométrique
+
+    # Infos Matériau par défaut de l'asset
+    mat_type: str = "lambertian"
+    color: list = field(default_factory=lambda: [0.8, 0.8, 0.8])
+    fuzz: float = 0.0
+    ior: float = 1.5
     
     # Helpers pratiques (distances depuis le pivot 0,0,0)
     @property
@@ -27,7 +33,7 @@ class MeshInfo:
     def bottom_y(self): return self.min_coords[1] # Position des pieds par rapport au pivot
     
     def __repr__(self):
-        return (f"<MeshInfo '{self.name}': W={self.size[0]:.2f}, H={self.size[1]:.2f}, D={self.size[2]:.2f} | "
+        return (f"<MeshInfo '{self.name}': {self.mat_type} | W={self.size[0]:.2f}, H={self.size[1]:.2f}, D={self.size[2]:.2f} | "
                 f"Bottom Y={self.bottom_y:.3f}>")
 
 # ==================================================================================
@@ -229,6 +235,12 @@ def load_asset(engine, asset_name, file_path, override_mat=None, override_color=
         if isinstance(color, np.ndarray): color = color.tolist()
         vec_color = cpp_engine.Vec3(float(color[0]), float(color[1]), float(color[2]))
 
+        # Enregistrement des infos matériau
+        last_mat_type = mat_type
+        last_color = color
+        last_fuzz = float(fuzz)
+        last_ior = float(ior)
+
         # Envoi à l'engine (Asset)
         engine.load_mesh_asset(asset_name, c_verts, c_faces, c_norms, 
                                mat_type, vec_color, float(fuzz), float(ior))
@@ -244,7 +256,11 @@ def load_asset(engine, asset_name, file_path, override_mat=None, override_color=
             min_coords=min_v,
             max_coords=max_v,
             size=max_v - min_v,
-            center=(min_v + max_v) / 2.0
+            center=(min_v + max_v) / 2.0,
+            mat_type=last_mat_type,
+            color=last_color,
+            fuzz=last_fuzz,
+            ior=last_ior
         )
         print(f"[Loader] Asset Ready: {info}")
         return info

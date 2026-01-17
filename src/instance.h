@@ -2,6 +2,7 @@
 
 #include "common.h"
 #include "hittable.h"
+#include "materials.h"
 
 // ===============================================================================================
 // INSTANCE (L'Objet placé dans le monde)
@@ -12,6 +13,9 @@
 class Instance : public Hittable {
 public:
   std::shared_ptr<Hittable> object; // L'objet original (ex: le lapin)
+
+  // Matériau de remplacement (ex: Lapin Rouge au lieu de Blanc)
+  std::shared_ptr<Material> override_material = nullptr;
 
   // Identifiant unique pour le "Picking" (Sélection à la souris)
   int id;
@@ -37,6 +41,9 @@ public:
     inv_transform = inv_m;
     update_normal_matrix();
   }
+
+  // Méthode pour remplacer le matériau de l'objet
+  void set_material(std::shared_ptr<Material> mat) { override_material = mat; }
 
   void update_normal_matrix() { normal_matrix = inv_transform.transpose(); }
 
@@ -71,6 +78,12 @@ public:
     rec.p = p_world;
     rec.set_face_normal(r, n_world); // Oriente la normale face à la caméra
     rec.instance_id = this->id; // Stocke l'identifiant de l'instance frappée
+
+    // Si l'instance possède un matériau propre, on remplace celui de la
+    // géométrie.
+    if (override_material) {
+      rec.mat_ptr = override_material.get();
+    }
 
     return true;
   }

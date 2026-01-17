@@ -22,6 +22,7 @@ class SceneBuilder:
         self.engine = engine
         # Le Registre : ID -> {type, pos, rot, scale, ...}
         self.registry = {}
+        self.asset_library = {}
 
     # --- Primitives Simples ---
 
@@ -43,15 +44,24 @@ class SceneBuilder:
             'type': 'sphere',
             'pos': c_list,
             'rot': [0.0, 0.0, 0.0],
-            'scale': [radius, radius, radius]
+            'scale': [radius, radius, radius],
+            'mat_type': mat_type,
+            'color': col_list,
+            'fuzz': float(fuzz),
+            'ir': float(ir)
         }
         return obj_id
 
     def add_checker_sphere(self, center, radius, c1, c2, scale):
         c_list = list(center) if isinstance(center, (list, tuple, np.ndarray)) else [center.x(), center.y(), center.z()]
         v_center = cpp_engine.Vec3(float(c_list[0]), float(c_list[1]), float(c_list[2]))
-        v_c1 = cpp_engine.Vec3(float(c1[0]), float(c1[1]), float(c1[2]))
-        v_c2 = cpp_engine.Vec3(float(c2[0]), float(c2[1]), float(c2[2]))
+        
+        # On prépare les listes pour le registre
+        c1_list = list(c1) if isinstance(c1, (list, tuple, np.ndarray)) else [c1.x(), c1.y(), c1.z()]
+        c2_list = list(c2) if isinstance(c2, (list, tuple, np.ndarray)) else [c2.x(), c2.y(), c2.z()]
+        
+        v_c1 = cpp_engine.Vec3(float(c1_list[0]), float(c1_list[1]), float(c1_list[2]))
+        v_c2 = cpp_engine.Vec3(float(c2_list[0]), float(c2_list[1]), float(c2_list[2]))
 
         obj_id = self.engine.add_checker_sphere(v_center, float(radius), v_c1, v_c2, float(scale))
         
@@ -59,21 +69,34 @@ class SceneBuilder:
             'type': 'checker_sphere',
             'pos': c_list,
             'rot': [0.0, 0.0, 0.0],
-            'scale': [radius, radius, radius]
+            'scale': [radius, radius, radius],
+            # [AJOUT] On fait semblant que c'est un Lambertian de couleur C1
+            'mat_type': 'lambertian',
+            'color': c1_list, 
+            'fuzz': 0.0,
+            'ir': 1.5
         }
         return obj_id
 
     def add_quad(self, Q, u, v, mat_type, color, fuzz=0.0, ir=1.5):
-        # Les Quads sont gérés "bruts" pour l'instant (pas de matrice TRS simple)
-        # On les passe tels quels, mais on pourrait imaginer une transformation plus tard.
-        obj_id = self.engine.add_quad(Q, u, v, mat_type, 
-                                      cpp_engine.Vec3(float(color[0]), float(color[1]), float(color[2])),
-                                      float(fuzz), float(ir))
-        # On enregistre un placeholder pour éviter les erreurs si on clique dessus
+        # 1. Préparation de la couleur (Vec3 pour C++, Liste pour Python)
+        col_list = list(color) if isinstance(color, (list, tuple, np.ndarray)) else [color.x(), color.y(), color.z()]
+        v_color = cpp_engine.Vec3(float(col_list[0]), float(col_list[1]), float(col_list[2]))
+
+        # 2. Appel Moteur
+        obj_id = self.engine.add_quad(Q, u, v, mat_type, v_color, float(fuzz), float(ir))
+        
+        # 3. Enregistrement complet pour l'éditeur
         self.registry[obj_id] = {
             'type': 'quad',
+            # On utilise le coin Q comme "position" pour le Gizmo
             'pos': [Q.x(), Q.y(), Q.z()],
-            'rot': [0,0,0], 'scale': [1,1,1]
+            'rot': [0.0, 0.0, 0.0],
+            'scale': [1.0, 1.0, 1.0],
+            'mat_type': mat_type,
+            'color': col_list,
+            'fuzz': float(fuzz),
+            'ir': float(ir)
         }
         return obj_id
 
@@ -92,7 +115,11 @@ class SceneBuilder:
             'type': 'light_sun',
             'pos': c_list,
             'rot': [0.0, 0.0, 0.0],
-            'scale': [radius, radius, radius]
+            'scale': [radius, radius, radius],
+            'mat_type': 'light',
+            'color': [r, g, b],
+            'fuzz': 0.0,
+            'ir': 1.0
         }
         return obj_id
 
@@ -117,6 +144,18 @@ class SceneBuilder:
         c_InvM = np.ascontiguousarray(InvM, dtype=np.float32)
         
         obj_id = self.engine.add_instance(mesh_name, c_M, c_InvM)
+
+        # Récupération des données par défaut depuis la bibliothèque
+        def_type = 'lambertian'
+        def_col = [0.8, 0.8, 0.8]
+        def_fuzz = 0.0
+        def_ir = 1.5
+        if mesh_name in self.asset_library:
+            info = self.asset_library[mesh_name]
+            def_type = info.mat_type
+            def_col = info.color
+            def_fuzz = info.fuzz
+            def_ir = info.ior
         
         # 2. Enregistrement
         self.registry[obj_id] = {
@@ -124,7 +163,11 @@ class SceneBuilder:
             'name': mesh_name,
             'pos': list(pos),
             'rot': list(rot), # Stocké en degrés pour l'éditeur
-            'scale': list(scale)
+            'scale': list(scale),
+            'mat_type': def_type, 
+            'color': def_col,
+            'fuzz': def_fuzz,
+            'ir': def_ir
         }
         return obj_id
 
@@ -133,7 +176,10 @@ class SceneBuilder:
         # meshloader utilise directement l'engine pour charger les données brutes
         # Ce n'est pas un objet affichable, donc pas d'ID de scène.
         import meshloader
-        return meshloader.load_asset(self.engine, *args, **kwargs)
+        info = meshloader.load_asset(self.engine, *args, **kwargs)
+        if info:
+            self.asset_library[info.name] = info
+        return info
 
     def set_environment(self, data):
         self.engine.set_environment(data)

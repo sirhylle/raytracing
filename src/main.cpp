@@ -291,6 +291,28 @@ public:
     return -1; // Rien touché
   }
 
+  // --- MATERIAL EDITING ---
+
+  void update_instance_material(int id, std::string mat_type, const Vec3 &color,
+                                Real fuzz = 0.0f, Real ir = 1.5f) {
+    // 1. On cherche l'instance
+    if (instances_map.find(id) == instances_map.end()) {
+      std::cerr << "Warning: Instance ID " << id
+                << " not found for material update.\n";
+      return;
+    }
+
+    // 2. On crée le nouveau matériau
+    std::shared_ptr<Material> new_mat =
+        create_material(mat_type, color, fuzz, ir);
+
+    // 3. On l'assigne à l'instance (via le mécanisme d'override)
+    instances_map[id]->set_material(new_mat);
+
+    // 4. On reset l'accumulation pour voir le changement immédiatement
+    reset_accumulation();
+  }
+
   // --- AJOUT DIRECT (Legacy - Non Editable) ---
   void add_mesh(nb::ndarray<float, nb::shape<-1, 3>> vertices,
                 nb::ndarray<int, nb::shape<-1, 3>> indices,
@@ -657,6 +679,9 @@ NB_MODULE(cpp_engine, m) {
            nb::arg("transform"), nb::arg("inv_transform"))
       .def("update_instance_transform", &PyScene::update_instance_transform)
       .def("pick_instance_id", &PyScene::pick_instance_id)
+      .def("update_instance_material", &PyScene::update_instance_material,
+           nb::arg("id"), nb::arg("mat_type"), nb::arg("color"),
+           nb::arg("fuzz") = 0.0f, nb::arg("ir") = 1.5f)
       .def("set_camera", &PyScene::set_camera)
       .def("set_environment", &PyScene::set_environment)
       .def("set_env_levels", &PyScene::set_env_levels, nb::arg("back"),

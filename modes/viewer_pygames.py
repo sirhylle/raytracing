@@ -221,6 +221,73 @@ class NumberField(UIElement):
         self.active = False
         state.typing_mode = False
 
+class Slider(UIElement):
+    def __init__(self, x, y, w, h, min_v, max_v, get_cb, set_cb, color_track=COL_BTN):
+        self.rect = pygame.Rect(x, y, w, h)
+        self.min_v = min_v
+        self.max_v = max_v
+        self.get_cb = get_cb
+        self.set_cb = set_cb
+        self.dragging = False
+        self.color_track = color_track
+        self.enabled = True
+
+    def draw(self, screen, fonts):
+        if not self.enabled: return
+        
+        # Fond du slider (Track)
+        pygame.draw.rect(screen, COL_PANEL, self.rect, border_radius=4)
+        pygame.draw.rect(screen, COL_BORDER, self.rect, 1, border_radius=4)
+        
+        # Partie remplie (Active Track)
+        val = self.get_cb()
+        # Clamp pour sécurité
+        val = max(self.min_v, min(self.max_v, val))
+        ratio = (val - self.min_v) / (self.max_v - self.min_v) if (self.max_v > self.min_v) else 0
+        
+        fill_rect = pygame.Rect(self.rect.x, self.rect.y, int(self.rect.width * ratio), self.rect.height)
+        pygame.draw.rect(screen, self.color_track, fill_rect, border_radius=4)
+        
+        # Handle (Le petit curseur)
+        handle_x = self.rect.x + int(self.rect.width * ratio)
+        pygame.draw.circle(screen, COL_TEXT, (handle_x, self.rect.centery), 6)
+        
+        # Affichage de la valeur par dessus (pour info)
+        # On affiche en noir ou blanc selon le remplissage pour le contraste, c'est du luxe
+        txt_col = (255,255,255) if ratio < 0.5 else (0,0,0)
+        f = fonts.get(12)
+        surf = f.render(f"{val:.2f}", True, txt_col)
+        # screen.blit(surf, (self.rect.x + 5, self.rect.centery - surf.get_height()//2))
+
+    def handle_event(self, event, state):
+        if not self.enabled: return False
+        
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self.rect.collidepoint(event.pos):
+                self.dragging = True
+                self.update_value(event.pos[0], state)
+                return True
+                
+        elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+            if self.dragging:
+                self.dragging = False
+                return True
+                
+        elif event.type == pygame.MOUSEMOTION:
+            if self.dragging:
+                self.update_value(event.pos[0], state)
+                return True
+        
+        return False
+
+    def update_value(self, mouse_x, state):
+        # Conversion Pixel -> Valeur
+        relative_x = mouse_x - self.rect.x
+        ratio = max(0.0, min(1.0, relative_x / self.rect.width))
+        new_val = self.min_v + ratio * (self.max_v - self.min_v)
+        self.set_cb(new_val)
+        state.dirty = True
+
 # ===============================================================================================
 # ÉTAT DE L'ÉDITEUR
 # ===============================================================================================
@@ -256,6 +323,10 @@ class EditorState:
         self.gizmo_mode = "MOVE"
         self.active_tab = "SCENE" # "SCENE" ou "OBJECT"
         self.typing_mode = False 
+
+        # États des accordéons
+        self.show_trans_details = False  # Fermé par défaut
+        self.show_mat_details = False    # Fermé par défaut
         
         # Rendering State
         self.dirty = True
@@ -461,52 +532,232 @@ def run(engine, config, builder):
     ys += 20
     lbl(ui_scene, 10, ys, "(Coming Soon: Sun & HDR)", 12, COL_TEXT_DIM)
 
-    # --- CONTENT: TAB OBJECT ---
-    yo = y
+    # --- CONTENT: TAB OBJECT (Dynamique) ---
     
-    l_name = Label(VIEW_W+10, yo, "No Selection", 14, COL_ACCENT); ui_object.append(l_name)
-    yo += 25
+    # Cette fonction reconstruit l'interface de l'onglet objet selon l'état des accordéons
+    def build_object_ui():
+        ui_object.clear() # On vide la liste existante
+        
+        # Si pas de sélection, message simple
+        if state.selected_id == -1:
+            lbl(ui_object, 10, 80, "No Selection", 14, COL_TEXT_DIM)
+            return
 
-    lbl(ui_object, 10, yo, "TRANSFORMS", 12, COL_TEXT_DIM)
-    yo += 20
+        yo = y # Position Y de départ (juste sous les onglets)
+        
+        # Header (Nom + ID)
+        sel_data = state.get_selected_info()
+        obj_name = sel_data.get('name', sel_data.get('type', 'Unknown'))
+        lbl(ui_object, 10, yo, f"ID {state.selected_id}: {obj_name}", 14, COL_ACCENT)
+        yo += 30
 
-    def set_gizmo(g): state.gizmo_mode = g
-    grp_gizmo = []
-    b_move = btn(ui_object, 10, yo, 65, 24, "MOVE", set_gizmo, "MOVE", True, grp_gizmo, True)
-    b_lift = btn(ui_object, 80, yo, 65, 24, "LIFT", set_gizmo, "LIFT", True, grp_gizmo) 
-    b_rot  = btn(ui_object, 150, yo, 65, 24, "ROT", set_gizmo, "ROT", True, grp_gizmo)
-    b_scl  = btn(ui_object, 220, yo, 65, 24, "SCALE", set_gizmo, "SCALE", True, grp_gizmo)
-    yo += 35
+        # ==================== SECTION TRANSFORM ====================
+        lbl(ui_object, 10, yo+4, "TRANSFORMS", 12, COL_TEXT_DIM)
+        yo += 20
 
-    def get_v(idx_name, idx_axis):
-        d = state.get_selected_info()
-        return d[idx_name][idx_axis] if d else 0.0
-    def set_v(val, idx_name, idx_axis):
-        d = state.get_selected_info()
-        if d: d[idx_name][idx_axis] = val; update_transform(engine, state)
+        # Ligne de boutons Transform + Toggle Accordéon
+        def set_gizmo(g): state.gizmo_mode = g
+        grp_gizmo = []
+        
+        # On réduit un peu la largeur des boutons pour faire de la place au [+]
+        # Largeur dispo = 300px. 4 boutons + 1 toggle.
+        bw = 58 
+        gap = 5
+        x = 10
+        
+        b_move = btn(ui_object, x, yo, bw, 24, "MOVE", set_gizmo, "MOVE", True, grp_gizmo, state.gizmo_mode=="MOVE")
+        x += bw + gap
+        b_lift = btn(ui_object, x, yo, bw, 24, "LIFT", set_gizmo, "LIFT", True, grp_gizmo, state.gizmo_mode=="LIFT") 
+        x += bw + gap
+        b_rot  = btn(ui_object, x, yo, bw, 24, "ROT", set_gizmo, "ROT", True, grp_gizmo, state.gizmo_mode=="ROT")
+        x += bw + gap
+        b_scl  = btn(ui_object, x, yo, bw, 24, "SCALE", set_gizmo, "SCALE", True, grp_gizmo, state.gizmo_mode=="SCALE")
+        x += bw + gap + 5
+        
+        # BOUTON TOGGLE [+] / [-]
+        def toggle_trans():
+            state.show_trans_details = not state.show_trans_details
+            build_object_ui() # RECONSTRUCTION IMMEDIATE
+        
+        txt_toggle = "-" if state.show_trans_details else "+"
+        btn(ui_object, x, yo, 24, 24, txt_toggle, toggle_trans)
+        
+        yo += 30
 
-    fields = []
-    props = ["pos", "rot", "scale"]
-    prop_names = ["Pos", "Rot", "Scl"]
-    
-    field_w = 60
-    gap = 40
-    start_x = 50
-    
-    for i, prop in enumerate(props):
-        lbl(ui_object, 10, yo+4, prop_names[i], 12, COL_TEXT_DIM)
-        for j in range(3):
-            f = NumberField(VIEW_W + start_x + j*(field_w+gap), yo, field_w, 22,
-                            lambda p=prop, axis=j: get_v(p, axis),
-                            lambda v, p=prop, axis=j: set_v(v, p, axis))
-            ui_object.append(f); fields.append(f)
-        yo += 26
-    
-    yo += 20
-    lbl(ui_object, 10, yo, "MATERIAL", 14, COL_ACCENT)
-    yo += 25
-    lbl(ui_object, 10, yo, "(Coming Soon)", 12, COL_TEXT_DIM)
+        # CONTENU COLLAPSABLE (Champs numériques)
+        if state.show_trans_details:
+            # Helpers d'accès données (inchangés)
+            def get_v(idx_name, idx_axis):
+                d = state.get_selected_info()
+                return d[idx_name][idx_axis] if d else 0.0
+            def set_v(val, idx_name, idx_axis):
+                d = state.get_selected_info()
+                if d: d[idx_name][idx_axis] = val; update_transform(engine, state)
 
+            props = ["pos", "rot", "scale"]
+            prop_names = ["Pos", "Rot", "Scl"]
+            field_w = 60
+            field_gap = 40
+            start_x = 50
+            
+            for i, prop in enumerate(props):
+                lbl(ui_object, 10, yo+4, prop_names[i], 12, COL_TEXT_DIM)
+                for j in range(3):
+                    f = NumberField(VIEW_W + start_x + j*(field_w+field_gap), yo, field_w, 22,
+                                    lambda p=prop, axis=j: get_v(p, axis),
+                                    lambda v, p=prop, axis=j: set_v(v, p, axis))
+                    ui_object.append(f)
+                yo += 26
+            yo += 10 # Marge bas du bloc
+
+        # ==================== SECTION MATERIAL ====================
+        lbl(ui_object, 10, yo, "MATERIAL", 14, COL_ACCENT)
+        yo += 25
+
+        # Helpers Material (inchangés)
+        def push_material_update(state):
+            d = state.get_selected_info()
+            if not d: return
+            ctype = d.get('mat_type', 'lambertian')
+            ccol  = d.get('color', [0.8, 0.8, 0.8])
+            cfuzz = d.get('fuzz', 0.0)
+            cir   = d.get('ir', 1.5)
+            engine.update_instance_material(state.selected_id, ctype, cpp_engine.Vec3(*ccol), cfuzz, cir)
+            state.dirty = True
+
+        def set_mat_type(t):
+            d = state.get_selected_info(); 
+            if d: 
+                d['mat_type'] = t 
+                if 'color' not in d: d['color'] = [0.8, 0.8, 0.8]
+                push_material_update(state)
+                # On force la mise à jour visuelle des boutons
+                build_object_ui() 
+
+        # Ligne de boutons Types + Toggle
+        current_mat = sel_data.get('mat_type', 'lambertian')
+        grp_mat = []
+        
+        # On fait des boutons plus petits pour tout caser sur une ligne + le toggle
+        bw_mat = 48
+        gap_mat = 4
+        x_mat = 10
+        
+        # Liste des types supportés
+        mat_types = [("MATTE", "lambertian"), ("METAL", "metal"), ("GLASS", "dielectric"), 
+                     ("PLAST", "plastic"), ("LIGHT", "light")]
+        
+        for label, val in mat_types:
+            is_act = (current_mat == val)
+            btn(ui_object, x_mat, yo, bw_mat, 24, label, set_mat_type, val, True, grp_mat, is_act)
+            x_mat += bw_mat + gap_mat
+
+        # BOUTON TOGGLE MATERIAU [+]
+        def toggle_mat():
+            state.show_mat_details = not state.show_mat_details
+            build_object_ui() # RECONSTRUCTION
+            
+        txt_toggle_mat = "-" if state.show_mat_details else "+"
+        btn(ui_object, x_mat + 5, yo, 24, 24, txt_toggle_mat, toggle_mat)
+        
+        yo += 30
+
+        # CONTENU COLLAPSABLE (Sliders)
+        if state.show_mat_details:
+            def get_col(idx):
+                d = state.get_selected_info(); return d.get('color', [0.8,0.8,0.8])[idx] if d else 0.0
+            def set_col(val, idx):
+                d = state.get_selected_info()
+                if d: 
+                    if 'color' not in d: d['color'] = [0.8, 0.8, 0.8]
+                    d['color'][idx] = val
+                    push_material_update(state)
+
+            def get_prop(name, def_val):
+                d = state.get_selected_info(); return d.get(name, def_val) if d else def_val
+            def set_prop(val, name):
+                d = state.get_selected_info(); 
+                if d: 
+                    d[name] = val
+                    if 'color' not in d: d['color'] = [0.8, 0.8, 0.8]
+                    push_material_update(state)
+
+            # Sliders RGB (Compactés)
+            lbl(ui_object, 10, yo, "Color", 12, COL_TEXT_DIM)
+            
+            # On met les 3 sliders couleur très proches
+            # R
+            ui_object.append(Slider(VIEW_W+60, yo, 240, 12, 0.0, 1.0, 
+                                    lambda: get_col(0), lambda v: set_col(v, 0), color_track=(180, 50, 50)))
+            yo += 16
+            # G
+            ui_object.append(Slider(VIEW_W+60, yo, 240, 12, 0.0, 1.0, 
+                                    lambda: get_col(1), lambda v: set_col(v, 1), color_track=(50, 180, 50)))
+            yo += 16
+            # B
+            ui_object.append(Slider(VIEW_W+60, yo, 240, 12, 0.0, 1.0, 
+                                    lambda: get_col(2), lambda v: set_col(v, 2), color_track=(50, 50, 180)))
+            yo += 25
+
+            # Properties
+            lbl(ui_object, 10, yo, "Rough", 12, COL_TEXT_DIM)
+            ui_object.append(Slider(VIEW_W+60, yo, 240, 14, 0.0, 1.0, 
+                                    lambda: get_prop('fuzz', 0.0), lambda v: set_prop(v, 'fuzz')))
+            yo += 20
+            
+            lbl(ui_object, 10, yo, "IOR", 12, COL_TEXT_DIM)
+            ui_object.append(Slider(VIEW_W+60, yo, 240, 14, 1.0, 3.0, 
+                                    lambda: get_prop('ir', 1.5), lambda v: set_prop(v, 'ir')))
+
+        # --- LOGIQUE UPDATE C++ ---
+
+        def push_material_update(state):
+            d = state.get_selected_info()
+            if not d: return
+            
+            # Valeurs par défaut si manquantes dans le dictionnaire
+            ctype = d.get('mat_type', 'lambertian')
+            ccol  = d.get('color', [0.8, 0.8, 0.8])
+            cfuzz = d.get('fuzz', 0.0)
+            cir   = d.get('ir', 1.5)
+            
+            # Appel C++
+            engine.update_instance_material(state.selected_id, ctype, cpp_engine.Vec3(*ccol), cfuzz, cir)
+            state.dirty = True
+
+        # Getters/Setters pour l'UI
+        def get_mat_type():
+            d = state.get_selected_info(); return d.get('mat_type', 'lambertian') if d else 'lambertian'
+
+        def set_mat_type(t):
+            d = state.get_selected_info(); 
+            if d: 
+                d['mat_type'] = t 
+                if 'color' not in d: d['color'] = [0.8, 0.8, 0.8]
+                push_material_update(state)
+
+        def get_col(idx):
+            d = state.get_selected_info(); return d.get('color', [0.8,0.8,0.8])[idx] if d else 0.0
+
+        def set_col(val, idx):
+            d = state.get_selected_info()
+            if d: 
+                if 'color' not in d:
+                    d['color'] = [0.8, 0.8, 0.8] # Gris par défaut
+                d['color'][idx] = val
+                push_material_update(state)
+
+        def get_prop(name, def_val):
+            d = state.get_selected_info(); return d.get(name, def_val) if d else def_val
+
+        def set_prop(val, name):
+            d = state.get_selected_info(); 
+            if d: 
+                d[name] = val
+                if 'color' not in d: d['color'] = [0.8, 0.8, 0.8] # Sécurité
+                push_material_update(state)
+
+        
 
     # --- FOOTER ---
     def start_full_render():
@@ -538,9 +789,9 @@ def run(engine, config, builder):
     #surface.fill((0,0,0))
 
     last_render_dt = 0.03
-    
-    # Boutons qui dépendent de la sélection
-    gizmo_buttons = [b_move, b_lift, b_rot, b_scl]
+
+    # Init UI
+    build_object_ui()
     
     while running:
         clock.tick() 
@@ -606,13 +857,9 @@ def run(engine, config, builder):
                 ui_hit = False
                 if mouse_pos[0] > VIEW_W:
                     for widget in active_ui_elements:
-                        # Désactiver les widgets d'objet si pas de sélection
-                        if widget in fields and state.selected_id == -1: continue
-                        if widget in gizmo_buttons and state.selected_id == -1: continue
-                        
                         if widget.handle_event(event, state):
                             ui_hit = True
-                            state.dirty = True 
+                            state.dirty = True
                 
                 else: 
                     if in_viewport and event.button == 1 and not ui_hit:
@@ -626,8 +873,11 @@ def run(engine, config, builder):
                                 state.active_tab = "OBJECT"
                                 state.tool_mode = "SEL"
                                 b_cam.active = False; b_sel.active = True; b_foc.active = False; btn_scene.active = False
+                                # [IMPORTANT] On reconstruit l'UI pour afficher les infos du nouvel objet
+                                build_object_ui()
                             else:
                                 state.active_tab = "SCENE"
+                                build_object_ui()
                         
                         elif state.tool_mode == "FOCUS":
                             res = engine.pick_focus_distance(vp.width, vp.height, mouse_x_rel, mouse_y_rel)
@@ -808,18 +1058,6 @@ def run(engine, config, builder):
         l_fov.text = f"{state.vfov:.0f}"
         l_apt.text = f"{state.aperture:.2f}"
         l_foc.text = f"{state.focus_dist:.1f}"
-        
-        sel_data = state.get_selected_info()
-        has_sel = (sel_data is not None)
-        
-        for b in gizmo_buttons: b.enabled = has_sel
-        for f in fields: f.enabled = has_sel
-
-        if has_sel:
-            name = sel_data.get('name', sel_data.get('type', 'Unknown'))
-            l_name.text = f"ID {state.selected_id}: {name}"
-        else:
-            l_name.text = "No Selection"
             
         pygame.draw.rect(screen, COL_HEADER, (VIEW_W, 0, PANEL_W, 100))
         pygame.draw.line(screen, COL_BORDER, (VIEW_W, 100), (WIN_W, 100))
