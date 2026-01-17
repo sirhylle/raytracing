@@ -100,7 +100,7 @@ class Button(UIElement):
 class Label(UIElement):
     def __init__(self, x, y, text, font_size=16, color=COL_TEXT, align="left", width=0):
         self.pos = (x, y)
-        self.text = text
+        self.text = text # Peut être une String OU une Fonction
         self.color = color
         self.font_size = font_size
         self.align = align 
@@ -108,8 +108,15 @@ class Label(UIElement):
         self.enabled = True 
 
     def draw(self, screen, fonts):
+        # Gestion du texte dynamique
+        if callable(self.text):
+            display_text = self.text() # On exécute la fonction pour avoir le texte à jour
+        else:
+            display_text = str(self.text)
+
         f = fonts.get(self.font_size)
-        surf = f.render(self.text, True, self.color)
+        surf = f.render(display_text, True, self.color)
+        
         draw_pos = list(self.pos)
         if self.align == "center" and self.width > 0:
             txt_w = surf.get_width()
@@ -501,6 +508,10 @@ def run(engine, config, builder):
     lbl(ui_scene, 10, ys, "CAMERA", 14, COL_ACCENT)
     ys += 20
     
+    def set_cam_val(attr, val):
+        setattr(state, attr, val)
+        state.dirty = True
+
     def adj_cam(data):
         attr, d = data 
         setattr(state, attr, getattr(state, attr) + d)
@@ -508,23 +519,29 @@ def run(engine, config, builder):
     
     # FOV
     lbl(ui_scene, 10, ys+4, "FOV", 12, COL_TEXT)
-    btn(ui_scene, 80, ys, 30, 20, "-", adj_cam, ('vfov', -5)); 
-    l_fov = Label(VIEW_W+115, ys+2, "40", 12, align="center", width=40); ui_scene.append(l_fov)
-    btn(ui_scene, 160, ys, 30, 20, "+", adj_cam, ('vfov', 5))
-    ys += 26
+    btn(ui_scene, 80, ys, 30, 22, "-", adj_cam, ('vfov', -5)); 
+    ui_scene.append(NumberField(VIEW_W+115, ys, 40, 22, 
+                                lambda: state.vfov, 
+                                lambda v: set_cam_val('vfov', v)))
+    btn(ui_scene, 160, ys, 30, 22, "+", adj_cam, ('vfov', 5))
+    ys += 28
     
     # Aperture
     lbl(ui_scene, 10, ys+4, "Aperture", 12, COL_TEXT)
-    btn(ui_scene, 80, ys, 30, 20, "-", adj_cam, ('aperture', -0.05)); 
-    l_apt = Label(VIEW_W+115, ys+2, "0.00", 12, align="center", width=40); ui_scene.append(l_apt)
-    btn(ui_scene, 160, ys, 30, 20, "+", adj_cam, ('aperture', 0.05))
-    ys += 26
+    btn(ui_scene, 80, ys, 30, 22, "-", adj_cam, ('aperture', -0.02)); 
+    ui_scene.append(NumberField(VIEW_W+115, ys, 40, 22, 
+                                lambda: state.aperture, 
+                                lambda v: set_cam_val('aperture', v)))
+    btn(ui_scene, 160, ys, 30, 22, "+", adj_cam, ('aperture', 0.02))
+    ys += 28
 
     # Focus Dist
     lbl(ui_scene, 10, ys+4, "Focus Dist", 12, COL_TEXT)
-    btn(ui_scene, 80, ys, 30, 20, "-", adj_cam, ('focus_dist', -0.5)); 
-    l_foc = Label(VIEW_W+115, ys+2, "10.0", 12, align="center", width=40); ui_scene.append(l_foc)
-    btn(ui_scene, 160, ys, 30, 20, "+", adj_cam, ('focus_dist', 0.5))
+    btn(ui_scene, 80, ys, 30, 22, "-", adj_cam, ('focus_dist', -0.5)); 
+    ui_scene.append(NumberField(VIEW_W+115, ys, 40, 22, 
+                                lambda: state.focus_dist, 
+                                lambda v: set_cam_val('focus_dist', v)))
+    btn(ui_scene, 160, ys, 30, 22, "+", adj_cam, ('focus_dist', 0.5))
     ys += 35
     
     # Environment (Placeholder)
@@ -687,26 +704,26 @@ def run(engine, config, builder):
             
             # On met les 3 sliders couleur très proches
             # R
-            ui_object.append(Slider(VIEW_W+60, yo, 240, 12, 0.0, 1.0, 
+            ui_object.append(Slider(VIEW_W+80, yo, 220, 12, 0.0, 1.0, 
                                     lambda: get_col(0), lambda v: set_col(v, 0), color_track=(180, 50, 50)))
             yo += 16
             # G
-            ui_object.append(Slider(VIEW_W+60, yo, 240, 12, 0.0, 1.0, 
+            ui_object.append(Slider(VIEW_W+80, yo, 220, 12, 0.0, 1.0, 
                                     lambda: get_col(1), lambda v: set_col(v, 1), color_track=(50, 180, 50)))
             yo += 16
             # B
-            ui_object.append(Slider(VIEW_W+60, yo, 240, 12, 0.0, 1.0, 
+            ui_object.append(Slider(VIEW_W+80, yo, 220, 12, 0.0, 1.0, 
                                     lambda: get_col(2), lambda v: set_col(v, 2), color_track=(50, 50, 180)))
             yo += 25
 
             # Properties
-            lbl(ui_object, 10, yo, "Rough", 12, COL_TEXT_DIM)
-            ui_object.append(Slider(VIEW_W+60, yo, 240, 14, 0.0, 1.0, 
+            lbl(ui_object, 10, yo, lambda: f"Rough: {get_prop('fuzz', 0.0):.3f}", 12, COL_TEXT_DIM)
+            ui_object.append(Slider(VIEW_W+80, yo, 220, 14, 0.0, 1.0, 
                                     lambda: get_prop('fuzz', 0.0), lambda v: set_prop(v, 'fuzz')))
             yo += 20
             
-            lbl(ui_object, 10, yo, "IOR", 12, COL_TEXT_DIM)
-            ui_object.append(Slider(VIEW_W+60, yo, 240, 14, 1.0, 3.0, 
+            lbl(ui_object, 10, yo, lambda: f"IOR: {get_prop('ir', 1.5):.3f}", 12, COL_TEXT_DIM)
+            ui_object.append(Slider(VIEW_W+80, yo, 220, 14, 1.0, 3.0, 
                                     lambda: get_prop('ir', 1.5), lambda v: set_prop(v, 'ir')))
 
         # --- LOGIQUE UPDATE C++ ---
@@ -1055,9 +1072,6 @@ def run(engine, config, builder):
         
         # Update Labels
         l_spp.text = f"SPP: {state.accum_spp}"
-        l_fov.text = f"{state.vfov:.0f}"
-        l_apt.text = f"{state.aperture:.2f}"
-        l_foc.text = f"{state.focus_dist:.1f}"
             
         pygame.draw.rect(screen, COL_HEADER, (VIEW_W, 0, PANEL_W, 100))
         pygame.draw.line(screen, COL_BORDER, (VIEW_W, 100), (WIN_W, 100))

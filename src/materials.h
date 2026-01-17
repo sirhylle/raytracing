@@ -104,10 +104,11 @@ class Dielectric : public Material {
 public:
   Real ir; // Indice de réfraction (1.5 pour verre, 2.4 diamant)
   Vec3 tint;
+  Real fuzz; // Flou / Rugosité
 
   Dielectric(Real index_of_refraction,
-             const Vec3 &tint_color = Vec3(1.0f, 1.0f, 1.0f))
-      : ir(index_of_refraction), tint(tint_color) {}
+             const Vec3 &tint_color = Vec3(1.0f, 1.0f, 1.0f), Real f = 0.0)
+      : ir(index_of_refraction), tint(tint_color), fuzz(f < 1 ? f : 1) {}
 
   virtual bool is_transparent() const override { return true; }
 
@@ -131,6 +132,12 @@ public:
       direction = reflect(unit_direction, rec.normal);
     else
       direction = refract(unit_direction, rec.normal, refraction_ratio);
+
+    // Application du Fuzz (Effet verre dépoli)
+    // On ajoute un peu de bruit aléatoire à la direction parfaite
+    if (fuzz > 0.0f) {
+      direction += fuzz * random_in_unit_sphere();
+    }
 
     srec.specular_ray = Ray(rec.p, direction, r_in.tm);
     return true;

@@ -645,7 +645,7 @@ private:
     if (type == "metal")
       return std::make_shared<Metal>(col, fuzz);
     if (type == "dielectric")
-      return std::make_shared<Dielectric>(ir, col);
+      return std::make_shared<Dielectric>(ir, col, fuzz);
     if (type == "plastic")
       return std::make_shared<Plastic>(col, ir, fuzz);
     if (type == "light")

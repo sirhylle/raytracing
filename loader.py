@@ -46,7 +46,7 @@ class SceneBuilder:
             'rot': [0.0, 0.0, 0.0],
             'scale': [radius, radius, radius],
             'mat_type': mat_type,
-            'color': col_list,
+            'color': color,
             'fuzz': float(fuzz),
             'ir': float(ir)
         }
