@@ -124,6 +124,7 @@ class NumberField(UIElement):
         self.active = False
         self.text_buffer = ""
         self.enabled = True
+        self.cursor_pos = 0 # Position du curseur (index dans la string)
 
     def draw(self, screen, fonts):
         if not self.enabled: return 
@@ -140,7 +141,22 @@ class NumberField(UIElement):
             
         f = fonts.get(14)
         surf = f.render(display_txt, True, COL_TEXT)
-        screen.blit(surf, (self.rect.x + 5, self.rect.centery - surf.get_height()//2))
+        
+        txt_x = self.rect.x + 5
+        txt_y = self.rect.centery - surf.get_height() // 2
+        screen.blit(surf, (txt_x, txt_y))
+        
+        # --- DESSIN DU CURSEUR INTELLIGENT ---
+        if self.active:
+            if time.time() % 1 > 0.5:
+                # On mesure la largeur du texte AVANT le curseur pour savoir où dessiner la ligne
+                txt_before_cursor = self.text_buffer[:self.cursor_pos]
+                width_before = f.size(txt_before_cursor)[0]
+                
+                cursor_x = txt_x + width_before
+                pygame.draw.line(screen, COL_TEXT, 
+                                 (cursor_x, self.rect.y + 4), 
+                                 (cursor_x, self.rect.bottom - 4), 1)
 
     def handle_event(self, event, state):
         if not self.enabled: return False
@@ -148,7 +164,14 @@ class NumberField(UIElement):
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             if self.rect.collidepoint(event.pos):
                 self.active = True
-                self.text_buffer = str(self.get_cb()) 
+                
+                # Formatage propre (arrondi)
+                val = self.get_cb()
+                self.text_buffer = str(round(val, 5)) 
+                
+                # Par défaut, on place le curseur à la fin au clic
+                self.cursor_pos = len(self.text_buffer)
+                
                 state.typing_mode = True 
                 return True
             else:
@@ -161,11 +184,30 @@ class NumberField(UIElement):
             elif event.key == pygame.K_ESCAPE:
                 self.active = False
                 state.typing_mode = False
+            
+            # --- NAVIGATION GAUCHE / DROITE ---
+            elif event.key == pygame.K_LEFT:
+                if self.cursor_pos > 0:
+                    self.cursor_pos -= 1
+            elif event.key == pygame.K_RIGHT:
+                if self.cursor_pos < len(self.text_buffer):
+                    self.cursor_pos += 1
+            
+            # --- BACKSPACE INTELLIGENT (Supprime avant le curseur) ---
             elif event.key == pygame.K_BACKSPACE:
-                self.text_buffer = self.text_buffer[:-1]
+                if self.cursor_pos > 0:
+                    # On garde tout sauf le caractère juste avant le curseur
+                    self.text_buffer = self.text_buffer[:self.cursor_pos-1] + self.text_buffer[self.cursor_pos:]
+                    self.cursor_pos -= 1
+            
+            # --- SAISIE DE TEXTE (Insertion au curseur) ---
             else:
                 if event.unicode in "0123456789.-":
-                    self.text_buffer += event.unicode
+                    char = event.unicode
+                    # On insère le caractère à la position du curseur
+                    self.text_buffer = self.text_buffer[:self.cursor_pos] + char + self.text_buffer[self.cursor_pos:]
+                    self.cursor_pos += 1
+            
             return True
         return False
 
@@ -583,7 +625,7 @@ def run(engine, config, builder):
                             if pid != -1:
                                 state.active_tab = "OBJECT"
                                 state.tool_mode = "SEL"
-                                b_cam.active = False; b_sel.active = True; b_foc.active = False
+                                b_cam.active = False; b_sel.active = True; b_foc.active = False; btn_scene.active = False
                             else:
                                 state.active_tab = "SCENE"
                         
