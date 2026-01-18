@@ -22,7 +22,13 @@ def run(engine, config, builder):
     screen = pygame.display.set_mode((ui_core.WIN_W, ui_core.WIN_H))
     pygame.display.set_caption("Raytracer Studio - Interactive Editor")
     clock = pygame.time.Clock()
-    fonts = { 12: pygame.font.SysFont("Arial", 12), 13: pygame.font.SysFont("Arial", 13), 14: pygame.font.SysFont("Arial", 14), 18: pygame.font.SysFont("Arial", 18, bold=True) }
+    fonts = {
+        11: pygame.font.SysFont("Arial", 11),
+        12: pygame.font.SysFont("Arial", 12),
+        13: pygame.font.SysFont("Arial", 13),
+        14: pygame.font.SysFont("Arial", 14),
+        18: pygame.font.SysFont("Arial", 18, bold=True)
+    }
     
     app_state = state.EditorState(config, builder)
     app_state.calculate_viewport(ui_core.VIEW_W, ui_core.WIN_H)
@@ -55,9 +61,9 @@ def run(engine, config, builder):
         content_start_y = panels.layout_global.build_global_layout(ui_list, app_state, engine, start_render)
         
         if app_state.active_tab == "SCENE":
-            panels.tab_scene.build(ui_list, content_start_y, app_state, engine)
+            panels.tab_scene.build(ui_list, content_start_y+2, app_state, engine)
         elif app_state.active_tab == "OBJECT":
-            panels.tab_object.build(ui_list, content_start_y, app_state, engine)
+            panels.tab_object.build(ui_list, content_start_y+2, app_state, engine)
         
         app_state.needs_ui_rebuild = False
 
@@ -298,8 +304,24 @@ def run(engine, config, builder):
             screen.blit(app_state.current_image, (vp_rect.x, vp_rect.y))
 
         # C. Draw UI Panel
+        # 1. Fond Panel (Gris moyen - Remplissage total)
         pygame.draw.rect(screen, ui_core.COL_PANEL, (ui_core.VIEW_W, 0, ui_core.PANEL_W, ui_core.WIN_H))
+
+        # 2. Header (Haut)
+        header_height = 200
+        pygame.draw.rect(screen, ui_core.COL_HEADER, (ui_core.VIEW_W, 0, ui_core.PANEL_W, header_height))
         pygame.draw.line(screen, ui_core.COL_BORDER, (ui_core.VIEW_W, 0), (ui_core.VIEW_W, ui_core.WIN_H))
+        #pygame.draw.line(screen, ui_core.COL_BORDER, (ui_core.VIEW_W, header_height), (ui_core.WIN_W, header_height))
+
+        # 3. Footer (Bas)
+        footer_h = 50 # Hauteur fixe pour le footer
+        footer_y = ui_core.WIN_H - footer_h
+        # Fond sombre
+        pygame.draw.rect(screen, ui_core.COL_HEADER, (ui_core.VIEW_W, footer_y, ui_core.PANEL_W, footer_h))
+        # Ligne de séparation (Bordure du haut du footer)
+        pygame.draw.line(screen, ui_core.COL_BORDER, (ui_core.VIEW_W, footer_y), (ui_core.WIN_W, footer_y))
+
+        
         
         for w in ui_list: w.draw(screen, fonts)
         

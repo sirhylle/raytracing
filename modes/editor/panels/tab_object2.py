@@ -11,6 +11,7 @@ def build(ui_list, start_y, state, engine):
     obj_name = sel_data.get('name', sel_data.get('type', 'Unknown'))
 
     # --- 2. HEADER : IDENTITÉ ---
+    # Juste le nom et l'ID, sobre.
     lbl(ui_list, 10, ys, f"ID {state.selected_id}: {obj_name}", 14, COL_ACCENT)
     ys += 30
 
@@ -18,6 +19,8 @@ def build(ui_list, start_y, state, engine):
     def draw_section_header(title, accord_key):
         """Dessine une barre de titre avec le toggle inclus."""
         nonlocal ys
+        
+        # État d'ouverture
         is_open = state.is_accordion_open("OBJECT", accord_key)
         
         # 1. Fond Sombre
@@ -26,26 +29,29 @@ def build(ui_list, start_y, state, engine):
         # 2. Titre
         lbl(ui_list, 15, ys + 4, title, 12, COL_TEXT)
         
-        # 3. Bouton Toggle (dans la barre)
+        # 3. Bouton Toggle (dans la barre, à droite)
         def toggle():
             state.toggle_accordion("OBJECT", accord_key)
+            # Le rebuild est géré par la boucle principale via needs_ui_rebuild=True dans toggle_accordion
         
         txt = "-" if is_open else "+"
+        # On utilise un petit bouton transparent ou discret
         btn(ui_list, PANEL_W - 35, ys + 2, 24, 22, txt, toggle, col_ov=None)
         
-        ys += 30 
+        ys += 30 # Hauteur header + marge
         return is_open
 
     # ==================== BLOC 1 : GEOMETRY (TRANSFORMS) ====================
     if draw_section_header("TRANSFORMS", "TRANSFORMS"):
         
-        # A. Outils Visuels (GIZMOS) - Centrés, sans label
+        # A. Outils Visuels (GIZMOS)
+        # On les met DANS le panneau déplié, car ce sont des outils liés à la transfo
+        lbl(ui_list, 10, ys, "Gizmo Tool", 11, COL_TEXT_DIM)
+        ys += 18
+        
         def set_gizmo(g): state.gizmo_mode = g
         grp_gizmo = []
-        
-        bw, gap = 58, 5
-        total_w = (4 * bw) + (3 * gap) # 247px
-        x = (PANEL_W - total_w) // 2   # Centrage
+        bw, gap, x = 58, 5, 10
         
         modes = ["MOVE", "LIFT", "ROT", "SCALE"]
         for m in modes:
@@ -53,120 +59,95 @@ def build(ui_list, start_y, state, engine):
             x += bw + gap
         ys += 35
 
-        # B. Données Numériques (X/Y/Z Colorés)
+        # B. Données Numériques (PRECISION)
         def get_v(prop, axis): d=state.get_selected_info(); return d[prop][axis] if d else 0.0
         def set_v(val, prop, axis): 
             d=state.get_selected_info(); 
             if d: d[prop][axis]=val; state.update_transform(engine)
         
         props = ["pos", "rot", "scale"]
-        names = ["Position", "Rotation", "Scale"]
+        names = ["Position", "Rotation", "Scale"] # Noms complets plus propres
         
-        # Couleurs X(Rouge), Y(Vert), Z(Bleu) désaturées
-        axis_colors = [(200, 80, 80), (80, 200, 80), (80, 80, 220)]
-        axis_labels = ["X", "Y", "Z"]
-
-        label_width = 60
-        field_w = 55 
-        
-        # Calcul pour centrer ou caler le bloc de champs
-        # Start X = Label + marge
-        start_x_fields = 10 + label_width + 10 
-        
-        for i, prop in enumerate(props):
-            # Label Principal
-            lbl(ui_list, 10, ys + 4, names[i], 12, COL_TEXT_DIM)
-            
-            current_x = start_x_fields
+        for i, p in enumerate(props):
+            lbl(ui_list, 10, ys+4, names[i], 12, COL_TEXT_DIM)
+            # Champs alignés à droite
+            start_x = 80
+            field_w = 65
             for j in range(3):
-                # Petit label X/Y/Z coloré
-                lbl(ui_list, current_x, ys + 4, axis_labels[j], 12, axis_colors[j])
-                
-                # Champ numérique
-                ui_list.append(NumberField(VIEW_W + current_x + 15, ys, field_w, 22, 
-                                           lambda p=prop, ax=j: get_v(p, ax), 
-                                           lambda v, p=prop, ax=j: set_v(v, p, ax)))
-                
-                current_x += 15 + field_w + 5 # Gap entre champs
+                # TODO: Créer un helper num_field dans ui_core pour simplifier cette ligne
+                ui_list.append(NumberField(VIEW_W+start_x+j*(field_w+5), ys, field_w, 22, 
+                                           lambda pr=p, ax=j: get_v(pr, ax), 
+                                           lambda v, pr=p, ax=j: set_v(v, pr, ax)))
             ys += 28
         
-        ys += 10
+        ys += 10 # Marge fin de section
 
     # ==================== BLOC 2 : APPEARANCE (MATERIAL) ====================
     if draw_section_header("MATERIAL", "MATERIAL"):
         
-        # A. Type de Matériau - Centré, sans label
+        # A. Type de Matériau (Macro)
+        lbl(ui_list, 10, ys, "Type", 11, COL_TEXT_DIM)
+        ys += 18
+        
         def set_mat(t):
             d=state.get_selected_info()
             if d: d['mat_type']=t; state.push_material_update(engine)
-            # Pas besoin de rebuild explicite car push_material_update set dirty=True
+            # Pas besoin de rebuild explicite ici car push_material_update set dirty=True, 
+            # mais pour l'UI "radio button" il faut que l'état change.
+            # L'architecture actuelle redessine à la frame suivante, donc ça va.
         
         grp_mat = []
-        bw_mat, gap_mat = 48, 4
-        # 5 boutons
-        total_w_mat = (5 * bw_mat) + (4 * gap_mat) # 256px
-        x_mat = (PANEL_W - total_w_mat) // 2       # Centrage
-        
-        mat_types = [("MATTE", "lambertian"), ("METAL", "metal"), ("GLASS", "dielectric"), 
-                     ("PLAST", "plastic"), ("LIGHT", "light")]
+        x_mat = 10
+        # On compacte un peu les noms pour que ça rentre mieux
+        mat_types = [("MATTE", "lambertian"), ("METAL", "metal"), ("GLASS", "dielectric"), ("PLAST", "plastic"), ("LIGHT", "light")]
         curr = sel_data.get('mat_type', 'lambertian')
         
         for label, val in mat_types:
-            btn(ui_list, x_mat, ys, bw_mat, 24, label, set_mat, val, True, grp_mat, curr==val)
-            x_mat += bw_mat + gap_mat
+            btn(ui_list, x_mat, ys, 48, 24, label, set_mat, val, True, grp_mat, curr==val)
+            x_mat += 52
         ys += 35
 
-        # B. Paramètres (Sliders avec valeur dans le label)
-        
-        # Helpers
+        # B. Paramètres (Micro)
+        # Sliders RGB
         def get_col(i): d=state.get_selected_info(); return d.get('color', [0.8]*3)[i] if d else 0.0
         def set_col(v, i): 
             d=state.get_selected_info()
             if d: 
                 if 'color' not in d: d['color']=[0.8]*3
                 d['color'][i]=v; state.push_material_update(engine)
-        
-        def get_prop(k, d_val): d=state.get_selected_info(); return d.get(k, d_val) if d else d_val
-        def set_prop(v, k): 
-            d=state.get_selected_info(); 
-            if d: d[k]=v; state.push_material_update(engine)
 
+        # On fait des barres de couleur fines pour faire "Color Picker"
         cols = [(180,50,50), (50,180,50), (50,50,180)]
         labels = ["R", "G", "B"]
         
-        # --- SLIDERS RGB ---
-        # Label court (ex: "R (0.52)"), on laisse environ 75px
-        slider_x_rgb = 75
-        slider_w_rgb = PANEL_W - slider_x_rgb - 10 # Reste de la largeur
-        
         for i in range(3):
-            # Label avec valeur
-            lbl(ui_list, 10, ys, lambda idx=i: f"{labels[idx]} ({get_col(idx):.2f})", 12, COL_TEXT_DIM)
-            
-            ui_list.append(Slider(VIEW_W + slider_x_rgb, ys, slider_w_rgb, 12, 0.0, 1.0, 
+            # Petit label R/G/B
+            lbl(ui_list, 10, ys, labels[i], 12, COL_TEXT_DIM)
+            ui_list.append(Slider(VIEW_W+30, ys, 270, 14, 0.0, 1.0, 
                                   lambda idx=i: get_col(idx), 
                                   lambda v, idx=i: set_col(v, idx), 
                                   cols[i]))
             ys += 20
         ys += 10
         
-        # --- SLIDERS PROPS ---
-        slider_x_prop = 75
-        slider_w_prop = PANEL_W - slider_x_prop - 10
-        
-        # Roughness
-        lbl(ui_list, 10, ys, lambda: f"Fuzz ({get_prop('fuzz', 0.0):.2f})", 12, COL_TEXT_DIM)
-        ui_list.append(Slider(VIEW_W + slider_x_prop, ys, slider_w_prop, 12, 0.0, 1.0, 
-                              lambda: get_prop('fuzz', 0.0), lambda v: set_prop(v, 'fuzz')))
-        ys += 20
-        
-        # IOR
-        lbl(ui_list, 10, ys, lambda: f"IoR ({get_prop('ir', 1.5):.2f})", 12, COL_TEXT_DIM)
-        ui_list.append(Slider(VIEW_W + slider_x_prop, ys, slider_w_prop, 12, 1.0, 3.0, 
-                              lambda: get_prop('ir', 1.5), lambda v: set_prop(v, 'ir')))
-        ys += 20
+        # Autres propriétés
+        def get_prop(k, d_val): d=state.get_selected_info(); return d.get(k, d_val) if d else d_val
+        def set_prop(v, k): 
+            d=state.get_selected_info(); 
+            if d: d[k]=v; state.push_material_update(engine)
 
-    # ==================== BLOC 3 : FOOTER (DELETE) ====================
+        lbl(ui_list, 10, ys, "Roughness", 12, COL_TEXT_DIM)
+        ui_list.append(Slider(VIEW_W+80, ys, 220, 14, 0.0, 1.0, 
+                              lambda: get_prop('fuzz', 0.0), lambda v: set_prop(v, 'fuzz')))
+        ys += 25
+        
+        lbl(ui_list, 10, ys, "IOR", 12, COL_TEXT_DIM)
+        ui_list.append(Slider(VIEW_W+80, ys, 220, 14, 1.0, 3.0, 
+                              lambda: get_prop('ir', 1.5), lambda v: set_prop(v, 'ir')))
+        ys += 10 # Marge fin section
+
+    # ==================== BLOC 3 : DANGER ZONE (FOOTER) ====================
+    # On pousse ça tout en bas, ou au moins avec une bonne marge
     ys += 20 
     
     def delete_obj():
@@ -175,6 +156,9 @@ def build(ui_list, start_y, state, engine):
         if oid in state.builder.registry: del state.builder.registry[oid]
         state.selected_id = -1
         state.tool_mode = "CAM"
+        # On force un rebuild via active_tab qui va détecter le changement d'état via la main loop
+        # ou on laisse la main loop gérer le désélection
         
+    # Un bouton rouge bien large mais en bas
     btn(ui_list, 10, ys, 300, 28, "DELETE OBJECT", delete_obj, col_ov=(160, 50, 50))
     ys += 40

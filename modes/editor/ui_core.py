@@ -21,6 +21,7 @@ COL_TAB_INA = (35, 35, 35)
 COL_FIELD   = (30, 30, 30)   
 COL_FIELD_ACT= (0, 100, 150) 
 COL_BORDER  = (30, 30, 30)
+COL_BORDER_TABS  = (65, 65, 65)
 COL_ACCENT  = (255, 165, 0)
 COL_OVERLAY = (0, 0, 0, 180) 
 
@@ -38,7 +39,7 @@ class UIElement:
     def handle_event(self, event, state): return False
 
 class Button(UIElement):
-    def __init__(self, x, y, w, h, text, callback=None, data=None, toggle=False, group=None, color_override=None):
+    def __init__(self, x, y, w, h, text, callback=None, data=None, toggle=False, group=None, color_override=None, border_override=None):
         self.rect = pygame.Rect(x, y, w, h)
         self.text = text
         self.callback = callback
@@ -49,6 +50,8 @@ class Button(UIElement):
         self.group = group 
         self.enabled = True
         self.color_override = color_override
+        self.border_override = border_override
+        self.corners = -1
 
     def draw(self, screen, fonts):
         if self.color_override:
@@ -56,8 +59,25 @@ class Button(UIElement):
         else:
             col = COL_BTN_DIS if not self.enabled else (COL_BTN_ACT if self.active else (COL_BTN_HOV if self.hover else COL_BTN))
         
-        pygame.draw.rect(screen, col, self.rect, border_radius=4)
-        pygame.draw.rect(screen, COL_BORDER, self.rect, 1, border_radius=4)
+        col_border_final = self.border_override if self.border_override else COL_BORDER
+        
+        if isinstance(self.corners, dict):
+            pygame.draw.rect(screen, col, self.rect, 
+                             border_top_left_radius=self.corners.get('tl', 0),
+                             border_top_right_radius=self.corners.get('tr', 0),
+                             border_bottom_left_radius=self.corners.get('bl', 0),
+                             border_bottom_right_radius=self.corners.get('br', 0))
+                             
+            pygame.draw.rect(screen, col_border_final, self.rect, 1, 
+                             border_top_left_radius=self.corners.get('tl', 0),
+                             border_top_right_radius=self.corners.get('tr', 0),
+                             border_bottom_left_radius=self.corners.get('bl', 0),
+                             border_bottom_right_radius=self.corners.get('br', 0))
+        else:
+            # Comportement standard (tous les coins arrondis à 4)
+            pygame.draw.rect(screen, col, self.rect, border_radius=4)
+            pygame.draw.rect(screen, col_border_final, self.rect, 1, border_radius=4)
+
         
         txt_col = COL_TEXT_DIM if not self.enabled else COL_TEXT
         f = fonts.get(13)
@@ -225,14 +245,24 @@ class Slider(UIElement):
         self.set_cb(new_val)
         state.dirty = True
 
+class HeaderBar(UIElement):
+    def __init__(self, x, y, w, h, color):
+        self.rect = pygame.Rect(x, y, w, h)
+        self.color = color
+        
+    def draw(self, screen, fonts):
+        pygame.draw.rect(screen, self.color, self.rect, border_radius=4)
+        # Optionnel : petite bordure
+        pygame.draw.rect(screen, COL_BORDER, self.rect, 1, border_radius=4)
+
 # ===============================================================================================
 # FACTORY HELPERS (Pour éviter la répétition dans les layouts)
 # ===============================================================================================
 
-def btn(target_list, x, y, w, h, txt, cb, data=None, toggle=False, grp=None, active=False, col_ov=None):
+def btn(target_list, x, y, w, h, txt, cb, data=None, toggle=False, grp=None, active=False, col_ov=None, bd_ov=None):
     """Crée un bouton, l'ajoute à la liste UI et gère le groupe/offset."""
     # Note : On utilise VIEW_W qui est défini plus haut dans ce fichier
-    b = Button(VIEW_W + x, y, w, h, txt, cb, data, toggle, grp, col_ov)
+    b = Button(VIEW_W + x, y, w, h, txt, cb, data, toggle, grp, col_ov, bd_ov)
     
     if active: 
         b.active = True

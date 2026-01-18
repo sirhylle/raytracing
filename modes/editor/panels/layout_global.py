@@ -34,17 +34,20 @@ def build_global_layout(ui_list, state, engine, on_start_render):
     def set_tool(t): state.tool_mode = t
     grp_tool = []
     btn(ui_list, 10, y, 95, 30, "CAMERA", set_tool, "CAM", True, grp_tool, state.tool_mode=="CAM", col_ov=None)
-    btn(ui_list, 110, y, 95, 30, "EDITION", set_tool, "SEL", True, grp_tool, state.tool_mode=="SEL")
+    btn(ui_list, 110, y, 95, 30, "SELECT", set_tool, "SEL", True, grp_tool, state.tool_mode=="SEL")
     btn(ui_list, 210, y, 95, 30, "FOCUS", set_tool, "FOCUS", True, grp_tool, state.tool_mode=="FOCUS")
     y += 45
 
     # 4. TABS
     def set_tab(t): state.set_active_tab(t) # Main loop détectera le changement et reconstruira le contenu
     grp_tabs = []
-    btn(ui_list, 10, y, 150, 28, "SCENE GLOBAL", set_tab, "SCENE", True, grp_tabs, state.active_tab=="SCENE", COL_TAB_INA)
-    btn(ui_list, 160, y, 150, 28, "OBJECT DATA", set_tab, "OBJECT", True, grp_tabs, state.active_tab=="OBJECT", COL_TAB_INA)
+    tab_w = 150
+    b1 = btn(ui_list, 10, y, tab_w, 28, "SCENE", set_tab, "SCENE", True, grp_tabs, state.active_tab=="SCENE", COL_TAB_INA)
+    b1.corners = {'tl': 4, 'bl': 4, 'tr': 0, 'br': 0}
+    b2 = btn(ui_list, 10 + tab_w, y, tab_w, 28, "OBJECT", set_tab, "OBJECT", True, grp_tabs, state.active_tab=="OBJECT", COL_TAB_INA)
+    b2.corners = {'tl': 0, 'bl': 0, 'tr': 4, 'br': 4}
     
     # 5. FOOTER
-    btn(ui_list, 10, WIN_H - 45, 300, 35, "RENDER FINAL IMAGE", on_start_render)
+    btn(ui_list, 10, WIN_H - 42, 300, 34, "RENDER FINAL IMAGE", on_start_render)
     
     return y + 40 # Retourne la position Y de départ pour le contenu des onglets

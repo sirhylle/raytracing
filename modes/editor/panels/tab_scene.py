@@ -5,10 +5,12 @@ def build(ui_list, start_y, state, engine):
 
     def draw_header(title, section_name, toggle_switch=None):
         nonlocal ys
+        
         # Vérifie si CETTE section est celle active dans l'onglet SCENE
         is_open = state.is_accordion_open("SCENE", section_name)
-        
-        lbl(ui_list, 10, ys, title, 14, COL_ACCENT)
+
+        ui_list.append(HeaderBar(VIEW_W + 5, ys - 4, PANEL_W - 10, 26, COL_HEADER))
+        lbl(ui_list, 15, ys, title, 14, COL_ACCENT)
         
         def toggle():
             state.toggle_accordion("SCENE", section_name)
