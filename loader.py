@@ -196,6 +196,42 @@ class SceneBuilder:
 # LOGIQUE DE CHARGEMENT
 # ==================================================================================
 
+def create_auto_sun(builder, intensity, radius, distance):
+    """
+    Analyse l'env map actuelle du moteur, trouve le point chaud,
+    et crée un soleil physique correspondant via le builder.
+    Retourne (sun_id, sun_dir_array, sun_raw_color_array).
+    """
+    # 1. Analyse du moteur
+    # Renvoie des Vec3 C++
+    sun_dir, sun_color = builder.get_env_sun_info()
+    
+    # 2. Conversion en tableaux Python/Numpy pour usage ultérieur
+    dir_arr = np.array([sun_dir.x(), sun_dir.y(), sun_dir.z()])
+    raw_col_arr = np.array([sun_color.x(), sun_color.y(), sun_color.z()])
+    
+    # 3. Calculs mathématiques
+    # Position
+    pos = dir_arr * distance
+    
+    # Couleur (Scaling par intensité)
+    raw_intensity = max(raw_col_arr[0], max(raw_col_arr[1], raw_col_arr[2]))
+    if raw_intensity <= 0: raw_intensity = 1.0
+    
+    # On calcule le facteur d'échelle pour atteindre l'intensité cible
+    scale = intensity / raw_intensity
+    final_col = raw_col_arr * scale
+    
+    # 4. Création via le Builder
+    oid = builder.add_invisible_sphere_light(
+        pos, 
+        radius,
+        final_col,   # Couleur active
+        raw_col_arr  # Couleur brute (Single Source of Truth)
+    )
+    
+    return oid, dir_arr, raw_col_arr
+
 def load_environment(builder, env_path, 
     env_light_level=None, env_direct_level=None, env_indirect_level=None, 
     auto_sun=False, auto_sun_intensity=None, auto_sun_radius=None,
@@ -231,28 +267,16 @@ def load_environment(builder, env_path,
 
         if auto_sun:
             print("[Loader] Auto-Sun: Analyzing Environment...")
-            sun_dir, sun_color = builder.get_env_sun_info()
             
-            #builder.set_env_levels(bg_lvl, auto_sun_env_level, indir_lvl)
+            # On applique le niveau d'environnement réduit pour l'Auto-Sun
             builder.set_env_levels(cam_vis, auto_sun_env_level, refl)
 
-            dist = auto_sun_dist
-            pos = [sun_dir.x() * dist, sun_dir.y() * dist, sun_dir.z() * dist]
-            
-            raw_intensity = max(sun_color.x(), max(sun_color.y(), sun_color.z()))
-            if raw_intensity <= 0: raw_intensity = 1.0
-            
-            target_intensity = auto_sun_intensity 
-            scale = target_intensity / raw_intensity
-            
-            sun_col = [sun_color.x()*scale, sun_color.y()*scale, sun_color.z()*scale]
-            
-            # On utilise le builder pour que le soleil soit éditable
-            builder.add_invisible_sphere_light(
-                pos, 
-                auto_sun_radius,
-                sun_col,
-                [sun_color.x(), sun_color.y(), sun_color.z()]
+            # Appel de la logique partagée
+            create_auto_sun(
+                builder, 
+                auto_sun_intensity, 
+                auto_sun_radius, 
+                auto_sun_dist
             )
             print(f"[Loader] Auto-Sun added via Builder. Registry Updated.")
 

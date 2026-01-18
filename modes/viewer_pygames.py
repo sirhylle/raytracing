@@ -521,64 +521,87 @@ def load_new_env_map(engine, state):
 
 
 def update_environment_logic(engine, state):
-    # 1. Gestion des niveaux d'environnement (Environment Map)
-    if state.sun_enabled and state.sun_id != -1:
-        # Si le soleil est ON, on utilise le niveau "Ambience" (plus sombre généralement)
-        current_lighting = state.auto_sun_env_level
-    else:
-        # Si le soleil est OFF, on utilise le niveau "Background" (éclairage principal)
-        current_lighting = state.env_light_level
-
+    # 1. Environment Map Levels
+    lighting_level = state.auto_sun_env_level if (state.sun_enabled and state.sun_id != -1) else state.env_light_level
     current_cam_vis = state.env_direct_level
-
-    # Envoi au moteur C++
-    engine.set_env_rotation(state.env_rotation)
-    engine.set_env_levels(current_cam_vis, current_lighting, state.env_indirect_level)
     
-    # 2. Gestion du Soleil (Sun Instance)
+    engine.set_env_rotation(state.env_rotation)
+    engine.set_env_levels(current_cam_vis, lighting_level, state.env_indirect_level)
+    
+    # 2. CYCLE DE VIE : CRÉATION / DESTRUCTION
+    
+    # CAS A : On allume (ON) mais l'objet n'existe pas -> CRÉATION DÉLÉGUÉE
+    if state.sun_enabled and state.sun_id == -1:
+        print("[Viewer] Auto-Sun turned ON -> Calling Loader logic...")
+        
+        # IMPORTANT : On force la rotation à 0 avant l'analyse pour avoir 
+        # le vecteur de direction "initial" (aligné avec la texture brute).
+        # C'est nécessaire car get_env_sun_info tient compte de la rotation actuelle.
+        engine.set_env_rotation(0.0)
+        
+        # [APPEL LOADER] On récupère tout ce qu'il nous faut
+        new_id, dir_arr, raw_col_arr = loader.create_auto_sun(
+            state.builder,
+            state.sun_intensity,
+            state.sun_radius,
+            state.sun_dist
+        )
+        
+        # Mise à jour de l'état du Viewer
+        state.sun_id = new_id
+        state.sun_initial_dir = dir_arr
+        state.sun_base_color = raw_col_arr
+        
+        # On rétablit immédiatement la vraie rotation pour le rendu de cette frame !
+        engine.set_env_rotation(state.env_rotation)
+
+    # CAS B : On éteint (OFF) et l'objet existe -> DESTRUCTION
+    elif not state.sun_enabled and state.sun_id != -1:
+        print(f"[Viewer] Auto-Sun turned OFF -> Destroying ID {state.sun_id}")
+        engine.remove_instance(state.sun_id)
+        if state.sun_id in state.builder.registry:
+            del state.builder.registry[state.sun_id]
+        state.sun_id = -1
+
+    # 3. MISE À JOUR CONTINUE (Seulement si le soleil existe)
     if state.sun_id != -1:
-        if not state.sun_enabled:
-            # On éteint le soleil (Couleur Noire, Intensité 0)
-            engine.update_instance_material(state.sun_id, "invisible_light", cpp_engine.Vec3(0,0,0), 0.0, 1.0)
-        else:
-            # --- A. Positionnement (Rotation autour de Y) ---
-            # Si l'env tourne de +R degrés, le soleil doit tourner de -R degrés pour suivre le pixel chaud
-            rad = math.radians(state.env_rotation) 
-            c, s = math.cos(rad), math.sin(rad)
-            
-            # Rotation du vecteur initial (x, z)
-            x0, z0 = state.sun_initial_dir[0], state.sun_initial_dir[2]
-            new_x = x0 * c - z0 * s
-            new_z = x0 * s + z0 * c
-            new_y = state.sun_initial_dir[1] # L'élévation reste fixe par rapport à l'horizon de la map
-            
-            # Calcul de la position finale
-            final_pos = np.array([new_x, new_y, new_z]) * state.sun_dist
-            
-            # Mise à jour de la transformation (Matrice)
-            rad_scale = state.sun_radius
-            M = tf.translate(final_pos[0], final_pos[1], final_pos[2]) @ tf.scale(rad_scale, rad_scale, rad_scale)
-            InvM = np.linalg.inv(M)
-            
-            engine.update_instance_transform(state.sun_id, 
-                                             np.ascontiguousarray(M, dtype=np.float32), 
-                                             np.ascontiguousarray(InvM, dtype=np.float32))
-            
-            # --- B. Couleur & Intensité ---
-            # On recombine la teinte de base avec l'intensité du slider
-            # Note : state.sun_base_color est une liste ou un array [R, G, B]
-            raw_intensity = max(state.sun_base_color[0], max(state.sun_base_color[1], state.sun_base_color[2]))
-            if raw_intensity <= 0: raw_intensity = 1.0
-            scale = state.sun_intensity / raw_intensity
-            r = state.sun_base_color[0] * scale
-            g = state.sun_base_color[1] * scale
-            b = state.sun_base_color[2] * scale
-            
-            engine.update_instance_material(state.sun_id, "invisible_light", 
-                                            cpp_engine.Vec3(r, g, b), 
-                                            0.0, 1.0)
+        # --- A. Positionnement (Rotation autour de Y) ---
+        rad = math.radians(state.env_rotation) 
+        c, s = math.cos(rad), math.sin(rad)
+        
+        x0, z0 = state.sun_initial_dir[0], state.sun_initial_dir[2]
+        new_x = x0 * c - z0 * s
+        new_z = x0 * s + z0 * c
+        new_y = state.sun_initial_dir[1]
+        
+        final_pos = np.array([new_x, new_y, new_z]) * state.sun_dist
+        
+        # Update Transform
+        rad_scale = state.sun_radius
+        M = tf.translate(final_pos[0], final_pos[1], final_pos[2]) @ tf.scale(rad_scale, rad_scale, rad_scale)
+        InvM = np.linalg.inv(M)
+        
+        engine.update_instance_transform(state.sun_id, 
+                                            np.ascontiguousarray(M, dtype=np.float32), 
+                                            np.ascontiguousarray(InvM, dtype=np.float32))
+        
+        # --- B. Couleur & Intensité ---
+        # Logique de conservation de la teinte brute (Ta méthode clean)
+        raw_intensity = max(state.sun_base_color[0], max(state.sun_base_color[1], state.sun_base_color[2]))
+        if raw_intensity <= 0: raw_intensity = 1.0
+        
+        scale = state.sun_intensity / raw_intensity
+        
+        r = state.sun_base_color[0] * scale
+        g = state.sun_base_color[1] * scale
+        b = state.sun_base_color[2] * scale
+        
+        engine.update_instance_material(state.sun_id, "invisible_light", 
+                                        cpp_engine.Vec3(r, g, b), 
+                                        0.0, 1.0)
             
     state.dirty = True
+
 
 def run(engine, config, builder):
     pygame.init()
@@ -785,42 +808,49 @@ def run(engine, config, builder):
             ys += 5
 
         # ==================== 3. AUTO SUN SECTION ====================
-        if state.sun_id != -1:
-            # Callback pour le switch ON/OFF
-            def toggle_sun():
-                state.sun_enabled = not state.sun_enabled
-                update_environment_logic(engine, state)
-                build_scene_ui() # Refresh pour griser/dégriser "Global Light"
+        
+        # Callback pour le switch ON/OFF
+        def toggle_sun():
+            state.sun_enabled = not state.sun_enabled
+            update_environment_logic(engine, state)
+            build_scene_ui() # Refresh immédiat pour afficher/masquer les sliders
 
-            sw_params = ("ON" if state.sun_enabled else "OFF", toggle_sun)
+        sw_params = ("ON" if state.sun_enabled else "OFF", toggle_sun)
+        
+        # Le header est toujours affiché avec le switch
+        is_open = draw_section_header("AUTO SUN", "show_scene_sun", sw_params)
+        
+        # On affiche les sliders SEULEMENT si le soleil existe physiquement (ID != -1)
+        if is_open and state.sun_id != -1:
             
-            if draw_section_header("AUTO SUN", "show_scene_sun", sw_params):
-                
-                # Sun Intensity
-                lbl(ui_scene, 10, ys, lambda: f"Sun Power: {state.sun_intensity:.1f}", 12, COL_TEXT_DIM)
-                ui_scene.append(Slider(VIEW_W+90, ys, 210, 14, 0.0, 500.0, 
-                                       lambda: state.sun_intensity, lambda v: set_env('sun_intensity', v)))
-                ys += 20
+            # Sun Intensity
+            lbl(ui_scene, 10, ys, lambda: f"Sun Power: {state.sun_intensity:.1f}", 12, COL_TEXT_DIM)
+            ui_scene.append(Slider(VIEW_W+90, ys, 210, 14, 0.0, 500.0, 
+                                   lambda: state.sun_intensity, lambda v: set_env('sun_intensity', v)))
+            ys += 20
 
-                # Ambience
-                lbl(ui_scene, 10, ys, lambda: f"Ambience: {state.auto_sun_env_level:.3f}", 12, COL_TEXT_DIM)
-                ui_scene.append(Slider(VIEW_W+90, ys, 210, 14, 0.0, 10.0, 
-                                       lambda: state.auto_sun_env_level, lambda v: set_env('auto_sun_env_level', v)))
-                ys += 20
-                
-                # Softness
-                lbl(ui_scene, 10, ys, lambda: f"Softness: {state.sun_radius:.1f}", 12, COL_TEXT_DIM)
-                ui_scene.append(Slider(VIEW_W+90, ys, 210, 14, 1.0, 200.0, 
-                                       lambda: state.sun_radius, lambda v: set_env('sun_radius', v)))
-                ys += 20
+            # Ambience
+            lbl(ui_scene, 10, ys, lambda: f"Ambience: {state.auto_sun_env_level:.3f}", 12, COL_TEXT_DIM)
+            ui_scene.append(Slider(VIEW_W+90, ys, 210, 14, 0.0, 10.0, 
+                                   lambda: state.auto_sun_env_level, lambda v: set_env('auto_sun_env_level', v)))
+            ys += 20
+            
+            # Softness
+            lbl(ui_scene, 10, ys, lambda: f"Softness: {state.sun_radius:.1f}", 12, COL_TEXT_DIM)
+            ui_scene.append(Slider(VIEW_W+90, ys, 210, 14, 1.0, 200.0, 
+                                   lambda: state.sun_radius, lambda v: set_env('sun_radius', v)))
+            ys += 20
 
-                # Distance
-                lbl(ui_scene, 10, ys, lambda: f"Distance: {state.sun_dist:.0f}", 12, COL_TEXT_DIM)
-                ui_scene.append(Slider(VIEW_W+90, ys, 210, 14, 10.0, 5000.0, 
-                                       lambda: state.sun_dist, lambda v: set_env('sun_dist', v)))
-                ys += 20
-        else:
-            lbl(ui_scene, 10, ys, "No Sun found in scene", 12, COL_TEXT_DIM)
+            # Distance
+            lbl(ui_scene, 10, ys, lambda: f"Distance: {state.sun_dist:.0f}", 12, COL_TEXT_DIM)
+            ui_scene.append(Slider(VIEW_W+90, ys, 210, 14, 10.0, 5000.0, 
+                                   lambda: state.sun_dist, lambda v: set_env('sun_dist', v)))
+            ys += 20
+        
+        elif is_open and state.sun_id == -1:
+            # Petit message UX si l'utilisateur ouvre l'accordéon alors que c'est OFF
+            lbl(ui_scene, 10, ys, "Enable Auto Sun to generate sun light", 12, (100,100,100))
+            ys += 20
 
     # --- CONTENT: TAB OBJECT (Dynamique) ---
     
