@@ -14,6 +14,7 @@ animations_frames/
 animations_frames - Copie/
 *.mp4
 *.png
+*.hdr
 
 # Logs
 *.log
