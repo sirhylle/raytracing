@@ -160,8 +160,8 @@ def run_single_frame(engine, conf, pool_threads):
     if conf.param_stamp:
         ren_txt = f"Size: {conf.width}x{conf.height} | SPP: {conf.spp} | Depth: {conf.depth} | Time: {duration:.2f}s"
         sun_txt = f"Sun-Int: {conf.auto_sun_intensity:.2f} | Sun-Rad: {conf.auto_sun_radius:.2f} | Sun-Dist: {conf.auto_sun_dist:.2f} | Sun-Env: {conf.auto_sun_env_level:.2f}" if conf.auto_sun else "Sun: Off"
-        env_txt = f"Env-Dir: {conf.env_direct_level:.2f} |  Env-Ind: {conf.env_indirect_level:.2f} | Env-Bg: {conf.env_background_level:.2f}"
-        cam_txt = f"Camera: {conf.lookfrom} -> {conf.lookat} | Aperture: {conf.aperture:.2f} | Focus: {conf.focus_dist:.2f} | VFOV: {conf.vfov:.2f}"
+        env_txt = f"Env-Dir: {conf.env_direct_level:.2f} |  Env-Ind: {conf.env_indirect_level:.2f} | Env-Light: {conf.env_light_level:.2f}"
+        cam_txt = f"Camera: {[f'{x:.2f}' for x in conf.lookfrom]} -> {[f'{x:.2f}' for x in conf.lookat]} | Aperture: {conf.aperture:.2f} | Focus: {conf.focus_dist:.2f} | VFOV: {conf.vfov:.2f}"
         
         overlay_txt = f"{ren_txt}\n{sun_txt}\n{env_txt}\n{cam_txt}"
     

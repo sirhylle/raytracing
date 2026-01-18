@@ -7,6 +7,9 @@ import multiprocessing
 import cpp_engine
 import transforms as tf
 from modes import renderer
+import tkinter as tk
+from tkinter import filedialog
+import loader
 
 # ===============================================================================================
 # CONFIGURATION UI (STYLE "DARK PRO")
@@ -334,12 +337,52 @@ class EditorState:
         # États des accordéons
         self.show_trans_details = False  # Fermé par défaut
         self.show_mat_details = False    # Fermé par défaut
+        self.show_scene_cam = True  # Ouvert par défaut
+        self.show_scene_env = False   # Fermé par défaut
+        self.show_scene_sun = False   # Fermé par défaut
         
         # Rendering State
         self.dirty = True
         self.accum_spp = 0
         self.is_rendering = False
         self.ray_batch_size = 2 
+
+        # --- ENVIRONMENT & SUN STATE ---
+        self.env_rotation = 0.0
+        self.env_light_level = conf.env_light_level
+        self.env_direct_level = conf.env_direct_level
+        self.env_indirect_level = conf.env_indirect_level
+        
+        # On cherche le soleil dans le registre
+        self.sun_id = -1
+        self.sun_enabled = conf.auto_sun
+        self.auto_sun_env_level = conf.auto_sun_env_level
+        self.sun_intensity = conf.auto_sun_intensity
+        self.sun_radius = conf.auto_sun_radius
+        self.sun_dist = conf.auto_sun_dist
+
+        # Vecteur de direction initial (au chargement, rotation=0)
+        self.sun_initial_dir = np.array([0.0, 1.0, 0.0]) 
+        self.sun_base_color = np.array([1.0, 1.0, 1.0])
+
+        # On cherche le soleil dans le registre
+        for oid, info in builder.registry.items():
+            if info['type'] == 'light_sun':
+                self.sun_id = oid
+                self.sun_enabled = True
+                
+                # Récupération de la géométrie
+                pos = np.array(info['pos'])
+                dist = np.linalg.norm(pos)
+                if dist > 0:
+                    self.sun_dist = dist
+                    self.sun_initial_dir = pos / dist # Normalisé
+                
+                self.sun_radius = info['scale'][0]
+                
+                # Récupération de la couleur de base
+                self.sun_base_color = np.array(info['raw_color'])
+                break
 
     def get_selected_info(self):
         if self.selected_id != -1 and self.selected_id in self.builder.registry:
@@ -406,6 +449,136 @@ def render_thread_task(engine, config, state):
         print(">>> Render Finished.")
         state.is_rendering = False
         state.dirty = True 
+
+def load_new_env_map(engine, state):
+    # 1. Sélecteur de fichier
+    root = tk.Tk(); root.withdraw(); root.attributes('-topmost', True)
+    file_path = filedialog.askopenfilename(title="Load Environment Map", filetypes=[("HDR/IMG", "*.hdr *.exr *.jpg *.png")], initialdir="./env-maps")
+    root.destroy()
+    
+    if not file_path: return
+    print(f"[Viewer] Loading map (Clean Reload): {file_path}")
+    
+    try:
+        # 2. NETTOYAGE : Suppression de l'ancien soleil
+        if state.sun_id != -1:
+            print(f"[Viewer] Removing old Sun ID: {state.sun_id}")
+            # A. Côté Moteur
+            engine.remove_instance(state.sun_id)
+            # B. Côté Python (Registry)
+            if state.sun_id in state.builder.registry:
+                del state.builder.registry[state.sun_id]
+            
+            # Reset de l'état
+            state.sun_id = -1
+            state.sun_enabled = False
+
+        # 3. CHARGEMENT PROPRE
+        # On laisse le loader créer le nouveau soleil (auto_sun=True)
+        loader.load_environment(
+            state.builder, 
+            file_path,
+            env_direct_level=state.env_direct_level,
+            env_light_level=state.env_light_level,
+            env_indirect_level=state.env_indirect_level,
+            auto_sun=True, # On veut un nouveau soleil !
+            # On passe les paramètres actuels pour conserver les réglages de l'utilisateur
+            auto_sun_intensity=state.sun_intensity,
+            auto_sun_radius=state.sun_radius,
+            auto_sun_dist=state.sun_dist,
+            auto_sun_env_level=state.auto_sun_env_level
+        )
+        
+        # 4. RECONNEXION
+        # Le loader a ajouté un nouveau soleil dans le registre, il faut retrouver son ID
+        # On scanne le registre pour trouver le 'light_sun' le plus récent (ou le seul)
+        new_sun_id = -1
+        for oid, info in state.builder.registry.items():
+            if info['type'] == 'light_sun':
+                new_sun_id = oid
+                # On met à jour les infos de base
+                pos = np.array(info['pos'])
+                dist = np.linalg.norm(pos)
+                if dist > 0: state.sun_initial_dir = pos / dist
+                
+                # Récupération de la couleur de base
+                state.sun_base_color = info['raw_color']
+                break
+        
+        state.sun_id = new_sun_id
+        state.sun_enabled = (new_sun_id != -1)
+        
+        # Reset rotation car le nouveau soleil est aligné sur la nouvelle map à 0°
+        state.env_rotation = 0.0
+
+        # 5. Refresh
+        update_environment_logic(engine, state)
+        if hasattr(engine, 'reset_accumulation'): engine.reset_accumulation()
+        state.accum_spp = 0
+        
+    except Exception as e:
+        print(f"[Error] Failed to load map: {e}")
+
+
+def update_environment_logic(engine, state):
+    # 1. Gestion des niveaux d'environnement (Environment Map)
+    if state.sun_enabled and state.sun_id != -1:
+        # Si le soleil est ON, on utilise le niveau "Ambience" (plus sombre généralement)
+        current_lighting = state.auto_sun_env_level
+    else:
+        # Si le soleil est OFF, on utilise le niveau "Background" (éclairage principal)
+        current_lighting = state.env_light_level
+
+    current_cam_vis = state.env_direct_level
+
+    # Envoi au moteur C++
+    engine.set_env_rotation(state.env_rotation)
+    engine.set_env_levels(current_cam_vis, current_lighting, state.env_indirect_level)
+    
+    # 2. Gestion du Soleil (Sun Instance)
+    if state.sun_id != -1:
+        if not state.sun_enabled:
+            # On éteint le soleil (Couleur Noire, Intensité 0)
+            engine.update_instance_material(state.sun_id, "invisible_light", cpp_engine.Vec3(0,0,0), 0.0, 1.0)
+        else:
+            # --- A. Positionnement (Rotation autour de Y) ---
+            # Si l'env tourne de +R degrés, le soleil doit tourner de -R degrés pour suivre le pixel chaud
+            rad = math.radians(state.env_rotation) 
+            c, s = math.cos(rad), math.sin(rad)
+            
+            # Rotation du vecteur initial (x, z)
+            x0, z0 = state.sun_initial_dir[0], state.sun_initial_dir[2]
+            new_x = x0 * c - z0 * s
+            new_z = x0 * s + z0 * c
+            new_y = state.sun_initial_dir[1] # L'élévation reste fixe par rapport à l'horizon de la map
+            
+            # Calcul de la position finale
+            final_pos = np.array([new_x, new_y, new_z]) * state.sun_dist
+            
+            # Mise à jour de la transformation (Matrice)
+            rad_scale = state.sun_radius
+            M = tf.translate(final_pos[0], final_pos[1], final_pos[2]) @ tf.scale(rad_scale, rad_scale, rad_scale)
+            InvM = np.linalg.inv(M)
+            
+            engine.update_instance_transform(state.sun_id, 
+                                             np.ascontiguousarray(M, dtype=np.float32), 
+                                             np.ascontiguousarray(InvM, dtype=np.float32))
+            
+            # --- B. Couleur & Intensité ---
+            # On recombine la teinte de base avec l'intensité du slider
+            # Note : state.sun_base_color est une liste ou un array [R, G, B]
+            raw_intensity = max(state.sun_base_color[0], max(state.sun_base_color[1], state.sun_base_color[2]))
+            if raw_intensity <= 0: raw_intensity = 1.0
+            scale = state.sun_intensity / raw_intensity
+            r = state.sun_base_color[0] * scale
+            g = state.sun_base_color[1] * scale
+            b = state.sun_base_color[2] * scale
+            
+            engine.update_instance_material(state.sun_id, "invisible_light", 
+                                            cpp_engine.Vec3(r, g, b), 
+                                            0.0, 1.0)
+            
+    state.dirty = True
 
 def run(engine, config, builder):
     pygame.init()
@@ -504,50 +677,150 @@ def run(engine, config, builder):
     y += 40 # Marge après les onglets
 
     # --- CONTENT: TAB SCENE ---
-    ys = y
-    lbl(ui_scene, 10, ys, "CAMERA", 14, COL_ACCENT)
-    ys += 20
-    
-    def set_cam_val(attr, val):
-        setattr(state, attr, val)
-        state.dirty = True
 
-    def adj_cam(data):
-        attr, d = data 
-        setattr(state, attr, getattr(state, attr) + d)
-        state.dirty = True
-    
-    # FOV
-    lbl(ui_scene, 10, ys+4, "FOV", 12, COL_TEXT)
-    btn(ui_scene, 80, ys, 30, 22, "-", adj_cam, ('vfov', -5)); 
-    ui_scene.append(NumberField(VIEW_W+115, ys, 40, 22, 
-                                lambda: state.vfov, 
-                                lambda v: set_cam_val('vfov', v)))
-    btn(ui_scene, 160, ys, 30, 22, "+", adj_cam, ('vfov', 5))
-    ys += 28
-    
-    # Aperture
-    lbl(ui_scene, 10, ys+4, "Aperture", 12, COL_TEXT)
-    btn(ui_scene, 80, ys, 30, 22, "-", adj_cam, ('aperture', -0.02)); 
-    ui_scene.append(NumberField(VIEW_W+115, ys, 40, 22, 
-                                lambda: state.aperture, 
-                                lambda v: set_cam_val('aperture', v)))
-    btn(ui_scene, 160, ys, 30, 22, "+", adj_cam, ('aperture', 0.02))
-    ys += 28
+    def build_scene_ui():
+        ui_scene.clear()
+        ys = y # Position Y de départ
+        
+        # --- Helper pour les Sections ---
+        def draw_section_header(title, attr_name, toggle_switch=None):
+            """
+            Affiche le titre, le bouton +/- et gère l'état ouvert/fermé.
+            toggle_switch : tuple (text_on_off, callback) pour ajouter un switch dans le header (ex: Sun)
+            """
+            nonlocal ys
+            is_open = getattr(state, attr_name)
+            
+            # Titre
+            lbl(ui_scene, 10, ys, title, 14, COL_ACCENT)
+            
+            # Bouton accordéon [+] / [-]
+            def toggle_section():
+                setattr(state, attr_name, not is_open)
+                build_scene_ui() # On reconstruit l'UI immédiatement
+            
+            txt_toggle = "-" if is_open else "+"
+            # On place le bouton tout à droite
+            btn(ui_scene, PANEL_W - 35, ys-2, 24, 20, txt_toggle, toggle_section)
+            
+            # Switch optionnel (ex: Sun ON/OFF) à côté du toggle
+            if toggle_switch:
+                sw_txt, sw_cb = toggle_switch
+                # On le place à gauche du bouton accordéon
+                btn(ui_scene, PANEL_W - 85, ys-2, 40, 20, sw_txt, sw_cb)
 
-    # Focus Dist
-    lbl(ui_scene, 10, ys+4, "Focus Dist", 12, COL_TEXT)
-    btn(ui_scene, 80, ys, 30, 22, "-", adj_cam, ('focus_dist', -0.5)); 
-    ui_scene.append(NumberField(VIEW_W+115, ys, 40, 22, 
-                                lambda: state.focus_dist, 
-                                lambda v: set_cam_val('focus_dist', v)))
-    btn(ui_scene, 160, ys, 30, 22, "+", adj_cam, ('focus_dist', 0.5))
-    ys += 35
-    
-    # Environment (Placeholder)
-    lbl(ui_scene, 10, ys, "ENVIRONMENT", 14, COL_ACCENT)
-    ys += 20
-    lbl(ui_scene, 10, ys, "(Coming Soon: Sun & HDR)", 12, COL_TEXT_DIM)
+            ys += 25
+            return is_open
+
+        # Helper pour update variables (inchangé)
+        def set_env(attr, val):
+            setattr(state, attr, val)
+            update_environment_logic(engine, state)
+        
+        # ==================== 1. CAMERA SECTION ====================
+        if draw_section_header("CAMERA", "show_scene_cam"):
+            
+            def set_cam_val(attr, val): setattr(state, attr, val); state.dirty = True
+            def adj_cam(data): attr, d = data; setattr(state, attr, getattr(state, attr) + d); state.dirty = True
+            
+            # FOV
+            lbl(ui_scene, 10, ys+4, "FOV", 12, COL_TEXT)
+            btn(ui_scene, 80, ys, 30, 22, "-", adj_cam, ('vfov', -5))
+            ui_scene.append(NumberField(VIEW_W+115, ys, 40, 22, lambda: state.vfov, lambda v: set_cam_val('vfov', v)))
+            btn(ui_scene, 160, ys, 30, 22, "+", adj_cam, ('vfov', 5))
+            ys += 28
+            
+            # Aperture
+            lbl(ui_scene, 10, ys+4, "Aperture", 12, COL_TEXT)
+            btn(ui_scene, 80, ys, 30, 22, "-", adj_cam, ('aperture', -0.02))
+            ui_scene.append(NumberField(VIEW_W+115, ys, 40, 22, lambda: state.aperture, lambda v: set_cam_val('aperture', v)))
+            btn(ui_scene, 160, ys, 30, 22, "+", adj_cam, ('aperture', 0.02))
+            ys += 28
+
+            # Focus Dist
+            lbl(ui_scene, 10, ys+4, "Focus Dist", 12, COL_TEXT)
+            btn(ui_scene, 80, ys, 30, 22, "-", adj_cam, ('focus_dist', -0.5))
+            ui_scene.append(NumberField(VIEW_W+115, ys, 40, 22, lambda: state.focus_dist, lambda v: set_cam_val('focus_dist', v)))
+            btn(ui_scene, 160, ys, 30, 22, "+", adj_cam, ('focus_dist', 0.5))
+            ys += 35
+        else:
+            ys += 5 # Petit espacement si fermé
+
+        # ==================== 2. ENVIRONMENT SECTION ====================
+        if draw_section_header("ENVIRONMENT", "show_scene_env"):
+            
+            # Bouton LOAD MAP
+            btn(ui_scene, 10, ys, 290, 24, "LOAD NEW HDR MAP...", 
+                lambda: load_new_env_map(engine, state))
+            ys += 30
+
+            # Rotation
+            lbl(ui_scene, 10, ys, lambda: f"Rotation: {state.env_rotation:.0f}°", 12, COL_TEXT_DIM)
+            ui_scene.append(Slider(VIEW_W+90, ys, 210, 14, 0.0, 360.0, 
+                                   lambda: state.env_rotation, lambda v: set_env('env_rotation', v)))
+            ys += 25
+
+            # Cam Direct
+            lbl(ui_scene, 10, ys, lambda: f"Cam Direct: {state.env_direct_level:.2f}", 12, COL_TEXT_DIM)
+            ui_scene.append(Slider(VIEW_W+90, ys, 210, 14, 0.0, 10.0, 
+                                   lambda: state.env_direct_level, lambda v: set_env('env_direct_level', v)))
+            ys += 25
+
+            # Global Light
+            col_lbl = COL_TEXT_DIM if not state.sun_enabled else (80, 80, 80)
+            lbl(ui_scene, 10, ys, lambda: f"Global Light: {state.env_light_level:.2f}", 12, col_lbl)
+            
+            sl_light = Slider(VIEW_W+90, ys, 210, 14, 0.0, 15.0, 
+                           lambda: state.env_light_level, lambda v: set_env('env_light_level', v))
+            sl_light.enabled = not state.sun_enabled 
+            ui_scene.append(sl_light)
+            ys += 25
+
+            # Reflections
+            lbl(ui_scene, 10, ys, lambda: f"Reflections: {state.env_indirect_level:.2f}", 12, COL_TEXT_DIM)
+            ui_scene.append(Slider(VIEW_W+90, ys, 210, 14, 0.0, 15.0, 
+                                   lambda: state.env_indirect_level, lambda v: set_env('env_indirect_level', v)))
+            ys += 35
+        else:
+            ys += 5
+
+        # ==================== 3. AUTO SUN SECTION ====================
+        if state.sun_id != -1:
+            # Callback pour le switch ON/OFF
+            def toggle_sun():
+                state.sun_enabled = not state.sun_enabled
+                update_environment_logic(engine, state)
+                build_scene_ui() # Refresh pour griser/dégriser "Global Light"
+
+            sw_params = ("ON" if state.sun_enabled else "OFF", toggle_sun)
+            
+            if draw_section_header("AUTO SUN", "show_scene_sun", sw_params):
+                
+                # Sun Intensity
+                lbl(ui_scene, 10, ys, lambda: f"Sun Power: {state.sun_intensity:.1f}", 12, COL_TEXT_DIM)
+                ui_scene.append(Slider(VIEW_W+90, ys, 210, 14, 0.0, 500.0, 
+                                       lambda: state.sun_intensity, lambda v: set_env('sun_intensity', v)))
+                ys += 20
+
+                # Ambience
+                lbl(ui_scene, 10, ys, lambda: f"Ambience: {state.auto_sun_env_level:.3f}", 12, COL_TEXT_DIM)
+                ui_scene.append(Slider(VIEW_W+90, ys, 210, 14, 0.0, 10.0, 
+                                       lambda: state.auto_sun_env_level, lambda v: set_env('auto_sun_env_level', v)))
+                ys += 20
+                
+                # Softness
+                lbl(ui_scene, 10, ys, lambda: f"Softness: {state.sun_radius:.1f}", 12, COL_TEXT_DIM)
+                ui_scene.append(Slider(VIEW_W+90, ys, 210, 14, 1.0, 200.0, 
+                                       lambda: state.sun_radius, lambda v: set_env('sun_radius', v)))
+                ys += 20
+
+                # Distance
+                lbl(ui_scene, 10, ys, lambda: f"Distance: {state.sun_dist:.0f}", 12, COL_TEXT_DIM)
+                ui_scene.append(Slider(VIEW_W+90, ys, 210, 14, 10.0, 5000.0, 
+                                       lambda: state.sun_dist, lambda v: set_env('sun_dist', v)))
+                ys += 20
+        else:
+            lbl(ui_scene, 10, ys, "No Sun found in scene", 12, COL_TEXT_DIM)
 
     # --- CONTENT: TAB OBJECT (Dynamique) ---
     
@@ -626,6 +899,30 @@ def run(engine, config, builder):
                     ui_object.append(f)
                 yo += 26
             yo += 10 # Marge bas du bloc
+
+        def delete_selected_obj():
+            oid = state.selected_id
+            if oid == -1: return
+            
+            print(f"[UI] Deleting Object {oid}")
+            # 1. Engine
+            engine.remove_instance(oid)
+            # 2. Registry
+            if oid in state.builder.registry:
+                del state.builder.registry[oid]
+            
+            # 3. Reset State
+            state.selected_id = -1
+            state.tool_mode = "CAM" # Retour mode caméra pour éviter erreurs gizmo
+            
+            # 4. Refresh UI
+            build_object_ui()
+            build_scene_ui() # Au cas où c'était le soleil
+            
+        btn(ui_object, 10, yo, 300, 24, "DELETE OBJECT", delete_selected_obj, 
+            col_ov=(180, 60, 60)) # Rouge pour le danger
+        
+        yo += 30
 
         # ==================== SECTION MATERIAL ====================
         lbl(ui_object, 10, yo, "MATERIAL", 14, COL_ACCENT)
@@ -809,6 +1106,7 @@ def run(engine, config, builder):
 
     # Init UI
     build_object_ui()
+    build_scene_ui()
     
     while running:
         clock.tick() 
@@ -890,10 +1188,10 @@ def run(engine, config, builder):
                                 state.active_tab = "OBJECT"
                                 state.tool_mode = "SEL"
                                 b_cam.active = False; b_sel.active = True; b_foc.active = False; btn_scene.active = False
-                                # [IMPORTANT] On reconstruit l'UI pour afficher les infos du nouvel objet
                                 build_object_ui()
                             else:
                                 state.active_tab = "SCENE"
+                                build_scene_ui()
                                 build_object_ui()
                         
                         elif state.tool_mode == "FOCUS":
@@ -1028,9 +1326,18 @@ def run(engine, config, builder):
                 state.accum_spp = 0
             
             # Post-Process
-            if state.preview_mode == 0: corrected = raw # Normals (Raw)
-            elif state.preview_mode == 1: corrected = np.power(np.clip(raw, 0, 1), 1.0/2.2) # Clay (Gamma Only)
-            else: corrected = renderer.apply_tone_mapping(raw) # Ray (ACES+Gamma)
+            if state.preview_mode == 2: # RAY
+                # Mode RAY : On garde le Tone Mapping complet (ACES + Gamma)
+                corrected = renderer.apply_tone_mapping(raw) 
+            
+            elif state.preview_mode == 1: # CLAY
+                # Mode CLAY : On applique le Gamma pour un aspect "Maquette blanche" doux
+                corrected = np.power(np.clip(raw, 0, 1), 1.0/2.2) 
+                
+            else: # NORMALS (Mode 0)
+                # Mode NORMALS : On garde le Raw (Linéaire) pour le "Look" technique
+                # Le fond restera lumineux grâce au fix C++, mais les objets auront du "punch"
+                corrected = raw
 
             img_uint8 = (np.clip(corrected, 0, 1) * 255).astype(np.uint8)
             img_transposed = np.transpose(img_uint8, (1, 0, 2))

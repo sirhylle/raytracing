@@ -236,7 +236,10 @@ public:
                        ScatterRecord &srec) const override {
     // Si activé : On bloque les reflets (rayons secondaires) pour qu'ils voient
     // la lumière
-    if (VISIBLE_IN_REFLECTIONS && !r_in.is_primary)
+    // [CORRECTION] : On bloque les reflets, MAIS on laisse passer les ombres
+    // (!is_shadow) Sinon le soleil se fait de l'ombre à lui-même ou bloque le
+    // ciel.
+    if (VISIBLE_IN_REFLECTIONS && !r_in.is_primary && !r_in.is_shadow)
       return false;
 
     // Sinon (Caméra ou Shadow Ray) : On laisse passer comme du verre parfait

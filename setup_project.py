@@ -17,13 +17,26 @@ ASSETS = {
     "dragon": "https://casual-effects.com/g3d/data10/research/model/dragon/dragon.zip",
     "erato": "https://casual-effects.com/g3d/data10/research/model/erato/erato.zip"
 }
+ENV_DIR = "env-maps"
+ENV_MAPS = [
+    "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/san_giuseppe_bridge_4k.hdr",
+    "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/docklands_01_4k.hdr",
+    "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/venice_sunrise_4k.hdr",
+    "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/venice_sunset_4k.hdr",
+    "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/university_workshop_4k.hdr",
+    "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/brown_photostudio_02_4k.hdr",
+    "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/dikhololo_night_4k.hdr",
+    "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/meadow_4k.hdr",
+    "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/studio_garden_4k.hdr"
+]
+ENV_MAP_DEFAULT = {'name': 'env-dock-sun.hdr', 'url': 'https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/4k/docklands_02_4k.hdr'}
 BUILD_DIR = Path("build")
 MODULE_NAME = "cpp_engine"
 
 def step(msg):
     print(f"\n[SETUP] ➤ {msg}")
 
-# --- 1. GESTION OIDN (Ta version améliorée) ---
+# --- 1. GESTION OIDN ---
 def install_oidn():
     if os.path.exists(OIDN_DIR) and os.path.exists(os.path.join(OIDN_DIR, "oidnDenoise.exe")):
         print(f"   ✔ Dossier '{OIDN_DIR}' prêt.")
@@ -114,6 +127,57 @@ def install_assets():
         except Exception as e:
             print(f"   ❌ Erreur Asset {name}: {e}")
 
+# --- 1c. GESTION ENV MAPS ---
+def install_env_maps():
+    if not os.path.exists(ENV_DIR):
+        os.makedirs(ENV_DIR)
+        print(f"   ✔ Création du dossier '{ENV_DIR}'")
+
+    def reporthook(blocknum, blocksize, totalsize):
+        readsofar = blocknum * blocksize
+        if totalsize > 0:
+            percent = readsofar * 100 / totalsize
+            sys.stdout.write(f"\r   Progress: {percent:.1f}%")
+            sys.stdout.flush()
+
+    # Configure opener with User-Agent to avoid 406
+    opener = urllib.request.build_opener()
+    opener.addheaders = [('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/93.0.4577.63 Safari/537.36')]
+    urllib.request.install_opener(opener)
+
+    for url in ENV_MAPS:
+        # On extrait le nom du fichier
+        name = os.path.basename(url)
+        target_file = os.path.join(ENV_DIR, name)
+        # On vérifie si le fichier existe et n'est pas vide
+        if os.path.exists(target_file):
+            print(f"   ✔ Env Map '{name}' déjà présent.")
+            continue
+            
+        step(f"Téléchargement de l'env map '{name}'...")
+        
+        try:
+            print(f"   Source: {url}")
+            urllib.request.urlretrieve(url, target_file, reporthook)
+            print(f"\n   ✔ Téléchargement terminé.\n")
+            
+        except Exception as e:
+            print(f"   ❌ Erreur Env Map {name}: {e}")
+
+    if os.path.exists(os.path.join("./", ENV_MAP_DEFAULT['name'])):
+        print(f"   ✔ Env Map '{ENV_MAP_DEFAULT['name']}' déjà présente.")
+    else:
+        step(f"Téléchargement de l'env map '{ENV_MAP_DEFAULT['name']}'...")
+        
+        try:
+            print(f"   Source: {ENV_MAP_DEFAULT['url']}")
+            urllib.request.urlretrieve(ENV_MAP_DEFAULT['url'], os.path.join("./", ENV_MAP_DEFAULT['name']), reporthook)
+            print(f"\n   ✔ Téléchargement terminé.\n")
+            
+        except Exception as e:
+            print(f"   ❌ Erreur Env Map {ENV_MAP_DEFAULT['name']}: {e}")
+
+
 
 # --- 2. BUILD SYSTEM (Nanobind + CMake) ---
 def check_uv():
@@ -166,6 +230,7 @@ def main():
         check_uv()
         install_oidn()
         install_assets()
+        install_env_maps()
         run_cmake_build()
         copy_artifact()
         print("\n✅ PRÊT. Lance: uv run main.py")

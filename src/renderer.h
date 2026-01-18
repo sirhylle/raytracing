@@ -10,7 +10,7 @@
 // MOTEUR DE RENDU (Path Tracing Core)
 // ===============================================================================================
 
-const Real EPSILON = 0.01f;
+const Real EPSILON = 0.001f;
 
 // Fonction helper pour échantillonner l'éclairage direct
 Vec3 sample_direct_light(const Ray &r, const HitRecord &rec,

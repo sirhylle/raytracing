@@ -12,7 +12,6 @@
 #include <map>
 #include <omp.h>
 #include <string>
-#include <vector>
 
 // --- NOS MODULES ---
 #include "bvh.h"
@@ -313,6 +312,46 @@ public:
     reset_accumulation();
   }
 
+  void remove_instance(int id) {
+    // 1. Vérifier si l'objet existe
+    auto it = instances_map.find(id);
+    if (it == instances_map.end()) {
+      return; // Objet non trouvé ou déjà supprimé
+    }
+
+    std::shared_ptr<Instance> ptr_to_remove = it->second;
+
+    // 2. Supprimer de la liste principale (World)
+    // On utilise l'idiome erase-remove sur le vecteur 'owned_objects'
+    auto &objs = world.owned_objects;
+    objs.erase(std::remove(objs.begin(), objs.end(), ptr_to_remove),
+               objs.end());
+
+    // 3. Supprimer de la liste des lumières (Lights) - si applicable
+    auto &l_objs = lights.owned_objects;
+    l_objs.erase(std::remove(l_objs.begin(), l_objs.end(), ptr_to_remove),
+                 l_objs.end());
+
+    // 4. Supprimer de la map de gestion
+    instances_map.erase(it);
+
+    // 5. Invalider le BVH pour forcer la reconstruction
+    world_bvh = nullptr;
+
+    // 6. Reset du rendu
+    reset_accumulation();
+
+    std::cout << "[Engine] Instance " << id << " removed." << std::endl;
+  }
+
+  void set_env_rotation(Real degrees) {
+    if (background) {
+      background->set_rotation(degrees);
+      // Important : Reset le rendu progressif car l'image change complètement
+      reset_accumulation();
+    }
+  }
+
   // --- AJOUT DIRECT (Legacy - Non Editable) ---
   void add_mesh(nb::ndarray<float, nb::shape<-1, 3>> vertices,
                 nb::ndarray<int, nb::shape<-1, 3>> indices,
@@ -505,12 +544,17 @@ public:
           } else { // Fond
             if (background) {
               Vec3 bg = background->sample(r.dir, 0);
-              col = Vec3(bg.x() / (1 + bg.x()), bg.y() / (1 + bg.y()),
-                         bg.z() / (1 + bg.z())); // Tone map
+              // col = Vec3(bg.x() / (1 + bg.x()), bg.y() / (1 + bg.y()),
+              //            bg.z() / (1 + bg.z())); // Tone map
+              col = aces_filmic(bg);
             } else {
+              // Fond par défaut (gradient bleu) - On peut aussi le tone-mapper
+              // ou le laisser
               Vec3 unit_dir = unit_vector(r.dir);
               auto t = 0.5f * (unit_dir.y() + 1.0f);
-              col = (1.0f - t) * Vec3(1, 1, 1) + t * Vec3(0.5, 0.7, 1.0);
+              Vec3 raw_sky =
+                  (1.0f - t) * Vec3(1, 1, 1) + t * Vec3(0.5, 0.7, 1.0);
+              col = aces_filmic(raw_sky);
             }
           }
           int idx = ((height - 1 - j) * width + i) * 3;
@@ -650,6 +694,8 @@ private:
       return std::make_shared<Plastic>(col, ir, fuzz);
     if (type == "light")
       return std::make_shared<DiffuseLight>(col);
+    if (type == "invisible_light")
+      return std::make_shared<InvisibleLight>(col);
     return std::make_shared<Lambertian>(Vec3(0.5, 0.5, 0.5));
   }
 };
@@ -682,10 +728,12 @@ NB_MODULE(cpp_engine, m) {
       .def("update_instance_material", &PyScene::update_instance_material,
            nb::arg("id"), nb::arg("mat_type"), nb::arg("color"),
            nb::arg("fuzz") = 0.0f, nb::arg("ir") = 1.5f)
+      .def("remove_instance", &PyScene::remove_instance, nb::arg("id"))
       .def("set_camera", &PyScene::set_camera)
       .def("set_environment", &PyScene::set_environment)
       .def("set_env_levels", &PyScene::set_env_levels, nb::arg("back"),
            nb::arg("dir"), nb::arg("indir") = 1.0f)
+      .def("set_env_rotation", &PyScene::set_env_rotation, nb::arg("degrees"))
       .def("get_progress", &PyScene::get_progress)
       .def("render", &PyScene::render, nb::arg("width"), nb::arg("height"),
            nb::arg("spp"), nb::arg("depth"), nb::arg("n_threads") = 0)

@@ -243,3 +243,26 @@ struct Matrix4 {
     return res;
   }
 };
+
+// ===============================================================================================
+// UTILITAIRES POST-PROCESS (Tone Mapping)
+// ===============================================================================================
+
+// Narkowicz 2015 / ACES approximation (Même qu'en Python)
+inline Vec3 aces_filmic(const Vec3 &x) {
+  Real a = 2.51f;
+  Real b = 0.03f;
+  Real c = 2.43f;
+  Real d = 0.59f;
+  Real e = 0.14f;
+
+  // Application composante par composante
+  Real r = (x.x() * (a * x.x() + b)) / (x.x() * (c * x.x() + d) + e);
+  Real g = (x.y() * (a * x.y() + b)) / (x.y() * (c * x.y() + d) + e);
+  Real bl = (x.z() * (a * x.z() + b)) / (x.z() * (c * x.z() + d) + e);
+
+  // Clamp 0..1 par sécurité
+  return Vec3(std::fmin(std::fmax(r, 0.0f), 1.0f),
+              std::fmin(std::fmax(g, 0.0f), 1.0f),
+              std::fmin(std::fmax(bl, 0.0f), 1.0f));
+};

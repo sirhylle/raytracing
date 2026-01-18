@@ -14,7 +14,6 @@ animations_frames/
 animations_frames - Copie/
 *.mp4
 *.png
-!env-map.png
 
 # Logs
 *.log
@@ -27,6 +26,9 @@ oidn/
 
 # Assets
 assets/
+
+# Env Maps
+env-maps/
 
 # Outputs
 outputs/

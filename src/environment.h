@@ -6,7 +6,6 @@
 #include <utility> // pour std::pair
 #include <vector>
 
-
 struct EnvironmentMap {
   std::vector<Real> data;
   int width;
@@ -14,6 +13,7 @@ struct EnvironmentMap {
   Real env_visible_scale = 1.0f;
   Real env_direct_scale = 1.0f;
   Real env_indirect_scale = 1.0f;
+  Real rotation = 0.0f;
 
   // Pour l'Importance Sampling
   std::vector<Real> marginal_CDF; // Probabilité de choisir une ligne Y
@@ -29,6 +29,14 @@ struct EnvironmentMap {
     env_visible_scale = vis;
     env_direct_scale = direct;
     env_indirect_scale = indirect;
+  }
+
+  // Setter pour la rotation (reçoit des degrés)
+  void set_rotation(Real degrees) {
+    // Conversion Degrés -> Radians
+    // On inverse le signe si besoin selon le sens de rotation voulu,
+    // mais standard = positif tourne vers la gauche
+    rotation = degrees * (PI / 180.0f);
   }
 
   // Trouve la direction du pixel le plus lumineux (Pour le soleil auto)
@@ -59,12 +67,19 @@ struct EnvironmentMap {
     Real u = (best_x + 0.5f) / width;
     Real v = (best_y + 0.5f) / height;
     Real theta = v * PI;
-    Real phi = (u * 2 * PI) - PI;
+    // Calcul de l'angle Phi dans l'espace texture
+    Real phi_texture = (u * 2 * PI) - PI;
+
+    // Si l'environnement est tourné de +R, le pixel (u,v) correspond
+    // à une direction monde tournée de -R.
+    // sample() fait : phi_texture = phi_monde + rotation
+    // Donc : phi_monde = phi_texture - rotation
+    Real phi_world = phi_texture - rotation;
 
     Real sin_theta = std::sin(theta);
     Real cos_theta = std::cos(theta);
-    Real sin_phi = std::sin(phi);
-    Real cos_phi = std::cos(phi);
+    Real sin_phi = std::sin(phi_world);
+    Real cos_phi = std::cos(phi_world);
 
     // Y-up convention
     Vec3 dir(sin_theta * cos_phi, cos_theta, -sin_theta * sin_phi);
@@ -122,6 +137,18 @@ struct EnvironmentMap {
 
   // Importance Sampling : Choisit une direction brillante
   Vec3 sample_direction(Real &pdf) const {
+    // L'Importance Sampling ne change pas vraiment avec la rotation
+    // car on sample la texture (u,v) puis on convertit en direction.
+    // Si on veut être puriste, il faudrait tourner le vecteur résultant.
+    // MAIS pour l'instant, sample_direction est utilisé par le Renderer pour
+    // choisir où envoyer les rayons. Si on le laisse tel quel, il va sampler
+    // selon les points chauds de la texture. Le Renderer convertira ce U,V en
+    // vecteur. Il faudra juste s'assurer que le renderer applique la rotation à
+    // ce vecteur s'il l'utilise directement.
+
+    // Pour l'instant on laisse tel quel, c'est une approximation acceptable
+    // car sample_direction retourne une direction en fonction de la texture
+    // brute. Idéalement il faudrait tourner le vecteur résultat :
     Real r1 = random_real();
     auto it_y = std::lower_bound(marginal_CDF.begin(), marginal_CDF.end(), r1);
     int y = std::max(0, (int)(it_y - marginal_CDF.begin()) - 1);
@@ -135,12 +162,15 @@ struct EnvironmentMap {
     Real v = (y + random_real()) / height;
 
     Real theta = v * PI;
-    Real phi = (u * 2 * PI) - PI;
+    Real phi_texture = (u * 2 * PI) - PI;
+
+    // Conversion Texture Space -> World Space
+    Real phi_world = phi_texture - rotation;
 
     Real sin_theta = std::sin(theta);
     Real cos_theta = std::cos(theta);
-    Real sin_phi = std::sin(phi);
-    Real cos_phi = std::cos(phi);
+    Real sin_phi = std::sin(phi_world);
+    Real cos_phi = std::cos(phi_world);
 
     Vec3 dir(sin_theta * cos_phi, cos_theta, -sin_theta * sin_phi);
 
@@ -182,9 +212,13 @@ struct EnvironmentMap {
 
     auto unit_dir = unit_vector(dir);
     auto theta = std::acos(unit_dir.y());
-    auto phi = std::atan2(-unit_dir.z(), unit_dir.x()) + PI;
+    auto phi_world = std::atan2(-unit_dir.z(), unit_dir.x()) + PI;
 
-    Real u = phi / (2 * PI);
+    // Application de la rotation
+    // On décale l'angle de lecture pour simuler la rotation de la sphère
+    Real phi_texture = phi_world + rotation;
+
+    Real u = phi_texture / (2 * PI);
     Real v = theta / PI;
 
     Real px = u * width - 0.5f;

@@ -100,7 +100,7 @@ class SceneBuilder:
         }
         return obj_id
 
-    def add_invisible_sphere_light(self, center, radius, color):
+    def add_invisible_sphere_light(self, center, radius, color, raw_color):
         c_list = list(center) if isinstance(center, (list, tuple, np.ndarray)) else [center.x(), center.y(), center.z()]
         v_center = cpp_engine.Vec3(float(c_list[0]), float(c_list[1]), float(c_list[2]))
         
@@ -116,8 +116,9 @@ class SceneBuilder:
             'pos': c_list,
             'rot': [0.0, 0.0, 0.0],
             'scale': [radius, radius, radius],
-            'mat_type': 'light',
+            'mat_type': 'invisible_light',
             'color': [r, g, b],
+            'raw_color': raw_color,
             'fuzz': 0.0,
             'ir': 1.0
         }
@@ -196,7 +197,7 @@ class SceneBuilder:
 # ==================================================================================
 
 def load_environment(builder, env_path, 
-    background_level=None, direct_level=None, indirect_level=None, 
+    env_light_level=None, env_direct_level=None, env_indirect_level=None, 
     auto_sun=False, auto_sun_intensity=None, auto_sun_radius=None,
     auto_sun_dist=None, auto_sun_env_level=None):
     """Charge la HDRI et configure le soleil physique automatique via le Builder."""
@@ -218,17 +219,22 @@ def load_environment(builder, env_path,
 
         builder.set_environment(env_data)
         
-        bg_lvl = background_level if background_level is not None else 1.0
-        dir_lvl = direct_level if direct_level is not None else 0.5
-        indir_lvl = indirect_level if indirect_level is not None else 0.5
+        # direct_lvl = Visibilité Caméra (Arg 1)
+        cam_vis = env_direct_level if env_direct_level is not None else 1.0
+        # light_lvl = Éclairage de la scène (Arg 2)
+        lighting = env_light_level if env_light_level is not None else 1.0
+        # indirect_lvl = Reflets (Arg 3)
+        refl = env_indirect_level if env_indirect_level is not None else 1.0
         
-        builder.set_env_levels(bg_lvl, dir_lvl, indir_lvl)
+        #builder.set_env_levels(bg_lvl, dir_lvl, indir_lvl)
+        builder.set_env_levels(cam_vis, lighting, refl)
 
         if auto_sun:
             print("[Loader] Auto-Sun: Analyzing Environment...")
             sun_dir, sun_color = builder.get_env_sun_info()
             
-            builder.set_env_levels(bg_lvl, auto_sun_env_level, indir_lvl)
+            #builder.set_env_levels(bg_lvl, auto_sun_env_level, indir_lvl)
+            builder.set_env_levels(cam_vis, auto_sun_env_level, refl)
 
             dist = auto_sun_dist
             pos = [sun_dir.x() * dist, sun_dir.y() * dist, sun_dir.z() * dist]
@@ -245,7 +251,8 @@ def load_environment(builder, env_path,
             builder.add_invisible_sphere_light(
                 pos, 
                 auto_sun_radius,
-                sun_col
+                sun_col,
+                [sun_color.x(), sun_color.y(), sun_color.z()]
             )
             print(f"[Loader] Auto-Sun added via Builder. Registry Updated.")
 
@@ -285,13 +292,13 @@ def initialize_scene_and_engine(args, scene_name=None):
 
     # Environment (Passe le builder)
     load_environment(builder, config.env_map, 
-                     config.env_background_level, 
-                     config.env_direct_level, 
-                     config.env_indirect_level,
-                     config.auto_sun,
-                     config.auto_sun_intensity,
-                     config.auto_sun_radius,
-                     config.auto_sun_dist,
-                     config.auto_sun_env_level)
+                     env_light_level=config.env_light_level, 
+                     env_direct_level=config.env_direct_level, 
+                     env_indirect_level=config.env_indirect_level,
+                     auto_sun=config.auto_sun,
+                     auto_sun_intensity=config.auto_sun_intensity,
+                     auto_sun_radius=config.auto_sun_radius,
+                     auto_sun_dist=config.auto_sun_dist,
+                     auto_sun_env_level=config.auto_sun_env_level)
                      
     return engine, config, builder

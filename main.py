@@ -23,9 +23,9 @@ def main():
     # --- Environment ---
     group_env = parser.add_argument_group("Environment")
     group_env.add_argument('--env', type=str, dest='env_map', help="Path to HDR environment map file")
-    group_env.add_argument('--env-background-level', type=float, help="Background light intensity multiplier")
-    group_env.add_argument('--env-direct-level', type=float, help="Direct lighting intensity from environment")
-    group_env.add_argument('--env-indirect-level', type=float, help="Indirect lighting intensity from environment")
+    group_env.add_argument('--env-light-level', type=float, help="Light intensity from environment (multiplier)")
+    group_env.add_argument('--env-direct-level', type=float, help="Direct lighting of environment (multiplier)")
+    group_env.add_argument('--env-indirect-level', type=float, help="Indirect lighting of environment (multiplier)")
     
     # --- Camera ---
     group_cam = parser.add_argument_group("Camera")
@@ -42,7 +42,7 @@ def main():
     group_sun.add_argument('--auto-sun-intensity', type=float, help="Intensity of the physical sun (default: 50)")
     group_sun.add_argument('--auto-sun-radius', type=float, help="Radius of the physical sun (default: 50, affects soft shadows)")
     group_sun.add_argument('--auto-sun-dist', type=float, help="Distance of the sun from origin (default: 1000)")
-    group_sun.add_argument('--auto-sun-env_level', type=float, help="Environment map multiplier when sun is active (default: 0.2)")
+    group_sun.add_argument('--auto-sun-env_level', type=float, help="Environment light intensity multiplier when sun is active (default: 0.2)")
     
     # --- Animation ---
     group_anim = parser.add_argument_group("Animation")

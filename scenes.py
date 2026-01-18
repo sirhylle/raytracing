@@ -20,9 +20,9 @@ class SceneConfig:
     focus_dist: Optional[float] = None
     env_map: Optional[str] = None
     # Lighting
-    env_background_level: float = 1.0     # Sky brightness (when viewed directly)
-    env_direct_level: float = 0.5    # Sky lighting intensity (by direct lighting)
-    env_indirect_level: float = 0.5    # Sky lighting intensity (by indirect lighting)
+    env_light_level: float = 1.0     # Sky lighting intensity (as direct lighting)
+    env_direct_level: float = 0.5    # Sky brightness (when viewed directly)
+    env_indirect_level: float = 0.5    # Sky brightness (when viewed indirectly)
 
 class Scene:
     def setup(self, builder, config_overrides: dict = None) -> SceneConfig:
@@ -62,7 +62,7 @@ class CornellBox(Scene):
             aperture=0.0,
             focus_dist=10.0,
             env_map="env-dock-sun.hdr",
-            env_background_level=5.0,
+            env_light_level=5.0,
             env_direct_level=0.5,
             env_indirect_level=0.5
         )
@@ -113,7 +113,7 @@ class RandomSpheres(Scene):
             vup=[0, 1, 0],
             vfov=40.0, aperture=0.05, focus_dist=10.0,
             env_map=None, 
-            env_background_level=1.0,
+            env_light_level=1.0,
             env_direct_level=0.5,
             env_indirect_level=0.5
         )
@@ -186,7 +186,7 @@ class MaterialsShowcase(Scene):
 
         return SceneConfig(
             lookfrom=[0, 3, 8], lookat=[0, 1, 0], vup=[0, 1, 0], vfov=50.0, aperture=0.1, focus_dist=8.0,
-            env_map="env-dock-sun.hdr", env_background_level=1.0, env_direct_level=0.6, env_indirect_level=2.0
+            env_map="env-dock-sun.hdr", env_light_level=1.0, env_direct_level=0.6, env_indirect_level=2.0
         )
 
 class MeshScene1(Scene):
@@ -274,7 +274,7 @@ class MeshScene2(Scene):
         return SceneConfig(
             lookfrom=[-0.9, 0.7, 3.93], lookat=[-0.73, 0.5, 2.96], vfov=50.0,
             aperture=0.1, focus_dist=3.72, env_map="env-dock-sun.hdr",
-            env_background_level=1.0, env_direct_level=0.6, env_indirect_level=2.0
+            env_light_level=1.0, env_direct_level=0.6, env_indirect_level=2.0
         )
 
 # Registry
