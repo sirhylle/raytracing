@@ -1,0 +1,50 @@
+import pygame
+from ..ui_core import *
+
+def build_global_layout(ui_list, state, engine, on_start_render):
+    """Construit les éléments UI fixes (Header, Tabs, Footer)."""
+    ui_list.clear()
+
+    y = 10
+    # 1. MONITORING
+    lbl(ui_list, 10, y, lambda: f"FPS: --", 14, COL_TEXT_DIM) # Hack: FPS mis à jour par boucle main
+    lbl(ui_list, 100, y, lambda: f"SPP: {state.accum_spp}", 14, COL_TEXT_DIM)
+    y += 25
+
+    # 2. RENDER SETTINGS
+    lbl(ui_list, 10, y+3, "Qual", 12, COL_TEXT_DIM)
+    def set_res(v): state.res_auto = (v=='AUTO'); state.res_scale = v if v!='AUTO' else 1; state.dirty = True
+    grp_res = []
+    btn(ui_list, 50, y, 45, 20, "Auto", set_res, 'AUTO', True, grp_res, state.res_auto)
+    btn(ui_list, 100, y, 35, 20, "1:1", set_res, 1, True, grp_res, (not state.res_auto and state.res_scale==1))
+    btn(ui_list, 140, y, 35, 20, "1:2", set_res, 2, True, grp_res, (state.res_scale==2))
+    btn(ui_list, 180, y, 35, 20, "1:4", set_res, 4, True, grp_res, (state.res_scale==4))
+    y += 26
+
+    lbl(ui_list, 10, y+3, "Mode", 12, COL_TEXT_DIM)
+    def set_mode(m): state.preview_mode = m; state.dirty = True
+    grp_mode = []
+    btn(ui_list, 50, y, 60, 20, "Normals", set_mode, 0, True, grp_mode, state.preview_mode==0)
+    btn(ui_list, 115, y, 60, 20, "Clay", set_mode, 1, True, grp_mode, state.preview_mode==1)
+    btn(ui_list, 180, y, 60, 20, "Ray", set_mode, 2, True, grp_mode, state.preview_mode==2)
+    y += 45
+
+    # 3. TOOLS
+    lbl(ui_list, 10, y, "INTERACTION TOOLS", 14, COL_ACCENT); y += 20
+    def set_tool(t): state.tool_mode = t
+    grp_tool = []
+    btn(ui_list, 10, y, 95, 30, "CAMERA", set_tool, "CAM", True, grp_tool, state.tool_mode=="CAM", col_ov=None)
+    btn(ui_list, 110, y, 95, 30, "EDITION", set_tool, "SEL", True, grp_tool, state.tool_mode=="SEL")
+    btn(ui_list, 210, y, 95, 30, "FOCUS", set_tool, "FOCUS", True, grp_tool, state.tool_mode=="FOCUS")
+    y += 45
+
+    # 4. TABS
+    def set_tab(t): state.set_active_tab(t) # Main loop détectera le changement et reconstruira le contenu
+    grp_tabs = []
+    btn(ui_list, 10, y, 150, 28, "SCENE GLOBAL", set_tab, "SCENE", True, grp_tabs, state.active_tab=="SCENE", COL_TAB_INA)
+    btn(ui_list, 160, y, 150, 28, "OBJECT DATA", set_tab, "OBJECT", True, grp_tabs, state.active_tab=="OBJECT", COL_TAB_INA)
+    
+    # 5. FOOTER
+    btn(ui_list, 10, WIN_H - 45, 300, 35, "RENDER FINAL IMAGE", on_start_render)
+    
+    return y + 40 # Retourne la position Y de départ pour le contenu des onglets

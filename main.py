@@ -2,7 +2,7 @@ import argparse
 import scenes
 import loader
 from modes import renderer
-from modes import viewer_pygames as viewer
+from modes import editor as viewer
 import gc
 
 def main():
@@ -11,7 +11,9 @@ def main():
     # --- Arguments Généraux ---
     group_general = parser.add_argument_group("General")
     group_general.add_argument('--scene', type=str, default=None, choices=scenes.AVAILABLE_SCENES.keys(), help="Choice of the scene to render (default: cornell, or defined in scenes.py)")
-    group_general.add_argument('--preview', action='store_true', help="Enable real-time preview mode")
+    group_general.add_argument('--editor', action='store_true', help="Enable real-time preview and editing mode (new V3)")
+    group_general.add_argument('--editorV2', action='store_true', help="Enable real-time preview and editing mode (legacy V2)")
+    group_general.add_argument('--editorV1', action='store_true', help="Enable real-time preview and editing mode (legacy V1)")
     
     # --- Arguments de Rendu (Config) ---
     group_render = parser.add_argument_group("Rendering Configuration")
@@ -65,8 +67,15 @@ def main():
     engine, config, builder = loader.initialize_scene_and_engine(args)
     
     # 2. Dispatch selon le mode
-    if args.preview:
-        final_cam = viewer.run(engine, config, builder)
+    if args.editor or args.editorV2 or args.editorV1:
+        if args.editor:
+            final_cam = viewer.run(engine, config, builder)
+        elif args.editorV2:
+            from modes import viewer_legacyV2 as viewer_legacyV2
+            final_cam = viewer_legacyV2.run(engine, config, builder)
+        elif args.editorV1:
+            from modes import viewer_legacyV1 as viewer_legacyV1
+            final_cam = viewer_legacyV1.run(engine, config)
         if final_cam:
             print("\n" + "="*60)
             print("CAMERA STATE CAPTURED")
