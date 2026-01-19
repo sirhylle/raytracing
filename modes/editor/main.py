@@ -17,6 +17,149 @@ def render_thread_task(engine, config, app_state):
         app_state.is_rendering = False
         app_state.dirty = True
 
+
+# --- GIZMO MATH UTILS ---
+def world_to_screen(view_rect, cam_pos, yaw, pitch, fov, point_3d):
+    """Projette un point 3D sur l'écran en utilisant les vecteurs de base de la caméra."""
+    
+    # 1. Reconstruire les vecteurs de la caméra (Copie conforme de ta logique de mouvement)
+    # Forward (Direction du regard)
+    fx = math.sin(yaw) * math.cos(pitch)
+    fy = math.sin(pitch)
+    fz = math.cos(yaw) * math.cos(pitch)
+    fwd = np.array([fx, fy, fz])
+    
+    # Normalisation de sécurité
+    norm_fwd = np.linalg.norm(fwd)
+    if norm_fwd == 0: return None
+    fwd /= norm_fwd
+
+    # Right (Vecteur droite) -> Produit vectoriel avec le HAUT du monde (0,1,0)
+    right = np.cross(fwd, np.array([0.0, 1.0, 0.0]))
+    norm_right = np.linalg.norm(right)
+    if norm_right == 0: 
+        right = np.array([1.0, 0.0, 0.0]) # Cas dégénéré (regarde pile en haut/bas)
+    else:
+        right /= norm_right
+
+    # Up (Vecteur haut LOCAL caméra) -> Produit vectoriel (Right, Forward)
+    up = np.cross(right, fwd)
+    up /= np.linalg.norm(up)
+
+    # 2. Vecteur Caméra -> Point Objet
+    cam_to_pt = np.array(point_3d) - cam_pos
+
+    # 3. Projection sur les axes de la caméra (Dot Product)
+    # Cela nous donne les coordonnées du point dans le référentiel de la caméra
+    depth = np.dot(cam_to_pt, fwd)   # Distance en profondeur (Z local)
+    x_local = np.dot(cam_to_pt, right) # Distance latérale (X local)
+    y_local = np.dot(cam_to_pt, up)    # Distance verticale (Y local)
+
+    # 4. Clipping (Si le point est derrière la caméra)
+    if depth <= 0.1: return None
+
+    # 5. Projection Perspective
+    aspect = view_rect.width / view_rect.height
+    tan_half_fov = math.tan(math.radians(fov) * 0.5)
+
+    # Coordonnées normalisées (-1 à 1)
+    # ndc_x = 0 signifie au centre de l'écran
+    ndc_x = x_local / (depth * tan_half_fov * aspect)
+    ndc_y = y_local / (depth * tan_half_fov)
+
+    # 6. Viewport (Normalisé -> Pixels)
+    # Attention: en écran informatique, Y va vers le bas, donc on inverse ndc_y (1.0 - ndc_y)
+    # Ou plus simplement : on inverse le signe de y_local virtuel.
+    # Formule standard de mapping [-1, 1] vers [0, width]
+    px = view_rect.x + (ndc_x + 1.0) * 0.5 * view_rect.width
+    py = view_rect.y + (1.0 - ndc_y) * 0.5 * view_rect.height 
+
+    return (px, py)
+
+def draw_gizmo(screen, state, vp_rect):
+    """Dessine les axes (Gizmo) plus esthétiques avec des flèches."""
+    if state.axis_mode == "NONE" or state.selected_id == -1: return
+    
+    info = state.get_selected_info()
+    if not info: return
+    
+    # Données Objet
+    pos = np.array(info['pos'])
+    rot = np.radians(np.array(info['rot'])) 
+    
+    # Données Caméra
+    cam_pos = state.cam_pos
+    yaw, pitch = state.yaw, state.pitch
+    fov = state.vfov
+    
+    # 1. Calcul du Centre (Origine)
+    p0 = world_to_screen(vp_rect, cam_pos, yaw, pitch, fov, pos)
+    if p0 is None: return 
+
+    # Echelle dynamique
+    dist = np.linalg.norm(pos - cam_pos)
+    gizmo_size = dist * 0.15 
+    
+    # Couleurs "Pro" (Un peu moins saturées ou plus lumineuses)
+    cols = {
+        'x': (220, 60, 60),   # Rouge
+        'y': (60, 220, 60),   # Vert
+        'z': (60, 80, 240)    # Bleu
+    }
+
+    # Calcul des vecteurs unitaires (Local ou Global)
+    if state.axis_mode == "GLOBAL":
+        vx, vy, vz = np.array([1,0,0]), np.array([0,1,0]), np.array([0,0,1])
+    else:
+        # Rotation Euler basique pour le mode Local
+        cx, sx = math.cos(rot[0]), math.sin(rot[0])
+        cy, sy = math.cos(rot[1]), math.sin(rot[1])
+        cz, sz = math.cos(rot[2]), math.sin(rot[2])
+        
+        vx = np.array([cy*cz, cy*sz, -sy]) 
+        vy = np.array([sx*sy*cz - cx*sz, sx*sy*sz + cx*cz, sx*cy])
+        vz = np.array([cx*sy*cz + sx*sz, cx*sy*sz - sx*cz, cx*cy])
+
+    axes = [ (vx, cols['x']), (vy, cols['y']), (vz, cols['z']) ]
+
+    # 2. Dessin des Axes
+    # On dessine d'abord le centre
+    pygame.draw.circle(screen, (255, 255, 255), (int(p0[0]), int(p0[1])), 4) # Centre blanc
+    
+    for vec, color in axes:
+        pt_3d = pos + vec * gizmo_size
+        p_end = world_to_screen(vp_rect, cam_pos, yaw, pitch, fov, pt_3d)
+        
+        if p_end:
+            # Ligne principale (un peu plus épaisse)
+            pygame.draw.line(screen, color, p0, p_end, 3)
+            
+            # --- Dessin de la Flèche (Triangle) ---
+            # Vecteur direction 2D sur l'écran
+            ux, uy = p_end[0] - p0[0], p_end[1] - p0[1]
+            l = math.sqrt(ux*ux + uy*uy)
+            if l > 0:
+                ux, uy = ux/l, uy/l # Normalisation
+                
+                # Perpendiculaire (-y, x)
+                px, py = -uy, ux
+                
+                # Taille de la flèche
+                arrow_len = 12
+                arrow_width = 5
+                
+                # Base de la flèche (on recule un peu depuis la fin)
+                base_x = p_end[0] - ux * arrow_len
+                base_y = p_end[1] - uy * arrow_len
+                
+                # Les 3 points du triangle
+                tip = p_end
+                c1 = (base_x + px * arrow_width, base_y + py * arrow_width)
+                c2 = (base_x - px * arrow_width, base_y - py * arrow_width)
+                
+                pygame.draw.polygon(screen, color, [tip, c1, c2])
+
+
 def run(engine, config, builder):
     pygame.init()
     screen = pygame.display.set_mode((ui_core.WIN_W, ui_core.WIN_H))
@@ -120,29 +263,54 @@ def run(engine, config, builder):
             
             # B. Viewport Interaction (Seulement si l'UI n'a pas capturé l'event)
             if not ui_captured and not app_state.typing_mode:
-                if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE: running = False
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                    # 1. Si on est en train de faire un focus -> On annule
+                    if app_state.picking_focus:
+                        app_state.picking_focus = False
+                        app_state.needs_ui_rebuild = True
+                    
+                    # 2. Sinon, si un objet est sélectionné -> On désélectionne
+                    elif app_state.selected_id != -1:
+                        app_state.selected_id = -1
+                        app_state.set_active_tab("SCENE")
+                        app_state.needs_ui_rebuild = True
+                        app_state.dirty = True
+
+                    # 3. Sinon -> On ne fait rien (pas de quit accidentel)
+                    # running = False  <-- LIGNE SUPPRIMÉE
                 
                 # Clic Gauche : Sélection ou Gizmo
                 elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1 and in_viewport:
-                    is_shift = keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]
-                    # Mode Selection ou Shift+Click
-                    if app_state.tool_mode == "SEL" or (app_state.tool_mode == "CAM" and is_shift):
-                        pid = engine.pick_instance_id(vp_rect.width, vp_rect.height, mouse_x_rel, mouse_y_rel)
-                        app_state.selected_id = pid
-                        app_state.dirty = True
-                        app_state.needs_ui_rebuild = True
-                        if pid != -1:
-                            app_state.set_active_tab("OBJECT")
-                            app_state.tool_mode = "SEL"
-                        else:
-                            app_state.set_active_tab("SCENE")
-                    
-                    # Mode Focus
-                    elif app_state.tool_mode == "FOCUS":
+                    # On vérifie si la touche F est enfoncée
+                    is_focus_key = keys[pygame.K_f]
+
+                    # CAS 1 : PICKING FOCUS (Via Bouton UI actif OU Touche F maintenue)
+                    if app_state.picking_focus or is_focus_key:
                         res = engine.pick_focus_distance(vp_rect.width, vp_rect.height, mouse_x_rel, mouse_y_rel)
                         if res[0] > 0:
                             app_state.focus_dist = res[0]
                             app_state.dirty = True
+                            
+                            # Si c'était le bouton UI qui était actif, on le désactive (coup unique)
+                            if app_state.picking_focus:
+                                app_state.picking_focus = False
+                                app_state.needs_ui_rebuild = True
+                    
+                    # CAS 2 : SÉLECTION NORMALE (Par défaut)
+                    else:
+                        pid = engine.pick_instance_id(vp_rect.width, vp_rect.height, mouse_x_rel, mouse_y_rel)
+                        
+                        if app_state.selected_id != pid:
+                            app_state.selected_id = pid
+                            app_state.dirty = True
+                            app_state.needs_ui_rebuild = True 
+
+                            if pid != -1:
+                                app_state.set_active_tab("OBJECT")
+                                if app_state.accordions["OBJECT"] is None:
+                                    app_state.accordions["OBJECT"] = "SELECTION"
+                            else:
+                                app_state.set_active_tab("SCENE")
 
                 # Clic Droit : Capture souris pour rotation
                 elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 3 and in_viewport:
@@ -169,7 +337,8 @@ def run(engine, config, builder):
                          app_state.dirty = True
 
                     # Gizmo / Interaction Objet (Clic Gauche maintenu)
-                    if mouse_btns[0] and in_viewport and app_state.selected_id != -1 and app_state.tool_mode != "CAM":
+                    is_focusing = app_state.picking_focus or keys[pygame.K_f]
+                    if mouse_btns[0] and in_viewport and app_state.selected_id != -1 and not is_focusing:
                         dx, dy = event.rel
                         data = app_state.get_selected_info()
                         if data:
@@ -303,12 +472,33 @@ def run(engine, config, builder):
         if app_state.current_image:
             screen.blit(app_state.current_image, (vp_rect.x, vp_rect.y))
 
+        if app_state.picking_focus:
+            # Fond semi-transparent pour le texte
+            msg = "PICK FOCUS POINT (CLICK ON SCENE) OR PRESS ESC"
+            f_overlay = fonts.get(14)
+            txt_surf = f_overlay.render(msg, True, (255, 255, 255))
+            
+            # On centre le message en haut de la vue 3D
+            bg_rect = txt_surf.get_rect(center=(ui_core.VIEW_W // 2, 30))
+            bg_rect.inflate_ip(20, 10) # Un peu de marge
+            
+            # Dessin fond noir semi-transparent (optionnel, ou noir simple)
+            pygame.draw.rect(screen, (0, 0, 0), bg_rect, border_radius=4)
+            pygame.draw.rect(screen, ui_core.COL_ACCENT, bg_rect, 1, border_radius=4) # Bordure bleue
+            
+            # Dessin texte
+            txt_rect = txt_surf.get_rect(center=bg_rect.center)
+            screen.blit(txt_surf, txt_rect)
+
+        # Dessin du Gizmo 3D (Overlay)
+        draw_gizmo(screen, app_state, vp_rect)
+
         # C. Draw UI Panel
         # 1. Fond Panel (Gris moyen - Remplissage total)
         pygame.draw.rect(screen, ui_core.COL_PANEL, (ui_core.VIEW_W, 0, ui_core.PANEL_W, ui_core.WIN_H))
 
         # 2. Header (Haut)
-        header_height = 200
+        header_height = 136
         pygame.draw.rect(screen, ui_core.COL_HEADER, (ui_core.VIEW_W, 0, ui_core.PANEL_W, header_height))
         pygame.draw.line(screen, ui_core.COL_BORDER, (ui_core.VIEW_W, 0), (ui_core.VIEW_W, ui_core.WIN_H))
         #pygame.draw.line(screen, ui_core.COL_BORDER, (ui_core.VIEW_W, header_height), (ui_core.WIN_W, header_height))
@@ -321,7 +511,6 @@ def run(engine, config, builder):
         # Ligne de séparation (Bordure du haut du footer)
         pygame.draw.line(screen, ui_core.COL_BORDER, (ui_core.VIEW_W, footer_y), (ui_core.WIN_W, footer_y))
 
-        
         
         for w in ui_list: w.draw(screen, fonts)
         

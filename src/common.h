@@ -20,9 +20,15 @@ const Real INFINITY_REAL = std::numeric_limits<Real>::infinity();
 const bool VISIBLE_IN_REFLECTIONS = true;
 
 // 2. Intensité de l'ombre des objets transparents (Verre/Eau)
+// 0.0f = pas d'ombre, 1.0f = ombre complète
 const Real DIELECTRIC_SHADOW_TRANSMISSION = 0.8f;
 
-// 3. Gestion des Fireflies (Lucioles)
+// 3. Epsilon pour éviter l'acné
+// Plus epsilon est petit, plus l'acné est prononcé
+const Real EPSILON = 0.001f;
+
+// 4. Gestion des Fireflies (Lucioles)
+// Plus limit est grand, plus les lucioles sont prononcées
 const Real FIREFLY_CLAMP_LIMIT = 50.0f;
 
 // Utilitaire de compression douce (Tone mapping local)

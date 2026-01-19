@@ -195,55 +195,105 @@ class NumberField(UIElement):
         state.typing_mode = False
 
 class Slider(UIElement):
-    def __init__(self, x, y, w, h, min_v, max_v, get_cb, set_cb, color_track=COL_BTN):
+    #def __init__(self, x, y, w, h, min_v, max_v, get_cb, set_cb, color_track=COL_BTN_DIS, power=1.0):
+    def __init__(self, x, y, w, h, min_v, max_v, get_cb, set_cb, color_track=COL_ACCENT, power=1.0):
         self.rect = pygame.Rect(x, y, w, h)
-        self.min_v, self.max_v = min_v, max_v
+        self.min_v = min_v
+        self.max_v = max_v
         self.get_cb = get_cb
         self.set_cb = set_cb
         self.dragging = False
-        self.color_track = color_track
+        self.power = power         # Le facteur logarithmique
+        self.color_track = color_track # Ta couleur personnalisée
         self.enabled = True
-
-    def draw(self, screen, fonts):
-        if not self.enabled: return
-        pygame.draw.rect(screen, COL_PANEL, self.rect, border_radius=4)
-        pygame.draw.rect(screen, COL_BORDER, self.rect, 1, border_radius=4)
-        
-        val = max(self.min_v, min(self.max_v, self.get_cb()))
-        ratio = (val - self.min_v) / (self.max_v - self.min_v) if (self.max_v > self.min_v) else 0
-        
-        fill_rect = pygame.Rect(self.rect.x, self.rect.y, int(self.rect.width * ratio), self.rect.height)
-        pygame.draw.rect(screen, self.color_track, fill_rect, border_radius=4)
-        handle_x = self.rect.x + int(self.rect.width * ratio)
-        pygame.draw.circle(screen, COL_TEXT, (handle_x, self.rect.centery), 6)
-        
-        txt_col = (255,255,255) if ratio < 0.5 else (0,0,0)
-        f = fonts.get(12)
-        surf = f.render(f"{val:.2f}", True, txt_col)
 
     def handle_event(self, event, state):
         if not self.enabled: return False
-        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            if self.rect.collidepoint(event.pos):
+        
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            if event.button == 1 and self.rect.collidepoint(event.pos):
                 self.dragging = True
-                self.update_value(event.pos[0], state)
+                self.update_value(event.pos[0])
                 return True
-        elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
-            if self.dragging:
+        elif event.type == pygame.MOUSEBUTTONUP:
+            if event.button == 1:
                 self.dragging = False
-                return True
         elif event.type == pygame.MOUSEMOTION:
             if self.dragging:
-                self.update_value(event.pos[0], state)
+                self.update_value(event.pos[0])
                 return True
         return False
 
-    def update_value(self, mouse_x, state):
-        relative_x = mouse_x - self.rect.x
-        ratio = max(0.0, min(1.0, relative_x / self.rect.width))
-        new_val = self.min_v + ratio * (self.max_v - self.min_v)
+    def update_value(self, mouse_x):
+        # 1. Calcul de la position de la souris (0.0 à 1.0)
+        t = (mouse_x - self.rect.x) / self.rect.width
+        t = max(0.0, min(1.0, t))
+        
+        # 2. Application de la puissance (Courbe)
+        curved_t = t ** self.power
+        
+        # 3. Projection sur les valeurs min/max
+        new_val = self.min_v + curved_t * (self.max_v - self.min_v)
         self.set_cb(new_val)
-        state.dirty = True
+
+    def draw(self, screen, fonts):
+        if not self.enabled: return
+        
+        # Récupération de la valeur
+        val = self.get_cb()
+        
+        # Calcul inverse pour l'affichage : Valeur -> Position visuelle
+        norm_val = (val - self.min_v) / (self.max_v - self.min_v) if self.max_v > self.min_v else 0
+        norm_val = max(0.0, min(1.0, norm_val))
+        
+        # On inverse la puissance pour trouver la position du pixel
+        t = norm_val ** (1.0 / self.power)
+        
+        # Dessin du fond (Rail)
+        pygame.draw.rect(screen, COL_BTN, self.rect, border_radius=4)
+        
+        # Dessin de la barre remplie avec la couleur (color_track)
+        fill_w = int(t * self.rect.width)
+        fill_rect = pygame.Rect(self.rect.x, self.rect.y, fill_w, self.rect.height)
+        pygame.draw.rect(screen, self.color_track, fill_rect, border_radius=4)
+        
+        # Bordure
+        pygame.draw.rect(screen, COL_BORDER, self.rect, 1, border_radius=4)
+        
+        # Texte Centré
+        # Petite astuce : formatage plus précis si on est en mode "log" fort
+        fmt = "{:.3f}" if self.power > 1.5 and val < 10 else "{:.2f}"
+        txt_str = fmt.format(val)
+        f = fonts.get(12)
+        col_main = (COL_TEXT)
+        col_shadow = (0, 0, 0)     # Noir pur
+        surf_main = f.render(txt_str, True, col_main)
+        surf_shadow = f.render(txt_str, True, col_shadow)
+        r_txt = surf_main.get_rect(center=self.rect.center)
+        offsets = [(-2, 0), (1, 0), (0, -1), (0, 1)]
+        for dx, dy in offsets:
+            screen.blit(surf_shadow, (r_txt.x + dx, r_txt.y + dy))
+        screen.blit(surf_main, r_txt)
+
+class Separator(UIElement):
+        def __init__(self, y, text=None):
+            self.rect = pygame.Rect(VIEW_W, y, PANEL_W, 20)
+            self.text = text
+
+        def draw(self, screen, fonts):
+            # Ligne grise
+            line_y = self.rect.centery
+            pygame.draw.line(screen, COL_BORDER, (self.rect.x + 10, line_y), (self.rect.right - 10, line_y))
+            
+            # Si texte, on l'affiche avec un fond pour "couper" la ligne
+            if self.text:
+                f = fonts.get(11) # Police très petite
+                txt = f.render(f" {self.text} ", True, COL_TEXT_DIM) # Texte gris
+                r = txt.get_rect(center=self.rect.center)
+                
+                # Petit fond pour masquer la ligne derrière le texte
+                pygame.draw.rect(screen, COL_PANEL, r) 
+                screen.blit(txt, r)
 
 class HeaderBar(UIElement):
     def __init__(self, x, y, w, h, color):

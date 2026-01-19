@@ -29,15 +29,6 @@ def build_global_layout(ui_list, state, engine, on_start_render):
     btn(ui_list, 180, y, 60, 20, "Ray", set_mode, 2, True, grp_mode, state.preview_mode==2)
     y += 45
 
-    # 3. TOOLS
-    lbl(ui_list, 10, y, "INTERACTION TOOLS", 14, COL_ACCENT); y += 20
-    def set_tool(t): state.tool_mode = t
-    grp_tool = []
-    btn(ui_list, 10, y, 95, 30, "CAMERA", set_tool, "CAM", True, grp_tool, state.tool_mode=="CAM", col_ov=None)
-    btn(ui_list, 110, y, 95, 30, "SELECT", set_tool, "SEL", True, grp_tool, state.tool_mode=="SEL")
-    btn(ui_list, 210, y, 95, 30, "FOCUS", set_tool, "FOCUS", True, grp_tool, state.tool_mode=="FOCUS")
-    y += 45
-
     # 4. TABS
     def set_tab(t): state.set_active_tab(t) # Main loop détectera le changement et reconstruira le contenu
     grp_tabs = []

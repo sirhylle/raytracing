@@ -32,12 +32,13 @@ class EditorState:
         self.move_speed = 5.0 
         
         # UI State
-        self.tool_mode = "CAM"
+        self.picking_focus = False
         self.selected_id = -1
         self.gizmo_mode = "MOVE"
         self.active_tab = "SCENE"
         self.typing_mode = False 
         self.needs_ui_rebuild = True
+        self.axis_mode = "LOCAL" # "NONE", "LOCAL", "GLOBAL"
         
         # --- GESTION ACCORDÉONS EXCLUSIFS ---
         # Stocke le nom de la section ouverte pour chaque onglet. None si tout est fermé.
