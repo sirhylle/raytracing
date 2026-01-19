@@ -355,10 +355,17 @@ def run(engine, config, builder):
                         app_state.pitch = max(-1.5, min(1.5, app_state.pitch))
                         app_state.dirty = True
                     
-                    # Panoramique (Molette maintenue)
+                    # LIFT (Clic Molette maintenu) - Vertical Pur
                     if mouse_btns[1]:
-                         dx, dy = event.rel
-                         app_state.cam_pos[1] -= dy * 0.05
+                         _, dy = event.rel # On ignore dx (géré par clavier)
+                         
+                         # Vitesse adaptative :
+                         lift_speed = app_state.move_speed * 0.005
+                         
+                         # dy < 0 quand on monte la souris -> on augmente Y (on monte)
+                         # Le signe '-' inverse le repère écran (Y vers le bas) pour le repère 3D (Y vers le haut)
+                         app_state.cam_pos[1] -= dy * lift_speed
+                         
                          app_state.dirty = True
 
                     # Gizmo / Interaction Objet (Clic Gauche maintenu)
@@ -367,7 +374,18 @@ def run(engine, config, builder):
                         dx, dy = event.rel
                         data = app_state.get_selected_info()
                         if data:
-                            scale_factor = 0.01 * (app_state.focus_dist / 5.0)
+                            # --- CALCUL DE L'ÉCHELLE DYNAMIQUE ---
+                            # 1. Distance réelle entre la caméra et l'objet
+                            obj_pos = np.array(data['pos'])
+                            dist_to_obj = np.linalg.norm(obj_pos - app_state.cam_pos)
+
+                            # 2. Facteur magique
+                            # On veut que le mouvement souris suive le curseur.
+                            # La formule approx est : dist * tan(fov) / hauteur_ecran
+                            # Empiriquement, 0.0015 * distance fonctionne très bien pour un FOV ~40-60
+                            scale_factor = dist_to_obj * 0.0015
+                            #scale_factor = 0.01 * (app_state.focus_dist / 5.0)
+
                             if app_state.gizmo_mode == "MOVE":
                                 flat_yaw = app_state.yaw
                                 fx, fz = math.sin(flat_yaw), math.cos(flat_yaw)
@@ -389,7 +407,8 @@ def run(engine, config, builder):
                     fx = math.sin(app_state.yaw) * math.cos(app_state.pitch)
                     fy = math.sin(app_state.pitch)
                     fz = math.cos(app_state.yaw) * math.cos(app_state.pitch)
-                    app_state.cam_pos += np.array([fx, fy, fz]) * event.y * 1.0
+                    zoom_step = app_state.move_speed * 0.05
+                    app_state.cam_pos += np.array([fx, fy, fz]) * event.y * zoom_step
                     app_state.dirty = True
 
         # Clavier (Déplacements ZQSD/Flèches)

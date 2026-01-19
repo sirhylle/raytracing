@@ -6,10 +6,14 @@ import copy
 import tkinter as tk
 from tkinter import filedialog
 import loader
+import os
+import json
+import copy
 from .ui_core import VIEW_W, VIEW_H
 
 class EditorState:
     def __init__(self, conf, builder):
+        self.conf = conf
         self.builder = builder 
         self.res_scale = 1 
         self.res_auto = False
@@ -24,13 +28,16 @@ class EditorState:
         target = np.array(conf.lookat, dtype=np.float32)
         direction = target - self.cam_pos
         length = np.linalg.norm(direction)
+        # --- ADAPTIVE MOVE SPEED ---
+        # Règle du pouce : traverser la distance initiale en ~1 à 2 secondes.
+        self.move_speed = max(1.0, length * 0.8)
+        #self.move_speed = 5.0 
         direction = direction / length if length > 0 else np.array([0, 0, -1])
         self.pitch = math.asin(np.clip(direction[1], -0.99, 0.99))
         self.yaw = math.atan2(direction[0], direction[2])
         self.vfov = conf.vfov
         self.aperture = conf.aperture
         self.focus_dist = conf.focus_dist
-        self.move_speed = 5.0 
         
         # UI State
         self.picking_focus = False
@@ -306,3 +313,235 @@ class EditorState:
             self.needs_ui_rebuild = True
             self.dirty = True
             print(f"Duplicate: ID {self.selected_id} created.")
+
+# --- SYSTÈME DE SAUVEGARDE / CHARGEMENT ---
+
+    def save_scene(self, filepath):
+        """Sérialise la scène complète en JSON, incluant la config de rendu."""
+        
+        # 1. Calcul du LookAt actuel (depuis yaw/pitch)
+        fx = math.sin(self.yaw) * math.cos(self.pitch)
+        fy = math.sin(self.pitch)
+        fz = math.cos(self.yaw) * math.cos(self.pitch)
+        target = self.cam_pos + np.array([fx, fy, fz])
+
+        # 2. Construction du Dictionnaire
+        data = {
+            "version": "1.1", # On incrémente légèrement
+            
+            # A. Paramètres Globaux (Render, System, Animation) [MIS A JOUR]
+            "render_settings": {
+                # Render
+                "width": self.conf.width,
+                "height": self.conf.height,
+                "spp": self.conf.spp,
+                "depth": self.conf.depth,
+                
+                # System
+                "param_stamp": getattr(self.conf, 'param_stamp', False),
+                "save_raw": getattr(self.conf, 'save_raw', False),
+                
+                # Animation
+                "animate": getattr(self.conf, 'animate', False),
+                "frames": getattr(self.conf, 'frames', 0),
+                "fps": getattr(self.conf, 'fps', 24),
+                "turntable_radius": getattr(self.conf, 'radius', 0.0) # Renommé pour clarté
+            },
+
+            # B. Caméra
+            "camera": {
+                "lookfrom": self.cam_pos.tolist(),
+                "lookat": target.tolist(),
+                "vfov": self.vfov,
+                "aperture": self.aperture,
+                "focus_dist": self.focus_dist
+            },
+
+            # C. Environnement (inchangé)
+            "environment": {
+                "map_path": self.conf.env_map,
+                "light_level": self.env_light_level,
+                "direct_level": self.env_direct_level,
+                "indirect_level": self.env_indirect_level,
+                "rotation": self.env_rotation,
+                "auto_sun": self.sun_enabled,
+                "sun_intensity": self.sun_intensity,
+                "sun_radius": self.sun_radius,
+                "sun_dist": self.sun_dist,
+                "sun_env_level": self.auto_sun_env_level
+            },
+
+            # D. Liste des Objets (inchangé)
+            "objects": []
+        }
+
+        # 3. Remplissage des objets
+        cwd = os.getcwd()
+        for oid, info in self.builder.registry.items():
+            if info['type'] == 'light_sun': continue # Géré par Environment
+
+            obj_data = copy.deepcopy(info)
+            # Chemins relatifs pour les assets
+            if 'asset_name' in obj_data:
+                if os.path.exists(obj_data['asset_name']):
+                    obj_data['asset_name'] = os.path.relpath(obj_data['asset_name'], cwd)
+            
+            data["objects"].append(obj_data)
+
+        # 4. Écriture
+        try:
+            with open(filepath, 'w') as f:
+                json.dump(data, f, indent=4)
+            print(f"[System] Scene saved to {filepath}")
+        except Exception as e:
+            print(f"[System] Save Failed: {e}")
+    
+    def load_scene(self, filepath):
+        """Charge une scène JSON et restaure la config complète."""
+        if not os.path.exists(filepath): return
+
+        try:
+            with open(filepath, 'r') as f:
+                data = json.load(f)
+        except Exception as e:
+            print(f"[System] Load Failed: {e}")
+            return
+
+        print(f"[System] Loading scene: {filepath}...")
+
+        # 1. NETTOYAGE (Clear Scene)
+        ids_to_remove = list(self.builder.registry.keys())
+        for oid in ids_to_remove:
+            self.builder.engine.remove_instance(oid)
+        self.builder.registry.clear()
+        self.selected_id = -1
+        self.sun_id = -1
+
+        # 2. RESTAURATION SETTINGS [MIS A JOUR]
+        if "render_settings" in data:
+            rs = data["render_settings"]
+            
+            # Render
+            self.conf.width = rs.get("width", self.conf.width)
+            self.conf.height = rs.get("height", self.conf.height)
+            self.conf.spp = rs.get("spp", self.conf.spp)
+            self.conf.depth = rs.get("depth", self.conf.depth)
+            
+            # System
+            if "param_stamp" in rs: self.conf.param_stamp = rs["param_stamp"]
+            if "save_raw" in rs: self.conf.save_raw = rs["save_raw"]
+            
+            # Animation
+            if "animate" in rs: self.conf.animate = rs["animate"]
+            if "frames" in rs: self.conf.frames = rs["frames"]
+            if "fps" in rs: self.conf.fps = rs["fps"]
+            if "turntable_radius" in rs: self.conf.radius = rs["turntable_radius"]
+
+            # Mise à jour Aspect Ratio Viewport
+            if self.conf.height > 0:
+                self.target_aspect = self.conf.width / self.conf.height
+
+        # 3. RESTAURATION CAMÉRA (inchangé)
+        cam = data["camera"]
+        self.cam_pos = np.array(cam["lookfrom"], dtype=np.float32)
+        target = np.array(cam["lookat"], dtype=np.float32)
+        direction = target - self.cam_pos
+        length = np.linalg.norm(direction)
+        direction = direction / length if length > 0 else np.array([0, 0, -1])
+        self.pitch = math.asin(np.clip(direction[1], -0.99, 0.99))
+        self.yaw = math.atan2(direction[0], direction[2])
+        
+        self.vfov = cam.get("vfov", 40)
+        self.aperture = cam.get("aperture", 0.0)
+        self.focus_dist = cam.get("focus_dist", 10.0)
+        self.move_speed = max(1.0, length * 0.8)
+
+        # 4. RESTAURATION ENVIRONNEMENT (inchangé)
+        env = data["environment"]
+        self.env_light_level = env.get("light_level", 1.0)
+        self.env_direct_level = env.get("direct_level", 1.0)
+        self.env_indirect_level = env.get("indirect_level", 1.0)
+        self.env_rotation = env.get("rotation", 0.0)
+        self.sun_enabled = env.get("auto_sun", False)
+        self.sun_intensity = env.get("sun_intensity", 50.0)
+        self.sun_radius = env.get("sun_radius", 10.0)
+        self.sun_dist = env.get("sun_dist", 1000.0)
+        self.auto_sun_env_level = env.get("sun_env_level", 1.0)
+        
+        env_map_path = env.get("map_path")
+        if env_map_path:
+             if not os.path.isabs(env_map_path):
+                 env_map_path = os.path.abspath(os.path.join(os.getcwd(), env_map_path))
+             
+             loader.load_environment(
+                 self.builder, env_map_path,
+                 env_light_level=self.env_light_level,
+                 env_direct_level=self.env_direct_level,
+                 env_indirect_level=self.env_indirect_level,
+                 auto_sun=self.sun_enabled,
+                 auto_sun_intensity=self.sun_intensity,
+                 auto_sun_radius=self.sun_radius,
+                 auto_sun_dist=self.sun_dist,
+                 auto_sun_env_level=self.auto_sun_env_level
+             )
+        
+        self.builder.engine.set_env_rotation(self.env_rotation)
+        
+        # Récup ID Soleil
+        for oid, info in self.builder.registry.items():
+            if info['type'] == 'light_sun':
+                self.sun_id = oid
+                p = np.array(info['pos'])
+                d = np.linalg.norm(p)
+                if d > 0: self.sun_initial_dir = p/d
+                break
+
+        # 5. RESTAURATION OBJETS (inchangé)
+        cwd = os.getcwd()
+        for obj in data["objects"]:
+            otype = obj["type"]
+            pos = obj["pos"]
+            rot = obj.get("rot", [0,0,0])
+            scale = obj["scale"]
+            mat = obj.get("mat_type", "lambertian")
+            col = obj.get("color", [0.8, 0.8, 0.8])
+            fuzz = obj.get("fuzz", 0.0)
+            ir = obj.get("ir", 1.5)
+            name = obj.get("name") 
+
+            new_id = -1
+            if otype == "sphere":
+                new_id = self.builder.add_sphere(pos, scale[0], mat, col, fuzz, ir)
+            elif otype == "mesh":
+                asset_name = obj.get("asset_name")
+                # Pas de logique complexe ici, add_mesh_instance gère l'appel moteur
+                new_id = self.builder.add_mesh_instance(asset_name, pos, rot, scale)
+            elif otype == "checker_sphere":
+                c2 = obj.get("color2", [0,0,0])
+                tscale = obj.get("texture_scale", 10.0)
+                new_id = self.builder.add_checker_sphere(pos, scale[0], col, c2, tscale)
+            elif otype == "quad":
+                u = obj.get("u", [1,0,0])
+                v = obj.get("v", [0,1,0])
+                new_id = self.builder.add_quad(pos, u, v, mat, col, fuzz, ir)
+
+            if new_id != -1 and name:
+                self.builder.registry[new_id]['name'] = name
+
+        self.dirty = True
+        self.needs_ui_rebuild = True
+        print("[System] Scene loaded successfully.")
+    
+    def save_scene_dialog(self):
+        """Ouvre le dialogue système pour sauvegarder."""
+        root = tk.Tk(); root.withdraw(); root.attributes('-topmost', True)
+        f = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON Scene", "*.json")], initialdir="./scenes")
+        root.destroy()
+        if f: self.save_scene(f)
+
+    def load_scene_dialog(self):
+        """Ouvre le dialogue système pour charger."""
+        root = tk.Tk(); root.withdraw(); root.attributes('-topmost', True)
+        f = filedialog.askopenfilename(filetypes=[("JSON Scene", "*.json")], initialdir="./scenes")
+        root.destroy()
+        if f: self.load_scene(f)

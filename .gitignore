@@ -28,6 +28,9 @@ oidn/
 # Assets
 assets/
 
+# Scenes
+scenes/
+
 # Env Maps
 env-maps/
 

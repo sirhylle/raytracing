@@ -29,6 +29,19 @@ def build_global_layout(ui_list, state, engine, on_start_render):
     btn(ui_list, 180, y, 60, 20, "Ray", set_mode, 2, True, grp_mode, state.preview_mode==2)
     y += 45
 
+    # --- BARRE DU HAUT : FICHIER ---
+    # On utilise un style plus petit/discret
+    
+    # Boutons placés à gauche
+    bx = 10
+    # On appelle directement state.save_scene_dialog
+    btn(ui_list, bx, y, 60, 24, "SAVE", state.save_scene_dialog, col_ov=(40, 40, 40))
+    bx += 65
+    btn(ui_list, bx, y, 60, 24, "LOAD", state.load_scene_dialog, col_ov=(40, 40, 40))
+    
+    # On décale le reste vers le bas
+    y += 35
+
     # 4. TABS
     def set_tab(t): state.set_active_tab(t) # Main loop détectera le changement et reconstruira le contenu
     grp_tabs = []
