@@ -16,18 +16,17 @@ def build(ui_list, start_y, state, engine):
         nonlocal ys
         is_open = state.is_accordion_open("OBJECT", accord_key)
         
+        def toggle():
+            state.toggle_accordion("OBJECT", accord_key)
+
         # 1. Fond Sombre
-        ui_list.append(HeaderBar(VIEW_W + 5, ys-4, PANEL_W - 10, 26, COL_HEADER))
+        ui_list.append(HeaderBar(VIEW_W + 5, ys-4, PANEL_W - 10, 26, COL_HEADER, callback=toggle))
         
         # 2. Titre
         lbl(ui_list, 15, ys, title, 14, COL_ACCENT)
         
-        # 3. Bouton Toggle (dans la barre)
-        def toggle():
-            state.toggle_accordion("OBJECT", accord_key)
-        
-        txt = "-" if is_open else "+"
-        btn(ui_list, PANEL_W - 35, ys - 2, 24, 22, txt, toggle, col_ov=None)
+        # 3. Bouton Toggle (dans la barre)        
+        lbl(ui_list, PANEL_W - 25, ys-2, "-", 16, COL_TEXT_DIM) if is_open else lbl(ui_list, PANEL_W - 26, ys-1, "+", 16, COL_TEXT_DIM)
         
         ys += 30 
         return is_open
@@ -66,7 +65,7 @@ def build(ui_list, start_y, state, engine):
         # B. Ligne 2 : Actions (Delete, et futur Duplicate)
         
         def duplicate_obj():
-            pass
+            state.duplicate_selection(engine)
             
         # Bouton Duplicate
         btn(ui_list, 10, ys, 300, 28, "DUPLICATE OBJECT", duplicate_obj)
@@ -86,7 +85,7 @@ def build(ui_list, start_y, state, engine):
         # ou on garde pleine largeur pour l'instant. Gardons 300px (full).
         btn(ui_list, 10, ys, 300, 28, "DELETE OBJECT", delete_obj, col_ov=(160, 50, 50))
         
-        ys += 50
+        ys += 40
         ui_list.append(Separator(ys, "ACTIONS"))
         ys += 25
 

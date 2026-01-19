@@ -53,15 +53,14 @@ class SceneBuilder:
         return obj_id
 
     def add_checker_sphere(self, center, radius, c1, c2, scale):
-        c_list = list(center) if isinstance(center, (list, tuple, np.ndarray)) else [center.x(), center.y(), center.z()]
-        v_center = cpp_engine.Vec3(float(c_list[0]), float(c_list[1]), float(c_list[2]))
-        
-        # On prépare les listes pour le registre
-        c1_list = list(c1) if isinstance(c1, (list, tuple, np.ndarray)) else [c1.x(), c1.y(), c1.z()]
-        c2_list = list(c2) if isinstance(c2, (list, tuple, np.ndarray)) else [c2.x(), c2.y(), c2.z()]
-        
-        v_c1 = cpp_engine.Vec3(float(c1_list[0]), float(c1_list[1]), float(c1_list[2]))
-        v_c2 = cpp_engine.Vec3(float(c2_list[0]), float(c2_list[1]), float(c2_list[2]))
+        # Conversion robuste Inputs (List/Tuple/Numpy -> Vec3)
+        def to_v3(v):
+            l = list(v) if isinstance(v, (list, tuple, np.ndarray)) else [v.x(), v.y(), v.z()]
+            return cpp_engine.Vec3(float(l[0]), float(l[1]), float(l[2])), l
+
+        v_center, c_list = to_v3(center)
+        v_c1, c1_list = to_v3(c1)
+        v_c2, c2_list = to_v3(c2)
 
         obj_id = self.engine.add_checker_sphere(v_center, float(radius), v_c1, v_c2, float(scale))
         
@@ -70,27 +69,39 @@ class SceneBuilder:
             'pos': c_list,
             'rot': [0.0, 0.0, 0.0],
             'scale': [radius, radius, radius],
-            # [AJOUT] On fait semblant que c'est un Lambertian de couleur C1
             'mat_type': 'lambertian',
-            'color': c1_list, 
+            'color': c1_list,
+            'color2': c2_list,
+            'texture_scale': float(scale),
             'fuzz': 0.0,
             'ir': 1.5
         }
         return obj_id
 
     def add_quad(self, Q, u, v, mat_type, color, fuzz=0.0, ir=1.5):
-        # 1. Préparation de la couleur (Vec3 pour C++, Liste pour Python)
-        col_list = list(color) if isinstance(color, (list, tuple, np.ndarray)) else [color.x(), color.y(), color.z()]
-        v_color = cpp_engine.Vec3(float(col_list[0]), float(col_list[1]), float(col_list[2]))
+        # 1. Conversion des inputs (List -> Vec3)
+        def to_v3(val):
+            l = list(val) if isinstance(val, (list, tuple, np.ndarray)) else [val.x(), val.y(), val.z()]
+            return cpp_engine.Vec3(float(l[0]), float(l[1]), float(l[2])), l
 
-        # 2. Appel Moteur
-        obj_id = self.engine.add_quad(Q, u, v, mat_type, v_color, float(fuzz), float(ir))
+        v_Q, q_list = to_v3(Q)
+        v_u, u_list = to_v3(u)
+        v_v, v_list = to_v3(v)
+        v_color, col_list = to_v3(color)
+
+        # [CORRECTION] On crée le Quad à l'origine (0,0,0) dans le moteur C++
+        # Ainsi, sa position ne dépendra QUE de la matrice de transformation.
+        origin = cpp_engine.Vec3(0.0, 0.0, 0.0)
         
-        # 3. Enregistrement complet pour l'éditeur
+        # On passe 'origin' au lieu de 'v_Q'
+        obj_id = self.engine.add_quad(origin, v_u, v_v, mat_type, v_color, float(fuzz), float(ir))
+        
+        # 2. On garde la VRAIE position dans le registre (pour le Gizmo)
         self.registry[obj_id] = {
             'type': 'quad',
-            # On utilise le coin Q comme "position" pour le Gizmo
-            'pos': [Q.x(), Q.y(), Q.z()],
+            'pos': q_list, # Le Gizmo affichera cette position
+            'u': u_list,
+            'v': v_list,
             'rot': [0.0, 0.0, 0.0],
             'scale': [1.0, 1.0, 1.0],
             'mat_type': mat_type,
@@ -98,6 +109,18 @@ class SceneBuilder:
             'fuzz': float(fuzz),
             'ir': float(ir)
         }
+        
+        # 3. [CRITIQUE] On applique immédiatement la transformation initiale
+        # On déplace le Quad de (0,0,0) vers sa position Q
+        M = tf.translate(q_list[0], q_list[1], q_list[2])
+        InvM = np.linalg.inv(M)
+        
+        self.engine.update_instance_transform(
+            obj_id, 
+            np.ascontiguousarray(M, dtype=np.float32), 
+            np.ascontiguousarray(InvM, dtype=np.float32)
+        )
+
         return obj_id
 
     def add_invisible_sphere_light(self, center, radius, color, raw_color):

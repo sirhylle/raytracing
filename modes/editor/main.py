@@ -170,6 +170,7 @@ def run(engine, config, builder):
         12: pygame.font.SysFont("Arial", 12),
         13: pygame.font.SysFont("Arial", 13),
         14: pygame.font.SysFont("Arial", 14),
+        16: pygame.font.SysFont("Arial", 16),
         18: pygame.font.SysFont("Arial", 18, bold=True)
     }
     
@@ -299,8 +300,32 @@ def run(engine, config, builder):
                     # CAS 2 : SÉLECTION NORMALE (Par défaut)
                     else:
                         pid = engine.pick_instance_id(vp_rect.width, vp_rect.height, mouse_x_rel, mouse_y_rel)
+
+                        # --- LOGIQUE "STICKY SELECTION" ---
+                        # Objectif : Si on clique sur une superposition contenant l'objet DÉJÀ sélectionné,
+                        # on garde la sélection actuelle (pour pouvoir le bouger).
+
+                        should_switch_selection = True
+                        current_id = app_state.selected_id
                         
-                        if app_state.selected_id != pid:
+                        # Si on a cliqué sur quelque chose (pid) ET qu'on avait déjà une sélection (current_id)
+                        # ET que le moteur nous renvoie un ID différent...
+                        if pid != -1 and current_id != -1 and pid != current_id:
+                            
+                            reg = app_state.builder.registry
+                            # On vérifie que les IDs existent bien dans notre registre Python
+                            if pid in reg and current_id in reg:
+                                pos_new = np.array(reg[pid]['pos'])
+                                pos_cur = np.array(reg[current_id]['pos'])
+
+                                # Si la distance est minime (objets superposés), on assume que l'utilisateur
+                                # voulait attraper l'objet déjà actif (ex: la copie qu'il vient de faire).
+                                if np.linalg.norm(pos_new - pos_cur) < 0.001:
+                                    should_switch_selection = False
+                                    # On "ment" au système en disant qu'on a cliqué sur l'objet courant
+                                    pid = current_id
+
+                        if should_switch_selection and app_state.selected_id != pid:
                             app_state.selected_id = pid
                             app_state.dirty = True
                             app_state.needs_ui_rebuild = True 

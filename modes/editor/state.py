@@ -2,6 +2,7 @@ import numpy as np
 import math
 import transforms as tf
 import cpp_engine
+import copy
 import tkinter as tk
 from tkinter import filedialog
 import loader
@@ -234,3 +235,74 @@ class EditorState:
             engine.update_instance_material(self.sun_id, "invisible_light", cpp_engine.Vec3(r, g, b), 0.0, 1.0)
             
         self.dirty = True
+
+    def duplicate_selection(self, engine):
+        """Duplique l'objet sélectionné en passant par le Builder."""
+        if self.selected_id == -1: return
+
+        # 1. Copie des données sources
+        src_data = self.get_selected_info()
+        if not src_data: return
+        
+        # Deepcopy pour éviter les références partagées
+        data = copy.deepcopy(src_data)
+        
+        # 2. Préparation des arguments communs
+        otype = data['type']
+        pos = data['pos']
+        rot = data.get('rot', [0.0, 0.0, 0.0]) # Le loader stocke ça en degrés
+        scale = data['scale']
+        col = data.get('color', [0.8, 0.8, 0.8])
+        mat = data.get('mat_type', 'lambertian')
+        fuzz = data.get('fuzz', 0.0)
+        ir = data.get('ir', 1.5)
+
+        new_id = -1
+
+        # 3. Appel au Builder (Logique miroir de loader.py)
+        # Le builder va créer l'objet C++ ET remplir le registre pour nous.
+        
+        if otype == 'sphere':
+            # add_sphere(center, radius, mat_type, color, fuzz, ir)
+            # Le loader gère la conversion liste -> Vec3
+            new_id = self.builder.add_sphere(pos, scale[0], mat, col, fuzz, ir)
+
+        elif otype == 'mesh':
+            # add_mesh_instance(mesh_name, pos, rot, scale)
+            # Les Cubes sont gérés ici s'ils sont des meshes
+            name = data.get('name', 'Unknown')
+            new_id = self.builder.add_mesh_instance(name, pos, rot, scale)
+            
+        elif otype == 'light_sun':
+             # add_invisible_sphere_light(center, radius, color, raw_color)
+             raw = data.get('raw_color', col)
+             new_id = self.builder.add_invisible_sphere_light(pos, scale[0], col, raw)
+
+        elif otype == 'checker_sphere':
+            # add_checker_sphere(center, radius, c1, c2, scale)
+            c2 = data.get('color2', [0.0, 0.0, 0.0])
+            tex_scale = data.get('texture_scale', 4.0)
+            new_id = self.builder.add_checker_sphere(pos, scale[0], col, c2, tex_scale)
+
+        elif otype == 'quad':
+            # add_quad(Q, u, v, mat_type, color, fuzz, ir)
+            # Grâce à ta modif, on passe les listes u/v direct !
+            u_vec = data.get('u', [1,0,0])
+            v_vec = data.get('v', [0,1,0])
+            new_id = self.builder.add_quad(pos, u_vec, v_vec, mat, col, fuzz, ir)
+             
+        # 4. Finalisation UX
+        if new_id != -1:
+            # On ne change pas le nom pour l'instant car il sert à retrouver les meshes
+            if 'name' in self.builder.registry[new_id]:
+                pass
+                #self.builder.registry[new_id]['name'] = f"{self.builder.registry[new_id]['name']}_copy"
+
+            # On sélectionne le nouvel objet et on active le mode MOVE
+            self.selected_id = new_id
+            self.gizmo_mode = "MOVE"
+            
+            # On force une mise à jour visuelle
+            self.needs_ui_rebuild = True
+            self.dirty = True
+            print(f"Duplicate: ID {self.selected_id} created.")

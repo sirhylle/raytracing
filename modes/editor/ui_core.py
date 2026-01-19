@@ -296,13 +296,36 @@ class Separator(UIElement):
                 screen.blit(txt, r)
 
 class HeaderBar(UIElement):
-    def __init__(self, x, y, w, h, color):
+    def __init__(self, x, y, w, h, color, callback=None):
         self.rect = pygame.Rect(x, y, w, h)
         self.color = color
+        self.callback = callback # La fonction à appeler au clic
+        self.hover = False       # Pour l'effet visuel
+
+    def handle_event(self, event, state):
+        # Si pas de callback, on se comporte comme un élément passif
+        if not self.callback: return False
+        
+        if event.type == pygame.MOUSEMOTION:
+            self.hover = self.rect.collidepoint(event.pos)
+            # On ne return True que si on veut bloquer l'event pour les autres, 
+            # ici on laisse passer (pas critique)
+            
+        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self.rect.collidepoint(event.pos): # On vérifie le clic
+                self.callback()
+                return True # On capture l'événement
+        return False
         
     def draw(self, screen, fonts):
-        pygame.draw.rect(screen, self.color, self.rect, border_radius=4)
-        # Optionnel : petite bordure
+        # Changement subtil de couleur au survol pour montrer que c'est cliquable
+        if self.hover and self.callback:
+            # On éclaircit très légèrement la couleur (r+10, g+10, b+10)
+            col = (min(255, self.color[0]+10), min(255, self.color[1]+10), min(255, self.color[2]+10))
+        else:
+            col = self.color
+            
+        pygame.draw.rect(screen, col, self.rect, border_radius=4)
         pygame.draw.rect(screen, COL_BORDER, self.rect, 1, border_radius=4)
 
 # ===============================================================================================

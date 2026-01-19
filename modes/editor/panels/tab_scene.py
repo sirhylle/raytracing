@@ -6,18 +6,16 @@ def build(ui_list, start_y, state, engine):
     def draw_header(title, section_name, toggle_switch=None):
         nonlocal ys
         
+        def toggle():
+            state.toggle_accordion("SCENE", section_name)
+
         # Vérifie si CETTE section est celle active dans l'onglet SCENE
         is_open = state.is_accordion_open("SCENE", section_name)
 
-        ui_list.append(HeaderBar(VIEW_W + 5, ys - 4, PANEL_W - 10, 26, COL_HEADER))
+        ui_list.append(HeaderBar(VIEW_W + 5, ys - 4, PANEL_W - 10, 26, COL_HEADER, callback=toggle))
         lbl(ui_list, 15, ys, title, 14, COL_ACCENT)
         
-        def toggle():
-            state.toggle_accordion("SCENE", section_name)
-            # Pas besoin de rappeler build(), la boucle main le fera car l'UI est reconstruite à chaque frame/event
-        
-        txt = "-" if is_open else "+"
-        btn(ui_list, PANEL_W - 35, ys-2, 24, 20, txt, toggle)
+        lbl(ui_list, PANEL_W - 25, ys-2, "-", 16, COL_TEXT_DIM) if is_open else lbl(ui_list, PANEL_W - 26, ys-1, "+", 16, COL_TEXT_DIM)
         
         if toggle_switch:
             sw_txt, sw_cb, sw_active = toggle_switch
