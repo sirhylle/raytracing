@@ -1,51 +1,77 @@
 import pygame
 from ..ui_core import *
 
-def build_global_layout(ui_list, state, engine, on_start_render):
-    """Construit les éléments UI fixes (Header, Tabs, Footer)."""
-    ui_list.clear()
-    y = 10
-
-    # 1. MONITORING
-    lbl(ui_list, 10, y, lambda: f"FPS: --", 14, COL_TEXT_DIM) # Hack: FPS mis à jour par boucle main
-    lbl(ui_list, 100, y, lambda: f"SPP: {state.accum_spp}", 14, COL_TEXT_DIM)
-    y += 25
-
-    # 2. RENDER SETTINGS
-    #lbl(ui_list, 10, y+3, "Mode", 12, COL_TEXT_DIM)
+def build_header(ui_list, state):
+    y = 5 
+    
+    # --- LIGNE 1 : FICHIER (Gauche) + MODES DE VUE (Droite) ---
+    
+    # 1. Fichier
+    b_save = btn(ui_list, 10, y, 50, 22, "SAVE", state.save_scene_dialog, col_ov=(45, 45, 45))
+    b_save.corners = {'tl': 4, 'bl': 4, 'tr': 0, 'br': 0}
+    b_load = btn(ui_list, 60, y, 50, 22, "LOAD", state.load_scene_dialog, col_ov=(45, 45, 45))
+    b_load.corners = {'tl': 0, 'bl': 0, 'tr': 4, 'br': 4}
+    
+    # 2. Modes de Vue (Alignés à droite)
+    # On calcule pour coller au bord droit : (Largeur Panel) - (3 boutons de 55px) - Marge
+    mode_w = 55
+    start_x = PANEL_W - (3 * mode_w) - 10
+    
     def set_mode(m): state.preview_mode = m; state.dirty = True
     grp_mode = []
-    btn(ui_list, 10, y, 60, 20, "Normals", set_mode, 0, True, grp_mode, state.preview_mode==0)
-    btn(ui_list, 75, y, 60, 20, "Clay", set_mode, 1, True, grp_mode, state.preview_mode==1)
-    btn(ui_list, 140, y, 60, 20, "Ray", set_mode, 2, True, grp_mode, state.preview_mode==2)
-    y += 45
-
-    # --- BARRE DU HAUT : FICHIER ---
-    # On utilise un style plus petit/discret
     
-    # Boutons placés à gauche
-    bx = 10
-    # On appelle directement state.save_scene_dialog
-    btn(ui_list, bx, y, 60, 24, "SAVE", state.save_scene_dialog, col_ov=(40, 40, 40))
-    bx += 65
-    btn(ui_list, bx, y, 60, 24, "LOAD", state.load_scene_dialog, col_ov=(40, 40, 40))
-    y += 35
-
-    # 4. TABS
-    def set_tab(t): state.set_active_tab(t) # Main loop détectera le changement et reconstruira le contenu
-    grp_tabs = []
-    tab_w = 100
-    
-    # SCENE
-    b1 = btn(ui_list, 10, y, tab_w, 28, "SCENE", set_tab, "SCENE", True, grp_tabs, state.active_tab=="SCENE", COL_TAB_INA)
+    b1 = btn(ui_list, start_x, y, mode_w, 22, "Norm", set_mode, 0, True, grp_mode, state.preview_mode==0)
     b1.corners = {'tl': 4, 'bl': 4, 'tr': 0, 'br': 0}
     
-    # OBJECT
-    b2 = btn(ui_list, 10 + tab_w, y, tab_w, 28, "OBJECT", set_tab, "OBJECT", True, grp_tabs, state.active_tab=="OBJECT", COL_TAB_INA)
-    b2.corners = {} # Carré
+    b2 = btn(ui_list, start_x + mode_w, y, mode_w, 22, "Clay", set_mode, 1, True, grp_mode, state.preview_mode==1)
+    b2.corners = {} 
     
-    # RENDER
-    b3 = btn(ui_list, 10 + 2*tab_w, y, tab_w, 28, "RENDER", set_tab, "RENDER", True, grp_tabs, state.active_tab=="RENDER", COL_TAB_INA)
+    b3 = btn(ui_list, start_x + 2*mode_w, y, mode_w, 22, "Ray", set_mode, 2, True, grp_mode, state.preview_mode==2)
     b3.corners = {'tl': 0, 'bl': 0, 'tr': 4, 'br': 4}
+
+    ui_list.append(Separator(y + 15, color=(65, 65, 65)))
     
-    return y + 40 # Retourne la position Y de départ pour le contenu des onglets
+    y += 60
+
+    # --- LIGNE 2 : ONGLETS (Toute largeur) ---
+    def set_tab(t): state.set_active_tab(t)
+    grp_tabs = []
+    
+    tabs = ["SCENE", "OBJECT", "CREATE", "RENDER"]
+    tab_w = (PANEL_W - 20) / len(tabs) 
+    curr_x = 10
+    
+    for i, t_name in enumerate(tabs):
+        corners = {}
+        if i == 0: corners = {'tl': 4, 'bl': 0, 'tr': 0, 'br': 0}
+        elif i == len(tabs)-1: corners = {'tl': 0, 'bl': 0, 'tr': 4, 'br': 0}
+        
+        w = tab_w if i < len(tabs)-1 else (PANEL_W - 20) - (int(tab_w) * (len(tabs)-1))
+        
+        b = btn(ui_list, curr_x, y, int(w), 26, t_name, set_tab, t_name, True, grp_tabs, state.active_tab==t_name, COL_TAB_INA)
+        b.corners = corners
+        curr_x += int(w)
+
+    return y + 35 
+
+def draw_footer_status(screen, fonts, state):
+    """Footer technique : FPS | SPP | Résolution"""
+    h = 24 
+    y = WIN_H - h
+    
+    # Fond
+    pygame.draw.rect(screen, (25, 25, 25), (VIEW_W, y, PANEL_W, h))
+    pygame.draw.line(screen, (60, 60, 60), (VIEW_W, y), (WIN_W, y))
+    
+    f = fonts.get(12)
+    col = (160, 160, 160)
+    
+    # 1. FPS (Gauche) - On lit la valeur stockée dans state
+    fps_txt = f"FPS: {int(state.current_fps):.0f}"
+    screen.blit(f.render(fps_txt, True, col), (VIEW_W + 10, y + 5))
+    
+    # 2. Infos Rendu (Droite)
+    info_str = f"SPP: {state.accum_spp}   |   {state.conf.width}x{state.conf.height}"
+    i_surf = f.render(info_str, True, col)
+    i_rect = i_surf.get_rect(topright=(WIN_W - 10, y + 5))
+    screen.blit(i_surf, i_rect)

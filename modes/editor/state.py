@@ -15,7 +15,8 @@ class EditorState:
     def __init__(self, conf, builder):
         self.conf = conf
         self.builder = builder 
-        self.res_scale = 1 
+        self.res_scale = 1
+        self.current_fps = 0.0
         self.res_auto = False
         self.preview_mode = 0 
 
@@ -52,7 +53,9 @@ class EditorState:
         # Stocke le nom de la section ouverte pour chaque onglet. None si tout est fermé.
         self.accordions = {
             "SCENE": "CAMERA", # Par défaut : Camera ouvert
-            "OBJECT": None     # Par défaut : Tout fermé
+            "OBJECT": None,     # Par défaut : Tout fermé
+            "CREATE": "PRIMITIVES", # Par défaut : Primitives ouvert
+            "RENDER": "OUTPUT" # On ouvre "Output" par défaut
         }
 
         # Rendering State
@@ -330,7 +333,65 @@ class EditorState:
             self.dirty = True
             print(f"Duplicate: ID {self.selected_id} created.")
 
-# --- SYSTÈME DE SAUVEGARDE / CHARGEMENT ---
+    def add_primitive(self, type_key):
+        """Crée un objet devant la caméra."""
+        
+        # 1. Calcul de la position de spawn (devant la caméra)
+        # On recrée le vecteur forward
+        fx = math.sin(self.yaw) * math.cos(self.pitch)
+        fy = math.sin(self.pitch)
+        fz = math.cos(self.yaw) * math.cos(self.pitch)
+        fwd = np.array([fx, fy, fz])
+        
+        spawn_pos = self.cam_pos + (fwd * 5.0) # 5 unités devant
+        spawn_pos_list = spawn_pos.tolist()
+
+        new_id = -1
+        
+        # 2. Création selon le type
+        if type_key == "sphere":
+            new_id = self.builder.add_sphere(spawn_pos_list, 1.0, "lambertian", [0.8, 0.8, 0.8])
+            
+        elif type_key == "cube":
+             # Le cube n'est pas une primitive native C++, on utilise add_mesh_instance 
+             # (Il faut que 'cube.obj' existe dans assets/ ou soit généré procéduralement... 
+             # Pour l'instant, disons qu'on fait une sphère carrée si tu n'as pas de cube loaded :D 
+             # Ou mieux : On triche en ajoutant un mesh cube par défaut dans le moteur C++ ?)
+             # SI tu n'as pas de cube.obj, utilise une sphere pour tester.
+             pass 
+
+        elif type_key == "light_sphere":
+            new_id = self.builder.add_invisible_sphere_light(spawn_pos_list, 1.0, [10,10,10], [10,10,10])
+            
+        elif type_key == "quad_floor":
+             # Un quad plat au sol (XZ)
+             center = spawn_pos_list
+             y = center[1]
+             s = 5.0 # taille
+             Q = [center[0]-s, y, center[2]-s]
+             u = [2*s, 0, 0]
+             v = [0, 0, 2*s]
+             new_id = self.builder.add_quad(Q, u, v, "lambertian", [0.5, 0.5, 0.5])
+
+        elif type_key == "quad_wall":
+             # Un quad vertical (XY)
+             center = spawn_pos_list
+             z = center[2]
+             s = 5.0
+             Q = [center[0]-s, center[1]-s, z]
+             u = [2*s, 0, 0]
+             v = [0, 2*s, 0]
+             new_id = self.builder.add_quad(Q, u, v, "lambertian", [0.8, 0.2, 0.2])
+
+        # 3. Sélection automatique
+        if new_id != -1:
+            self.selected_id = new_id
+            self.gizmo_mode = "MOVE"
+            self.set_active_tab("OBJECT") # On switch sur l'onglet objet pour l'éditer direct
+            self.dirty = True
+            self.needs_ui_rebuild = True
+            
+    # --- SYSTÈME DE SAUVEGARDE / CHARGEMENT ---
 
     def save_scene(self, filepath):
         """Sérialise la scène complète en JSON, incluant la config de rendu."""

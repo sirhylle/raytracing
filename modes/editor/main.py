@@ -198,12 +198,14 @@ def run(engine, config, builder):
     # [HELPER] Fonction de reconstruction UI
     def rebuild_ui():
         ui_list.clear()
-        content_start_y = panels.layout_global.build_global_layout(ui_list, app_state, engine, start_render)
+        content_start_y = panels.layout_global.build_header(ui_list, app_state)
         
         if app_state.active_tab == "SCENE":
             panels.tab_scene.build(ui_list, content_start_y+2, app_state, engine)
         elif app_state.active_tab == "OBJECT":
             panels.tab_object.build(ui_list, content_start_y+2, app_state, engine)
+        elif app_state.active_tab == "CREATE":
+            panels.tab_create.build(ui_list, content_start_y+2, app_state, engine)
         elif app_state.active_tab == "RENDER":
             panels.tab_render.build(ui_list, content_start_y+2, app_state, engine, start_render)
         
@@ -508,8 +510,9 @@ def run(engine, config, builder):
             # On met à jour le FPS seulement quand on calcule une image
             # On calcule le FPS basé sur le temps de rendu (Render FPS) et non le Loop FPS
             real_fps = 1.0 / max(0.001, last_render_dt)
-            if len(ui_list) > 0 and isinstance(ui_list[0], ui_core.Label):
-                ui_list[0].text = f"FPS: {real_fps:.0f}"
+            app_state.current_fps = real_fps
+            #if len(ui_list) > 0 and isinstance(ui_list[0], ui_core.Label):
+            #    ui_list[0].text = f"FPS: {real_fps:.0f}"
             
             # Ajustement auto batch size pour le Raytracing
             if app_state.preview_mode == 2 and last_render_dt > 0.001:
@@ -546,7 +549,7 @@ def run(engine, config, builder):
         pygame.draw.rect(screen, ui_core.COL_PANEL, (ui_core.VIEW_W, 0, ui_core.PANEL_W, ui_core.WIN_H))
 
         # 2. Header (Haut)
-        header_height = 144
+        header_height = 91
         pygame.draw.rect(screen, ui_core.COL_HEADER, (ui_core.VIEW_W, 0, ui_core.PANEL_W, header_height))
         pygame.draw.line(screen, ui_core.COL_BORDER, (ui_core.VIEW_W, 0), (ui_core.VIEW_W, ui_core.WIN_H))
         #pygame.draw.line(screen, ui_core.COL_BORDER, (ui_core.VIEW_W, header_height), (ui_core.WIN_W, header_height))
@@ -561,6 +564,8 @@ def run(engine, config, builder):
 
         
         for w in ui_list: w.draw(screen, fonts)
+
+        panels.layout_global.draw_footer_status(screen, fonts, app_state)
         
         pygame.display.flip()
 

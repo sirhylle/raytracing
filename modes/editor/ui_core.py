@@ -55,8 +55,20 @@ class Button(UIElement):
 
     def draw(self, screen, fonts):
         if self.color_override:
-            col = self.color_override if not self.active else COL_BTN_ACT
+            # Cas 1 : Couleur forcée (Save/Load, Start Render))
+            if self.active:
+                # Si cliqué, on garde le bleu standard pour le feedback d'activation
+                # (Ou on pourrait assombrir l'override, mais le bleu est plus clair pour l'utilisateur)
+                col = COL_BTN_ACT 
+            elif self.hover and self.enabled:
+                # On éclaircit mathématiquement la couleur forcée (+20 sur R, G, B)
+                c = self.color_override
+                col = (min(255, c[0] + 20), min(255, c[1] + 20), min(255, c[2] + 20))
+            else:
+                # Couleur de base forcée
+                col = self.color_override
         else:
+            # Cas 2 : Comportement Standard (Gris par défaut du thème)
             col = COL_BTN_DIS if not self.enabled else (COL_BTN_ACT if self.active else (COL_BTN_HOV if self.hover else COL_BTN))
         
         col_border_final = self.border_override if self.border_override else COL_BORDER
@@ -127,7 +139,7 @@ class Label(UIElement):
         screen.blit(surf, draw_pos)
 
 class NumberField(UIElement):
-    def __init__(self, x, y, w, h, get_cb, set_cb, fmt="{:.2f}"):
+    def __init__(self, x, y, w, h, get_cb, set_cb, fmt="{:.2f}", align="center"):
         self.rect = pygame.Rect(x, y, w, h)
         self.get_cb = get_cb 
         self.set_cb = set_cb 
@@ -136,6 +148,7 @@ class NumberField(UIElement):
         self.text_buffer = ""
         self.enabled = True
         self.cursor_pos = 0
+        self.align = align
 
     def draw(self, screen, fonts):
         if not self.enabled: return 
@@ -146,8 +159,8 @@ class NumberField(UIElement):
         display_txt = self.text_buffer if self.active else self.fmt.format(self.get_cb())
         f = fonts.get(14)
         surf = f.render(display_txt, True, COL_TEXT)
-        txt_x = self.rect.x + 5
-        txt_y = self.rect.centery - surf.get_height() // 2
+        txt_x = self.rect.x + (self.rect.w - surf.get_width()) // 2 if self.align == "center" else self.rect.x + 5
+        txt_y = self.rect.centery - (surf.get_height() // 2) - 1
         screen.blit(surf, (txt_x, txt_y))
         
         if self.active and time.time() % 1 > 0.5:
@@ -278,14 +291,15 @@ class Slider(UIElement):
         screen.blit(surf_main, r_txt)
 
 class Separator(UIElement):
-        def __init__(self, y, text=None):
+        def __init__(self, y, text=None, color=None):
             self.rect = pygame.Rect(VIEW_W, y, PANEL_W, 20)
             self.text = text
+            self.color = color if color else COL_BORDER
 
         def draw(self, screen, fonts):
             # Ligne grise
             line_y = self.rect.centery
-            pygame.draw.line(screen, COL_BORDER, (self.rect.x + 10, line_y), (self.rect.right - 10, line_y))
+            pygame.draw.line(screen, self.color, (self.rect.x + 10, line_y), (self.rect.right - 10, line_y))
             
             # Si texte, on l'affiche avec un fond pour "couper" la ligne
             if self.text:
@@ -349,8 +363,8 @@ def btn(target_list, x, y, w, h, txt, cb, data=None, toggle=False, grp=None, act
     target_list.append(b)
     return b
 
-def lbl(target_list, x, y, txt, sz=16, col=COL_TEXT):
+def lbl(target_list, x, y, txt, sz=16, col=COL_TEXT, align="left", width=0):
     """Crée un label avec l'offset VIEW_W et l'ajoute à la liste."""
-    l = Label(VIEW_W + x, y, txt, sz, col)
+    l = Label(VIEW_W + x, y, txt, sz, col, align=align, width=width)
     target_list.append(l)
     return l
