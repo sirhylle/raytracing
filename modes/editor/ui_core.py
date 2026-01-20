@@ -83,6 +83,7 @@ class Button(UIElement):
         f = fonts.get(13)
         txt_surf = f.render(self.text, True, txt_col)
         txt_rect = txt_surf.get_rect(center=self.rect.center)
+        txt_rect.centery -= 1
         screen.blit(txt_surf, txt_rect)
 
     def handle_event(self, event, state):
@@ -126,10 +127,11 @@ class Label(UIElement):
         screen.blit(surf, draw_pos)
 
 class NumberField(UIElement):
-    def __init__(self, x, y, w, h, get_cb, set_cb):
+    def __init__(self, x, y, w, h, get_cb, set_cb, fmt="{:.2f}"):
         self.rect = pygame.Rect(x, y, w, h)
         self.get_cb = get_cb 
         self.set_cb = set_cb 
+        self.fmt = fmt
         self.active = False
         self.text_buffer = ""
         self.enabled = True
@@ -141,7 +143,7 @@ class NumberField(UIElement):
         pygame.draw.rect(screen, col, self.rect, border_radius=4)
         pygame.draw.rect(screen, COL_BORDER, self.rect, 1, border_radius=4)
         
-        display_txt = self.text_buffer if self.active else f"{self.get_cb():.2f}"
+        display_txt = self.text_buffer if self.active else self.fmt.format(self.get_cb())
         f = fonts.get(14)
         surf = f.render(display_txt, True, COL_TEXT)
         txt_x = self.rect.x + 5

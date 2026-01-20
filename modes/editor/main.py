@@ -176,10 +176,6 @@ def run(engine, config, builder):
     
     app_state = state.EditorState(config, builder)
     app_state.calculate_viewport(ui_core.VIEW_W, ui_core.WIN_H)
-
-    # On convertit le tuple viewport en Rect Pygame pour être tranquille
-    vx, vy, vw, vh = app_state.viewport_rect
-    vp_rect = pygame.Rect(vx, vy, vw, vh)
     
     # Threading config
     render_threads = config.threads if config.threads > 0 else max(1, multiprocessing.cpu_count() - 2)
@@ -208,6 +204,8 @@ def run(engine, config, builder):
             panels.tab_scene.build(ui_list, content_start_y+2, app_state, engine)
         elif app_state.active_tab == "OBJECT":
             panels.tab_object.build(ui_list, content_start_y+2, app_state, engine)
+        elif app_state.active_tab == "RENDER":
+            panels.tab_render.build(ui_list, content_start_y+2, app_state, engine, start_render)
         
         app_state.needs_ui_rebuild = False
 
@@ -219,6 +217,9 @@ def run(engine, config, builder):
     last_render_dt = 0.03 # Init var
 
     while running:
+        vx, vy, vw, vh = app_state.viewport_rect
+        vp_rect = pygame.Rect(vx, vy, vw, vh)
+
         clock.tick()
         now = time.time()
         dt = now - last_time
@@ -443,6 +444,9 @@ def run(engine, config, builder):
                               app_state.vfov, app_state.target_aspect, app_state.aperture, app_state.focus_dist)
             if hasattr(engine, 'reset_accumulation'): engine.reset_accumulation()
             app_state.accum_spp = 0; app_state.dirty = False
+        
+        vx, vy, vw, vh = app_state.viewport_rect
+        vp_rect = pygame.Rect(vx, vy, vw, vh)
 
         # 4. RENDER & DRAW
         screen.fill((0,0,0))
@@ -542,18 +546,18 @@ def run(engine, config, builder):
         pygame.draw.rect(screen, ui_core.COL_PANEL, (ui_core.VIEW_W, 0, ui_core.PANEL_W, ui_core.WIN_H))
 
         # 2. Header (Haut)
-        header_height = 136
+        header_height = 144
         pygame.draw.rect(screen, ui_core.COL_HEADER, (ui_core.VIEW_W, 0, ui_core.PANEL_W, header_height))
         pygame.draw.line(screen, ui_core.COL_BORDER, (ui_core.VIEW_W, 0), (ui_core.VIEW_W, ui_core.WIN_H))
         #pygame.draw.line(screen, ui_core.COL_BORDER, (ui_core.VIEW_W, header_height), (ui_core.WIN_W, header_height))
 
         # 3. Footer (Bas)
-        footer_h = 50 # Hauteur fixe pour le footer
-        footer_y = ui_core.WIN_H - footer_h
+        #footer_h = 50 # Hauteur fixe pour le footer
+        #footer_y = ui_core.WIN_H - footer_h
         # Fond sombre
-        pygame.draw.rect(screen, ui_core.COL_HEADER, (ui_core.VIEW_W, footer_y, ui_core.PANEL_W, footer_h))
+        #pygame.draw.rect(screen, ui_core.COL_HEADER, (ui_core.VIEW_W, footer_y, ui_core.PANEL_W, footer_h))
         # Ligne de séparation (Bordure du haut du footer)
-        pygame.draw.line(screen, ui_core.COL_BORDER, (ui_core.VIEW_W, footer_y), (ui_core.WIN_W, footer_y))
+        #pygame.draw.line(screen, ui_core.COL_BORDER, (ui_core.VIEW_W, footer_y), (ui_core.WIN_W, footer_y))
 
         
         for w in ui_list: w.draw(screen, fonts)

@@ -139,6 +139,22 @@ class EditorState:
         # Ici on suppose que le caller (main.py) utilisera ces valeurs.
         self.viewport_rect = (x, y, w, h)
 
+    def update_resolution(self, w, h):
+        """Change la résolution et recalcule le viewport dynamique."""
+        self.conf.width = int(w)
+        self.conf.height = int(h)
+        self.target_aspect = self.conf.width / self.conf.height
+        
+        # On recalcule le rectangle d'affichage (Letterboxing)
+        # Note: On a besoin de VIEW_W/H. Ils sont importés depuis ui_core.
+        self.calculate_viewport(VIEW_W, VIEW_H)
+        
+        # On force la mise à jour caméra (pour le nouvel aspect ratio)
+        self.dirty = True
+        self.accum_spp = 0
+        if hasattr(self.builder.engine, 'reset_accumulation'): 
+            self.builder.engine.reset_accumulation()
+
     def update_transform(self, engine):
         data = self.get_selected_info()
         if not data: return
