@@ -61,7 +61,7 @@ class CornellBox(Scene):
             vfov=40.0,
             aperture=0.0,
             focus_dist=10.0,
-            env_map="env-dock-sun.hdr",
+            env_map="",
             env_light_level=5.0,
             env_direct_level=0.5,
             env_indirect_level=0.5
