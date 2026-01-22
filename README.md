@@ -47,7 +47,12 @@ Launch the editor to explore scenes, compose shots, and tweak focus.
 uv run main.py --editor --scene showcase
 ```
 
-![Editor Interface](Screenshot%20Editor%20Showcase.jpg)
+![Editor Interface](Screenshot%20Editor%20Cornell%20Ray.jpg)
+*Main editor interface with "Live Raw Raytracing" preview mode*
+
+| | | |
+|:---:|:---:|:---:|
+| !["Normals" preview mode](Screenshot%20Editor%20Showcase%20Norms.jpg) | ![Materials Edition](Screenshot%20Editor%20Showcase%20Ray.jpg) | ![Object Manipulation in "Clay" preview mode](Screenshot%20Editor%20Showcase%20Clay.jpg) |
 
 ### Controls
 
