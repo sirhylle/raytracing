@@ -1,3 +1,19 @@
+"""
+================================================================================================
+MODULE: INTERACTIVE VIEWER (LEGACY V2)
+================================================================================================
+
+DESCRIPTION:
+  A PyGame-based interactive editor for the Ray Tracer.
+  - Progressive Rendering: Shows a noisy image that refines over time.
+  - Gizmos: Allows selecting and moving objects using transforms.
+  - Properties Panel: Edit material, color, and object parameters.
+  - Environment: Real-time update of the HDRI and Sun.
+
+  This version implements an immediate-mode GUI style for buttons/sliders.
+
+================================================================================================
+"""
 import pygame
 import numpy as np
 import time
@@ -394,20 +410,27 @@ class EditorState:
 # ===============================================================================================
 
 def calculate_viewport(state):
-    """Calcule le rectangle d'affichage pour respecter le ratio cible."""
+    """
+    Calculates the display rectangle to maintain the correct aspect ratio (Letterboxing).
+    
+    Logic:
+    - If the Window is WIDER than the Image aspect -> Vertical Bars (Pillarbox).
+    - If the Window is TALLER than the Image aspect -> Horizontal Bars (Letterbox).
+    
+    This ensures the render is never stretched/distorted.
+    """
     window_ratio = VIEW_W / VIEW_H
     target_ratio = state.target_aspect
     
     if window_ratio > target_ratio:
-        # La fenêtre est plus large que l'image -> Bandes verticales (Pillarbox)
-        # (Rare avec 800x600 et du 16:9, mais possible si image verticale)
+        # Window is wider -> Pillarbox (Black bars on left/right)
         h = VIEW_H
         w = int(h * target_ratio)
         x = (VIEW_W - w) // 2
         y = 0
     else:
-        # La fenêtre est plus haute que l'image -> Bandes horizontales (Letterbox)
-        # Cas classique 16:9 dans 4:3
+        # Window is taller -> Letterbox (Black bars on top/bottom)
+        # Use case: 16:9 render on a 4:3 screen
         w = VIEW_W
         h = int(w / target_ratio)
         x = 0

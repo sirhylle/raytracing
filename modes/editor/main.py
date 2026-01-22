@@ -1,3 +1,26 @@
+"""
+================================================================================================
+MODULE: EDITOR ENTRY POINT
+================================================================================================
+
+DESCRIPTION:
+  This is the main loop for the "Modern Editor" (V3).
+  It orchestrates the PyGame window, the Renderer Engine, and the UI layout.
+
+ARCHITECTURE:
+  - AppState : Central source of truth (See state.py).
+  - UI Core  : Immediate/Retained hybrid UI system (See ui_core.py).
+  - Panels   : Modular UI layouts (See panels/ directory).
+  - Engine   : The C++ path tracer instance.
+  
+  The loop follows a standard Game Loop pattern:
+  1. Handle Inputs (Mouse/Keyboard).
+  2. Update State (Camera, Selection, Gizmos).
+  3. Render Scene (Progressive Raytracing or Preview).
+  4. Draw UI (Overlay).
+
+================================================================================================
+"""
 import pygame
 import time
 import math

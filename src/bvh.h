@@ -1,5 +1,32 @@
 #pragma once
 
+// ===============================================================================================
+// MODULE: ACCELERATION STRUCTURE (BVH)
+// ===============================================================================================
+//
+// DESCRIPTION:
+//   Implements volume hierarchy (BVH) to accelerate ray-scene intersections.
+//   Instead of testing a ray against every object (O(N)), we test against a
+//   tree of bounding boxes. If a ray misses a node's box, we can skip all its
+//   children (O(log N)).
+//
+// ALGORITHM:
+//   - Construction (Top-Down):
+//     1. Compute the bounding box of the current set of objects.
+//     2. Choose a splitting axis (e.g., the longest dimension of the box).
+//     3. Sort objects along this axis.
+//     4. Split into two halves (Left/Right) and recurse.
+//
+//   - Traversal:
+//     1. Check intersection with the node's AABB. If miss, return false.
+//     2. If hit, recurse into Left child.
+//     3. Then recurse into Right child, but OPTIMIZED: pass the hit distance
+//     't' from the left
+//        child as the new 't_max' for the right child. This culls objects that
+//        are further away.
+//
+// ===============================================================================================
+
 #include "common.h"
 #include "geometry.h" // Nécessaire car BVHNode prend une HittableList en entrée
 #include "hittable.h"
@@ -39,12 +66,15 @@ private:
   void build(std::vector<std::shared_ptr<Hittable>> &objects, size_t start,
              size_t end) {
 
-    // -- Choix de l'axe de découpe --
-    // On calcule la boite englobante de TOUS les objets de cette section
-    // pour voir quel axe est le plus étiré (X, Y ou Z).
-    // C'est une heuristique simple mais efficace (SAH serait mieux mais plus
-    // complexe).
+    // -------------------------------------------------------------------------------------------
+    // ALGORITHM: BVH CONSTRUCTION (Splitting Strategy)
+    // -------------------------------------------------------------------------------------------
+    // We determine the best axis to split the objects (X, Y, or Z).
+    // A simple heuristic is used here: pick the axis where the bounding box is
+    // the largest.
+    // -------------------------------------------------------------------------------------------
 
+    // 1. Compute total bounding box of the span
     AABB total_box;
     bool first = true;
     for (size_t i = start; i < end; ++i) {
@@ -55,6 +85,7 @@ private:
       }
     }
 
+    // 2. Choose splitting axis (Longest Extent)
     Vec3 extent = total_box.max - total_box.min;
     int axis = 0; // Par défaut X
     if (extent.y() > extent.x() && extent.y() > extent.z())
@@ -104,21 +135,24 @@ private:
     box = surrounding_box(box_left, box_right);
   }
 
-  // TRAVERSÉE (L'étape critique pour la performance)
+  // ---------------------------------------------------------------------------------------------
+  // ALGORITHM: TRAVERSAL
+  // ---------------------------------------------------------------------------------------------
   virtual bool hit(const Ray &r, Real t_min, Real t_max,
                    HitRecord &rec) const override {
-    // 1. Test rapide AABB : Si on rate la boite, on rate tout ce qu'il y a
-    // dedans.
+    // 1. Box Test: If the ray misses the bounding box, we can skip the entire
+    // subtree.
     if (!box.hit(r, t_min, t_max))
       return false;
 
-    // 2. Si on touche la boite, on doit vérifier les enfants.
-    // On teste le gauche.
+    // 2. Check Children
+    // We recursively check the Left child.
     bool hit_left = left->hit(r, t_min, t_max, rec);
 
-    // On teste le droit.
-    // Optimisation : Si on a touché à gauche à une distance T, on ne cherche à
-    // droite QUE ce qui est plus proche que T (hit_left ? rec.t : t_max).
+    // Then check Right child.
+    // OPTIMIZATION: If we hit the left child at distance 'rec.t', we clamp
+    // 't_max' for the right child search. We only care about objects CLOSER
+    // than the one we just found.
     bool hit_right = right->hit(r, t_min, hit_left ? rec.t : t_max, rec);
 
     return hit_left || hit_right;

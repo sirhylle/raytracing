@@ -1,3 +1,24 @@
+"""
+================================================================================================
+MODULE: EDITOR STATE
+================================================================================================
+
+DESCRIPTION:
+  Holds the entire state of the Editor application.
+  This class acts as a central repository for:
+  - Camera parameters (Pos, Yaw, Pitch).
+  - Selection state (Which object is selected?).
+  - UI state (Which tab is open?).
+  - Rendering state (Resolution, SPP progress).
+  - Interaction state (Gizmo modes, Typing in fields).
+
+  It also provides helper methods for:
+  - Viewport calculations (Aspect Ratio handling).
+  - Serializing/Deserializing the scene (Save/Load JSON).
+  - Syncing Python state with the C++ Engine (update_transform, etc.).
+
+================================================================================================
+"""
 import numpy as np
 import math
 import transforms as tf

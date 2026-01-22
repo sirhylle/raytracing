@@ -1,4 +1,25 @@
+"""
+================================================================================================
+MODULE: TRANSFORMS
+================================================================================================
+
+DESCRIPTION:
+  Provides utility functions to generate 4x4 homogenous transformation matrices.
+  These matrices are compatible with OpenGL-style conventions (Column Vectors).
+  
+  Usage:
+  - Transformations are applied by matrix multiplication: M @ Vector
+  - Composition order matters: T @ R @ S @ Vector (Scale, then Rotate, then Translate)
+
+KEY FUNCTIONS:
+  - translate(x, y, z) : Move object in 3D space.
+  - scale(x, y, z)     : Resize object.
+  - rotate_X/Y/Z       : Rotate around cardinal axes (Euler angles in degrees).
+
+================================================================================================
+"""
 import numpy as np
+
 import math
 
 def translate(x, y, z):

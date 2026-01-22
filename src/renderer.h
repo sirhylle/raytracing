@@ -1,5 +1,28 @@
 #pragma once
 
+// ===============================================================================================
+// MODULE: PATH TRACING CORE
+// ===============================================================================================
+//
+// DESCRIPTION:
+//   This is the heart of the rendering engine. It implements a Unidirectional
+//   Path Tracer with Next Event Estimation (NEE).
+//
+//   It solves the Rendering Equation (Kajiya 1986) by integrating light
+//   arriving at the camera through recursive Monte Carlo sampling.
+//
+// ALGORITHM OVERVIEW:
+//   1. ray_color(): Recursive function that traces the path of a photon
+//   backwards from the eye.
+//      L_o = L_e + Integral( f_r * L_i * cos(theta) )
+//
+//   2. Next Event Estimation (sample_direct_light):
+//      Instead of waiting for a random bounce to hit a light source (which is
+//      rare), we explicitly sample light sources at every bounce (except for
+//      specular surfaces). This significantly reduces noise (variance).
+//
+// ===============================================================================================
+
 #include "common.h"
 #include "environment.h" // Pour EnvironmentMap
 #include "geometry.h"    // Pour HittableList
@@ -10,7 +33,16 @@
 // MOTEUR DE RENDU (Path Tracing Core)
 // ===============================================================================================
 
-// Fonction helper pour échantillonner l'éclairage direct
+// -----------------------------------------------------------------------------------------------
+// ALGORITHM: DIRECT LIGHT SAMPLING (Next Event Estimation)
+// -----------------------------------------------------------------------------------------------
+// Calculates the direct illumination contribution at a point 'rec.p' from all
+// light sources.
+// - It samples either the Environment Map or Geometric Lights (Area Lights).
+// - It casts a Shadow Ray to check visibility.
+// - It applies Multiple Importance Sampling (MIS) heuristics (simplified here
+// as PDF balancing).
+// -----------------------------------------------------------------------------------------------
 Vec3 sample_direct_light(const Ray &r, const HitRecord &rec,
                          const ScatterRecord &srec, const Hittable &world,
                          const HittableList &lights,
@@ -168,16 +200,28 @@ Vec3 sample_direct_light(const Ray &r, const HitRecord &rec,
   return direct_light;
 }
 
-// Fonction récursive principale qui calcule la couleur d'un rayon
+// -----------------------------------------------------------------------------------------------
+// ALGORITHM: PATH TRACING RECURSION
+// -----------------------------------------------------------------------------------------------
+// Calculates the radiance along a ray.
+//
+// Steps:
+// 1. Intersection: Find the closest object hit.
+// 2. Emission: If the object emits light (and we are allowed to see it), add
+// it.
+// 3. Scattering: Use the Material BSDF to generate a new ray direction.
+// 4. Direct Light: Compute NEE contribution (shadow rays).
+// 5. Indirect Light: Recurse (shoot the scattered ray).
+// -----------------------------------------------------------------------------------------------
 Vec3 ray_color(const Ray &r, const Hittable &world, const HittableList &lights,
                const EnvironmentMap *env_map, int depth,
                bool allow_emission = true) {
 
-  // 1. Limite de rebond (Fin de la récursion)
+  // 1. Bounce Limit (Recursion Depth)
   if (depth <= 0)
     return Vec3(0, 0, 0);
 
-  // 2. Intersection avec la scène
+  // 2. Scene Intersection
   HitRecord rec;
   // Note : Epsilon à 0.001f ou 0.01f pour éviter l'acné, INFINITY_REAL pour le
   // max
@@ -192,18 +236,20 @@ Vec3 ray_color(const Ray &r, const Hittable &world, const HittableList &lights,
     return Vec3(0, 0, 0);
   }
 
-  // 3. Emission propre de l'objet touché
+  // 3. Emission
   Vec3 emitted = rec.mat_ptr->emit(r, rec, rec.u, rec.v, rec.p);
   if (!allow_emission)
     emitted = Vec3(0, 0, 0); // Empêche le double comptage pour le NEE
 
-  // 4. Scattering (Rebond)
+  // 4. Scattering & BSDF Sampling
   ScatterRecord srec;
   if (!rec.mat_ptr->scatter(r, rec, srec))
     return emitted; // C'est une lumière ou un objet noir, on s'arrête.
 
-  // 5. Cas Spécial : Miroirs et Verres (Spéculaire pur)
-  // On ne peut pas faire de NEE sur un miroir parfait, on suit juste le rayon.
+  // 5. Special Case: Specular Surfaces (Mirror/Glass)
+  // We cannot use NEE (Direct Light Sampling) on perfect specular surfaces
+  // because the probability of hitting a light source from a delta distribution
+  // is zero. We just follow the ray.
   if (srec.is_specular) {
     return emitted +
            srec.attenuation *
@@ -212,14 +258,14 @@ Vec3 ray_color(const Ray &r, const Hittable &world, const HittableList &lights,
                    true); // true car on veut voir les lumières dans le miroir
   }
 
-  // 6. Eclairage Direct (sample_direct_light)
+  // 6. Direct Light (Next Event Estimation)
   Vec3 direct_light = sample_direct_light(r, rec, srec, world, lights, env_map);
 
-  // 7. Eclairage Indirect (Récursif)
+  // 7. Indirect Light (Recursive Step)
   Vec3 indirect = srec.attenuation * ray_color(srec.specular_ray, world, lights,
                                                env_map, depth - 1, false);
 
-  // 8. Clamp (Firefly reduction)
+  // 8. Firefly Clamping (Reduces outliers)
   indirect.e[0] = soft_clamp(indirect.x(), FIREFLY_CLAMP_LIMIT);
   indirect.e[1] = soft_clamp(indirect.y(), FIREFLY_CLAMP_LIMIT);
   indirect.e[2] = soft_clamp(indirect.z(), FIREFLY_CLAMP_LIMIT);

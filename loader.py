@@ -1,3 +1,21 @@
+"""
+================================================================================================
+MODULE: SCENE LOADER & BUILDER
+================================================================================================
+
+DESCRIPTION:
+  High-level Python wrapper around the C++ Engine.
+  - SceneBuilder: Facade that simplifies object creation (Sphere, Quad, Mesh).
+  - Environment Loading: Handles background images (HDR).
+  - Auto-Sun: Intelligent feature that analyzes an HDR map to detect the brightest spot
+    and places a physical directional light source there.
+  
+  The 'SceneBuilder' also maintains a 'Registry' (Dictionary) of all objects with their
+  editable properties (Pos, Rot, Scale, Material). This registry is the Single Source of Truth
+  for the Editor UI.
+
+================================================================================================
+"""
 import cpp_engine
 import os
 import numpy as np
@@ -151,8 +169,13 @@ class SceneBuilder:
 
     def add_mesh_instance(self, mesh_name, pos=[0.0,0.0,0.0], rot=[0.0,0.0,0.0], scale=[1.0,1.0,1.0]):
         """
-        Ajoute une instance de mesh avec une transformation complète.
-        :param rot: Rotation en DEGRÉS [x, y, z]
+        Adds a mesh instance to the scene.
+        COMPOSITION ORDER: Scale -> Rotate -> Translate.
+        matrix = T * Ry * Rx * Rz * S
+        
+        Note on Rotation:
+        We apply Y rotation (Heading) first (conceptually, though matrix order might differ depending on convention).
+        Here we use Euler angles composed individually.
         """
         # 1. Calcul de la Matrice (Ordre: Scale -> Rotate X/Y/Z -> Translate)
         # Note: transforms.py gère les degrés
@@ -221,9 +244,14 @@ class SceneBuilder:
 
 def create_auto_sun(builder, intensity, radius, distance):
     """
-    Analyse l'env map actuelle du moteur, trouve le point chaud,
-    et crée un soleil physique correspondant via le builder.
-    Retourne (sun_id, sun_dir_array, sun_raw_color_array).
+    ALGORITHM: AUTO-SUN GENERATION
+    ------------------------------
+    Analyzes the loaded environment map to find the "Point of Maximum Radiance" (Hotspot).
+    Creates an invisible spherical light source at that direction to simulate the sun physically.
+    
+    1. Query the C++ engine for the brightest direction (Max pixel value in EnvMap).
+    2. Place a light at 'distance' units in that direction.
+    3. Scale the color intensity to match the user's requested 'intensity'.
     """
     # 1. Analyse du moteur
     # Renvoie des Vec3 C++

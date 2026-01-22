@@ -1,4 +1,31 @@
 #include <nanobind/nanobind.h>
+
+// ===============================================================================================
+// MODULE: PYTHON BINDINGS (NANOBIND)
+// ===============================================================================================
+//
+// DESCRIPTION:
+//   This file acts as the bridge between the high-performance C++ Core and the
+//   Python logic. It exposes the C++ classes and functions to Python as a
+//   module named 'cpp_engine'.
+//
+// KEY ROLES:
+//   1. Scene Management (PyScene):
+//      - Stores the state of the world (Objects, Lights, Camera).
+//      - Manages Assets (Meshes loaded in memory).
+//      - Manages Instances (Scene Graph nodes pointing to assets/primitives).
+//
+//   2. Rendering Entry Points:
+//      - render()             : Offline rendering (full quality).
+//      - render_preview()     : Fast, low-quality preview (Clay / Normals).
+//      - render_accumulate()  : Progressive rendering for interactive viewport.
+//
+//   3. Data Conversion:
+//      - Converts Numpy arrays to C++ pointers and back.
+//      - Exposes C++ Vec3 to Python.
+//
+// ===============================================================================================
+
 #include <nanobind/ndarray.h>
 #include <nanobind/stl/map.h>
 #include <nanobind/stl/pair.h>
@@ -64,7 +91,13 @@ public:
     background = std::make_shared<EnvironmentMap>(d, 1, 1);
   }
 
-  // --- HELPER INTERNE POUR CRÉER UNE INSTANCE ---
+  // ---------------------------------------------------------------------------------------------
+  // HELPER: INSTANCE REGISTRATION
+  // ---------------------------------------------------------------------------------------------
+  // Wraps a geometric object (Sphere, Mesh BVH) into an Instance with a
+  // transformation matrix. It assigns a unique ID to keep track of it in Python
+  // (for Gizmo selection).
+  // ---------------------------------------------------------------------------------------------
   int create_and_register_instance(std::shared_ptr<Hittable> geo,
                                    const Matrix4 &m, const Matrix4 &inv,
                                    bool is_light) {
@@ -74,12 +107,14 @@ public:
     world.add(instance);
     instances_map[id] = instance;
 
-    // LA SUBTILITÉ DES LUMIÈRES : On ajoute l'Instance à la liste des lumières
+    // SPECIAL HANDLING FOR LIGHTS:
+    // If an object is emissive, we must ALSO add it to the explicit 'lights'
+    // list so that the renderer can sample it directly (NEE).
     if (is_light) {
       lights.add(instance);
     }
 
-    world_bvh = nullptr; // On casse le BVH pour forcer la reconstruction
+    world_bvh = nullptr; // Invalidate BVH to force rebuild on next render
     return id;
   }
 
@@ -572,11 +607,19 @@ public:
     return nb::ndarray<nb::numpy, float>(buffer, 3, shape, owner);
   }
 
-  // Rendu Progressif (Accumulate)
+  // ---------------------------------------------------------------------------------------------
+  // RENDER LOOP: PROGRESSIVE ACCUMULATION
+  // ---------------------------------------------------------------------------------------------
+  // This function is called repeatedly by the Python UI loop.
+  // - It adds 'spp' samples to the existing buffer.
+  // - It averages the result (Total Color / Total Samples) and returns it for
+  // display.
+  // ---------------------------------------------------------------------------------------------
   nb::ndarray<nb::numpy, float> render_accumulate(int width, int height,
                                                   int spp, int n_threads) {
     size_t num_pixels = (size_t)width * height;
 
+    // Resize/Reset buffer if resolution changes
     if (width != acc_width || height != acc_height ||
         accumulation_buffer.size() != num_pixels * 3) {
       accumulation_buffer.assign(num_pixels * 3, 0.0f);

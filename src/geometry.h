@@ -1,5 +1,32 @@
 #pragma once
 
+// ===============================================================================================
+// MODULE: GEOMETRY
+// ===============================================================================================
+//
+// DESCRIPTION:
+//   This file defines the fundamental geometric primitives used in the ray
+//   tracer:
+//   - Sphere : Canonical analytical sphere.
+//   - Quad   : Parallelogram/Rectangle (useful for area lights & Cornell Box
+//   walls).
+//   - Triangle: Basic building block for meshes.
+//   - HittableList: A container to group multiple objects.
+//
+// KEY CONCEPTS:
+//   - Ray-Object Intersection: Each primitive implements 'hit()' to solve the
+//   geometric equation
+//     t such that Ray(t) intersects the surface.
+//   - Bounding Box (AABB): Computed for each primitive to build the BVH
+//   acceleration structure.
+//   - PDF (Probability Density Function): Used for Importance Sampling (Next
+//   Event Estimation).
+//     It allows the renderer to ask "What is the probability that a random ray
+//     hits this object?" and "How do I generate a random direction towards this
+//     object?".
+//
+// ===============================================================================================
+
 #include "common.h"
 #include "hittable.h"
 #include "materials.h" // Nécessaire car les objets possèdent un Material
@@ -7,7 +34,6 @@
 #include <algorithm>
 #include <memory>
 #include <vector>
-
 
 // ===============================================================================================
 // CONTAINER : LISTE D'OBJETS (HittableList)
@@ -102,6 +128,20 @@ public:
   Sphere(Vec3 cen, Real r, std::shared_ptr<Material> m)
       : center(cen), radius(r), mat_ptr(m) {};
 
+  // ---------------------------------------------------------------------------------------------
+  // ALGORITHM: RAY-SPHERE INTERSECTION
+  // ---------------------------------------------------------------------------------------------
+  // We solve the quadratic equation derived from substituting the ray equation
+  // P(t) = A + t*b into the sphere equation (P - C) . (P - C) = r^2.
+  //
+  // resulting in: t^2(b.b) + 2t(b.(A-C)) + ((A-C).(A-C) - r^2) = 0
+  // which is in the form: a*t^2 + half_b*2*t + c = 0
+  //
+  // We check the discriminant (delta = half_b^2 - a*c).
+  // If delta < 0, no real roots (ray misses).
+  // If delta >= 0, we check the two roots (entry and exit points).
+  // ---------------------------------------------------------------------------------------------
+
   virtual bool hit(const Ray &r, Real t_min, Real t_max,
                    HitRecord &rec) const override {
     Vec3 oc = r.orig - center;
@@ -142,6 +182,22 @@ public:
                       center + Vec3(radius, radius, radius));
     return true;
   }
+
+  // ---------------------------------------------------------------------------------------------
+  // ALGORITHM: PROBABILITY DENSITY FUNCTION (PDF) & SAMPLING
+  // ---------------------------------------------------------------------------------------------
+  // Essential for Importance Sampling (picking a light source intelligently).
+  //
+  // pdf_value: Returns the probability density of choosing a direction 'v' that
+  // hits this sphere
+  //            assuming a uniform sampling over the solid angle subtended by
+  //            the sphere. Formula = 1 / SolidAngle.
+  //
+  // random:    Generates a random direction vector from 'o' aiming continuously
+  // at the sphere.
+  //            It constructs a local coordinate system (ONB) facing the sphere
+  //            center and samples a cone uniformly.
+  // ---------------------------------------------------------------------------------------------
 
   // PDF : Probabilité de toucher la sphère depuis le point o
   virtual Real pdf_value(const Vec3 &o, const Vec3 &v) const override {
@@ -211,6 +267,23 @@ public:
     w = n / dot(n, n);
     area = n.length();
   }
+
+  // ---------------------------------------------------------------------------------------------
+  // ALGORITHM: RAY-QUAD INTERSECTION
+  // ---------------------------------------------------------------------------------------------
+  // 1. Plane Intersection:
+  //    Check if ray is parallel to the plane (dot product approx 0).
+  //    Compute 't' for the plane defined by point Q and normal 'n'.
+  //
+  // 2. Planar Coordinates Check (Barycentric-like):
+  //    Once we have the hit point P on the infinite plane, we project vector (P
+  //    - Q) onto the basis vectors (u, v) using the precomputed helper 'w' (w =
+  //    n / length(n)^2). alpha = dot(w, cross(P-Q, v)) beta  = dot(w, cross(u,
+  //    P-Q))
+  //
+  //    If 0 <= alpha <= 1 and 0 <= beta <= 1, the point is inside the
+  //    parallelogram.
+  // ---------------------------------------------------------------------------------------------
 
   virtual bool hit(const Ray &r, Real t_min, Real t_max,
                    HitRecord &rec) const override {
@@ -289,6 +362,20 @@ public:
   Triangle(Vec3 _v0, Vec3 _v1, Vec3 _v2, Vec3 _n0, Vec3 _n1, Vec3 _n2,
            std::shared_ptr<Material> m)
       : v0(_v0), v1(_v1), v2(_v2), n0(_n0), n1(_n1), n2(_n2), mat_ptr(m) {}
+
+  // ---------------------------------------------------------------------------------------------
+  // ALGORITHM: MÖLLER-TRUMBORE
+  // ---------------------------------------------------------------------------------------------
+  // A fast, efficient ray-triangle intersection algorithm that does not require
+  // precomputing the plane equation.
+  //
+  // It solves constraints for barycentric coordinates (u, v):
+  // P(t) = (1 - u - v)*V0 + u*V1 + v*V2
+  //
+  // If we find u, v such that u >= 0, v >= 0 and u + v <= 1, the intersection
+  // is valid. We also interpolate the vertex normals (n0, n1, n2) using these
+  // coordinates for smooth shading.
+  // ---------------------------------------------------------------------------------------------
 
   virtual bool hit(const Ray &r, Real t_min, Real t_max,
                    HitRecord &rec) const override {

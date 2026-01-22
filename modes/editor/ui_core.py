@@ -1,3 +1,23 @@
+"""
+================================================================================================
+MODULE: UI FRAMEWORK
+================================================================================================
+
+DESCRIPTION:
+  A custom, lightweight UI framework built on top of PyGame.
+  It implements basic widgets needed for the editor:
+  - Button  : Clickable rects with hover states.
+  - Label   : Text rendering.
+  - Slider  : Horizontal drag bars with power-curve (logarithmic) support.
+  - NumberField : Editable text boxes for float input.
+  
+  Styling is defined here globally (Colors, Dimensions).
+  
+  The system is "Retained Mode" in structure (Widgets are objects in a list),
+  but "Immediate Mode" in usage (Rebuilt on state change).
+
+================================================================================================
+"""
 import pygame
 import time
 

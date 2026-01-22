@@ -1,3 +1,19 @@
+"""
+================================================================================================
+MODULE: MESH LOADER
+================================================================================================
+
+DESCRIPTION:
+  Handles loading of external 3D geometry (OBJ, STL, PLY, GLB) using the 'trimesh' library.
+  It performs essential preprocessing:
+  1. Geometry Cleaning (Fixing normals, duplicates).
+  2. Material Conversion (Mapping external materials to our native Lambertian/Metal/Dielectric).
+  3. Pivot Adjustment (centering or placing at feet).
+  
+  Interacts directly with the C++ Engine to upload vertex/face data.
+
+================================================================================================
+"""
 import trimesh
 import numpy as np
 import os
@@ -164,9 +180,15 @@ def load_mesh_to_engine(engine, file_path, scale=1.0, translation=[0,0,0], auto_
 
 def load_asset(engine, asset_name, file_path, override_mat=None, override_color=None, override_ior=None):
     """
-    Charge un asset en mémoire (Engine.mesh_assets) SANS l'afficher.
-    Applique une logique "Pieds à Zéro" : Le point (0,0,0) local sera aux pieds de l'objet.
-    Retourne un objet MeshInfo.
+    Loads a mesh into the Engine's Asset Library (memory) WITHOUT adding it to the scene graph.
+    
+    FEATURE: SMART PIVOT (Feet-to-Zero)
+    -----------------------------------
+    It automatically re-centers the mesh on X/Z, but aligns the bottom (min Y) to Y=0.
+    This ensures that when we place the object at (0,0,0) in the scene, it stands ON the ground,
+    not halfway through it.
+    
+    Returns: A MeshInfo object containing metadata.
     """
     if not os.path.exists(file_path):
         print(f"[Error] Mesh file not found: {file_path}")

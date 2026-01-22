@@ -1,3 +1,21 @@
+"""
+================================================================================================
+MODULE: CLI RENDERER (OFFLINE)
+================================================================================================
+
+DESCRIPTION:
+  Handles the "offline" rendering process (command line interface).
+  It orchestrates:
+  1. Multithreading setup.
+  2. Progress Bar tracking (tqdm).
+  3. Image Post-Processing (Tone Mapping, Gamma Correction, Denoising).
+  4. Video Compilation (if animation).
+
+  This is where the raw linear floating point data from C++ is converted into 
+  viewable PNG/MP4 files.
+
+================================================================================================
+"""
 import cpp_engine
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -36,7 +54,18 @@ def aces_filmic(x):
     return (x * (a * x + b)) / (x * (c * x + d) + e)
 
 def apply_tone_mapping(linear_pixels):
-    """Convertit des pixels linéaires (Physique) en sRGB affichable (ACES + Gamma 2.2)."""
+    """
+    POST-PROCESSING PIPELINE
+    ------------------------
+    Raw render output is "Linear HDR" (values > 1.0, linear light).
+    Monitors expect "Gamma Encoded SDR" (0.0 - 1.0, non-linear).
+    
+    1. Tone Mapping (ACES Filmic): Compresses High Dynamic Range (values > 1) 
+       into the 0-1 range with a film-like curve (crushed blacks, desaturated highlights).
+       
+    2. Gamma Correction (sRGB): Applies the characteristic 2.2 gamma curve so the image
+       looks correct on standard displays.
+    """
     # 1. ACES Tonemapping
     data = aces_filmic(linear_pixels)
     
@@ -117,6 +146,12 @@ def try_denoise(pixels, **kwargs):
 # ===============================================================================================
 
 def run_single_frame(engine, conf, pool_threads):
+    """
+    Orchestrates the rendering of a still image.
+    - Launches C++ Render in a background thread to keep Python responsive (for tqdm).
+    - Polls progress periodically.
+    - Saves Raw (Linear) and Processed (PNG) outputs.
+    """
     print(f"[Renderer] Rendering Single Frame {conf.width}x{conf.height} ({conf.spp} spp)...")
     
     result_container = {}

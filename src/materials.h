@@ -1,5 +1,29 @@
 #pragma once
 
+// ===============================================================================================
+// MODULE: MATERIALS (BSDF)
+// ===============================================================================================
+//
+// DESCRIPTION:
+//   Defines how light interacts with surfaces. In Path Tracing, this is modeled
+//   by the BSDF (Bidirectional Scattering Distribution Function), which is
+//   split here into:
+//   1. Scatter: Determines the direction of the scattered ray
+//   (reflection/refraction).
+//   2. Attenuation: How much light is absorbed (Surface Color).
+//   3. PDF: Probability of scattering in that direction (for Monte Carlo
+//   integration).
+//
+// KEY TYPES:
+//   - Lambertian : Perfectly diffuse surface (Matte). Light scatters in all
+//   directions.
+//   - Metal      : Specular reflection. Perfect mirror or blurry metal.
+//   - Dielectric : Transparent refractive material (Glass, Water, Diamond).
+//   Handles Fresnel & TIR.
+//   - Light      : Emissive material (returns non-zero in emit()).
+//
+// ===============================================================================================
+
 #include "common.h"
 #include "hittable.h"
 
@@ -52,7 +76,16 @@ public:
 class Lambertian : public Material {
 public:
   Vec3 albedo;
+
   Lambertian(const Vec3 &a) : albedo(a) {}
+
+  // ---------------------------------------------------------------------------------------------
+  // MODEL: PERFECT DIFFUSE (LAMBERTIAN)
+  // ---------------------------------------------------------------------------------------------
+  // A matte surface that scatters light equally in all directions
+  // (probabilistically). We approximate this by picking a random point on the
+  // unit sphere tangent to the hit point (or cosine weighted hemisphere).
+  // ---------------------------------------------------------------------------------------------
 
   virtual bool scatter(const Ray &r_in, const HitRecord &rec,
                        ScatterRecord &srec) const override {
@@ -80,7 +113,17 @@ class Metal : public Material {
 public:
   Vec3 albedo;
   Real fuzz;
+
   Metal(const Vec3 &a, Real f) : albedo(a), fuzz(f < 1 ? f : 1) {}
+
+  // ---------------------------------------------------------------------------------------------
+  // MODEL: METALLIC REFLECTION
+  // ---------------------------------------------------------------------------------------------
+  // A metal reflects light.
+  // - If 'fuzz' is 0, it's a perfect mirror (Ray is reflected against Normal).
+  // - If 'fuzz' > 0, we perturb the reflected ray by adding a random vector
+  // from a unit sphere. This creates a "blurry" reflection.
+  // ---------------------------------------------------------------------------------------------
 
   virtual bool scatter(const Ray &r_in, const HitRecord &rec,
                        ScatterRecord &srec) const override {
@@ -111,6 +154,26 @@ public:
       : ir(index_of_refraction), tint(tint_color), fuzz(f < 1 ? f : 1) {}
 
   virtual bool is_transparent() const override { return true; }
+
+  void set_fuzz(Real f) { fuzz = f < 1 ? f : 1; }
+
+  // ---------------------------------------------------------------------------------------------
+  // MODEL: DIELECTRIC (Glass/Water)
+  // ---------------------------------------------------------------------------------------------
+  // Handles both Reflection and Refraction logic.
+  //
+  // 1. Snell's Law: n1 * sin(theta1) = n2 * sin(theta2).
+  //    We determine the ratio of refraction indices (etai/etat).
+  //
+  // 2. Total Internal Reflection (TIR):
+  //    If the ray goes from a dense medium (glass) to a rare medium (air) at a
+  //    shallow angle, it cannot refract out and is 100% reflected inside.
+  //
+  // 3. Fresnel Reflectance (Schlick's Approx):
+  //    Even if refraction is possible, glass reflects some light at glancing
+  //    angles. We probabilitistically choose between Reflection and Refraction
+  //    based on this reflectance.
+  // ---------------------------------------------------------------------------------------------
 
   virtual bool scatter(const Ray &r_in, const HitRecord &rec,
                        ScatterRecord &srec) const override {
