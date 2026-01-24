@@ -43,10 +43,11 @@
 // - It applies Multiple Importance Sampling (MIS) heuristics (simplified here
 // as PDF balancing).
 // -----------------------------------------------------------------------------------------------
-Vec3 sample_direct_light(const Ray &r, const HitRecord &rec,
-                         const ScatterRecord &srec, const Hittable &world,
-                         const HittableList &lights,
-                         const EnvironmentMap *env_map) {
+inline Vec3 sample_direct_light(const Ray &r, const HitRecord &rec,
+                                const ScatterRecord &srec,
+                                const Hittable &world,
+                                const HittableList &lights,
+                                const EnvironmentMap *env_map) {
   // =========================================================
   // NEE (Next Event Estimation) - Éclairage Direct
   // =========================================================
@@ -213,9 +214,9 @@ Vec3 sample_direct_light(const Ray &r, const HitRecord &rec,
 // 4. Direct Light: Compute NEE contribution (shadow rays).
 // 5. Indirect Light: Recurse (shoot the scattered ray).
 // -----------------------------------------------------------------------------------------------
-Vec3 ray_color(const Ray &r, const Hittable &world, const HittableList &lights,
-               const EnvironmentMap *env_map, int depth,
-               bool allow_emission = true) {
+inline Vec3 ray_color(const Ray &r, const Hittable &world,
+                      const HittableList &lights, const EnvironmentMap *env_map,
+                      int depth, bool allow_emission = true) {
 
   // 1. Bounce Limit (Recursion Depth)
   if (depth <= 0)

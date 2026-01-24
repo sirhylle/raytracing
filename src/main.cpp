@@ -67,6 +67,7 @@ public:
   // Le BVH (reconstruit dynamiquement)
   std::shared_ptr<Hittable> world_bvh;
   std::shared_ptr<Camera> camera;
+  // Background doit être accessible publiquement pour les propriétés
   std::shared_ptr<EnvironmentMap> background;
 
   // Bibliothèque d'Assets (Meshes chargés en mémoire)
@@ -426,7 +427,8 @@ public:
     camera = std::make_shared<Camera>(from, at, up, vfov, aspect, ap, dist);
   }
 
-  void set_environment(nb::object image) {
+  void set_environment(nb::object image,
+                       Real clipping_threshold = INFINITY_REAL) {
     PyObject *obj = image.ptr();
     Py_buffer view;
     if (PyObject_GetBuffer(obj, &view,
@@ -450,7 +452,8 @@ public:
         }
       }
     }
-    background = std::make_shared<EnvironmentMap>(data, (int)w, (int)h);
+    background = std::make_shared<EnvironmentMap>(data, (int)w, (int)h,
+                                                  clipping_threshold);
   }
 
   void set_env_levels(Real back, Real dir, Real indir) {
@@ -462,6 +465,19 @@ public:
     if (background)
       return background->find_sun_hotspot();
     return {Vec3(0, 1, 0), Vec3(0, 0, 0)};
+  }
+
+  void set_env_clipping_threshold(Real t) {
+    if (background) {
+      background->set_clipping_threshold(t);
+    }
+  }
+
+  Real get_env_clipping_threshold() const {
+    if (background) {
+      return background->clipping_threshold;
+    }
+    return INFINITY_REAL;
   }
 
   // --- MOTEUR DE RENDU ---
@@ -748,6 +764,7 @@ private:
 // ===============================================================================================
 
 NB_MODULE(cpp_engine, m) {
+
   nb::class_<PyScene>(m, "Engine")
       .def(nb::init<>())
       .def("add_sphere", &PyScene::add_sphere, nb::arg("center"),
@@ -773,7 +790,8 @@ NB_MODULE(cpp_engine, m) {
            nb::arg("fuzz") = 0.0f, nb::arg("ir") = 1.5f)
       .def("remove_instance", &PyScene::remove_instance, nb::arg("id"))
       .def("set_camera", &PyScene::set_camera)
-      .def("set_environment", &PyScene::set_environment)
+      .def("set_environment", &PyScene::set_environment, nb::arg("image"),
+           nb::arg("clipping_threshold") = INFINITY_REAL)
       .def("set_env_levels", &PyScene::set_env_levels, nb::arg("back"),
            nb::arg("dir"), nb::arg("indir") = 1.0f)
       .def("set_env_rotation", &PyScene::set_env_rotation, nb::arg("degrees"))
@@ -786,7 +804,10 @@ NB_MODULE(cpp_engine, m) {
            nb::arg("height"), nb::arg("spp") = 1, nb::arg("n_threads") = 0)
       .def("reset_accumulation", &PyScene::reset_accumulation)
       .def("get_env_sun_info", &PyScene::get_env_sun_info)
-      .def("pick_focus_distance", &PyScene::pick_focus_distance);
+      .def("pick_focus_distance", &PyScene::pick_focus_distance)
+      .def("get_env_clipping_threshold", &PyScene::get_env_clipping_threshold)
+      .def("set_env_clipping_threshold", &PyScene::set_env_clipping_threshold,
+           nb::arg("threshold"));
 
   nb::class_<Vec3>(m, "Vec3")
       .def(nb::init<Real, Real, Real>())

@@ -98,6 +98,15 @@ class EditorState:
         self.sun_intensity = conf.auto_sun_intensity
         self.sun_radius = conf.auto_sun_radius
         self.sun_dist = conf.auto_sun_dist
+        self.env_clipping_multiplier = conf.clipping_multiplier if hasattr(conf, 'clipping_multiplier') else 20.0
+        self.env_clipping_enabled = True # Remplacé par True par défaut pour l'instant
+        self.env_median_luminance = 0.0 
+        
+        # Tentative de récupération de la médiane depuis le setup initial du moteur
+        init_thresh = builder.engine.get_env_clipping_threshold()
+        if init_thresh > 0 and init_thresh < float('inf') and self.env_clipping_multiplier > 0:
+            self.env_median_luminance = init_thresh / self.env_clipping_multiplier
+
         self.sun_initial_dir = np.array([0.0, 1.0, 0.0]) 
         self.sun_base_color = np.array([1.0, 1.0, 1.0])
 
@@ -216,12 +225,14 @@ class EditorState:
             self.sun_enabled = False
 
         # Chargement via Loader
-        loader.load_environment(
+        median = loader.load_environment(
             self.builder, file_path,
             env_direct_level=self.env_direct_level, env_light_level=self.env_light_level, env_indirect_level=self.env_indirect_level,
             auto_sun=True, auto_sun_intensity=self.sun_intensity, auto_sun_radius=self.sun_radius,
-            auto_sun_dist=self.sun_dist, auto_sun_env_level=self.auto_sun_env_level
+            auto_sun_dist=self.sun_dist, auto_sun_env_level=self.auto_sun_env_level,
+            clipping_multiplier=self.env_clipping_multiplier
         )
+        self.env_median_luminance = median
         
         # Reconnexion ID Soleil
         for oid, info in self.builder.registry.items():
@@ -244,6 +255,23 @@ class EditorState:
         engine.set_env_rotation(self.env_rotation)
         engine.set_env_levels(self.env_direct_level, lighting_level, self.env_indirect_level)
         
+        # Mise à jour directe du clipping (via API Engine)
+        if hasattr(engine, 'get_env_clipping_threshold'): # Safety check
+            thresh = float('inf')
+            
+            # Application si activé explicitement
+            if self.env_clipping_enabled:
+                 # Si le soleil est actif OU qu'on a un multiplicateur explicite (même 0)
+                 if self.sun_enabled:
+                      thresh = self.env_median_luminance * self.env_clipping_multiplier
+            
+            # Optimisation: On ne set que si ça change vraiment pour éviter le rebuild_cdf coûteux
+            current_thresh = engine.get_env_clipping_threshold()
+            # Si thresh est infini et current aussi, pas de chgt
+            # Si diff > epsilon, on change
+            if abs(current_thresh - thresh) > 1e-3:
+                 engine.set_env_clipping_threshold(thresh)
+
         # CREATE
         if self.sun_enabled and self.sun_id == -1:
             engine.set_env_rotation(0.0)
@@ -571,7 +599,7 @@ class EditorState:
              if not os.path.isabs(env_map_path):
                  env_map_path = os.path.abspath(os.path.join(os.getcwd(), env_map_path))
              
-             loader.load_environment(
+             self.env_median_luminance = loader.load_environment(
                  self.builder, env_map_path,
                  env_light_level=self.env_light_level,
                  env_direct_level=self.env_direct_level,
@@ -580,7 +608,8 @@ class EditorState:
                  auto_sun_intensity=self.sun_intensity,
                  auto_sun_radius=self.sun_radius,
                  auto_sun_dist=self.sun_dist,
-                 auto_sun_env_level=self.auto_sun_env_level
+                 auto_sun_env_level=self.auto_sun_env_level,
+                 clipping_multiplier=self.env_clipping_multiplier
              )
         
         self.builder.engine.set_env_rotation(self.env_rotation)

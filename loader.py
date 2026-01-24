@@ -228,8 +228,8 @@ class SceneBuilder:
             self.asset_library[info.name] = info
         return info
 
-    def set_environment(self, data):
-        self.engine.set_environment(data)
+    def set_environment(self, data, clipping_threshold=float('inf')):
+        self.engine.set_environment(data, clipping_threshold)
     
     def set_env_levels(self, bg, dir, indir):
         self.engine.set_env_levels(bg, dir, indir)
@@ -286,7 +286,7 @@ def create_auto_sun(builder, intensity, radius, distance):
 def load_environment(builder, env_path, 
     env_light_level=None, env_direct_level=None, env_indirect_level=None, 
     auto_sun=False, auto_sun_intensity=None, auto_sun_radius=None,
-    auto_sun_dist=None, auto_sun_env_level=None):
+    auto_sun_dist=None, auto_sun_env_level=None, clipping_multiplier=None):
     """Charge la HDRI et configure le soleil physique automatique via le Builder."""
 
     if not env_path or not os.path.exists(env_path):
@@ -302,18 +302,48 @@ def load_environment(builder, env_path,
         
         env_data = img.astype(np.float32)
         if img.dtype == np.uint8: env_data /= 255.0
-        env_data = np.ascontiguousarray(env_data)
+        if img.dtype != np.float32:
+            img = img.astype(np.float32)
 
-        builder.set_environment(env_data)
+        # Calcul du seuil de clipping (MIS)
+        # On calcule la médiane de la luminance pour identifier le "fond" du ciel
+        # et on clippe ce qui dépasse largement (le soleil) si l'Auto-Sun est activé.
+        clipping_threshold = float('inf')
         
+        if auto_sun or (clipping_multiplier is not None and clipping_multiplier > 0):
+            # 1. Calcul de la luminance (rapide) sur les données NORMALISÉES (env_data)
+            # Y = 0.2126 R + 0.7152 G + 0.0722 B
+            lum = 0.2126 * env_data[:,:,0] + 0.7152 * env_data[:,:,1] + 0.0722 * env_data[:,:,2]
+            
+            # 2. Calcul de la médiane
+            median_val = np.median(lum)
+            mean_val = np.mean(lum)
+            max_val = np.max(lum)
+            
+            # 3. Détermination du multiplicateur
+            # Si pas spécifié mais auto-sun actif, on met une valeur par défaut (ex: 20.0)
+            mult = clipping_multiplier if clipping_multiplier is not None else 20.0
+            
+            # 4. Calcul du seuil
+            if mult > 0:
+                clipping_threshold = median_val * mult
+            else:
+                print(f"[Loader] Dynamic Clipping: DISABLED (Multiplier=0)")
+
+        # Envoi au moteur (Données + Seuil)
+        builder.set_environment(img, clipping_threshold)
+        
+        # Configuration des niveaux
         # direct_lvl = Visibilité Caméra (Arg 1)
         cam_vis = env_direct_level if env_direct_level is not None else 1.0
         # light_lvl = Éclairage de la scène (Arg 2)
+        # Si Auto-Sun est actif, on peut vouloir baisser l'env map pour laisser la place au soleil physique
         lighting = env_light_level if env_light_level is not None else 1.0
+        if auto_sun and auto_sun_env_level is not None:
+            lighting = auto_sun_env_level
         # indirect_lvl = Reflets (Arg 3)
         refl = env_indirect_level if env_indirect_level is not None else 1.0
         
-        #builder.set_env_levels(bg_lvl, dir_lvl, indir_lvl)
         builder.set_env_levels(cam_vis, lighting, refl)
 
         if auto_sun:
@@ -374,6 +404,7 @@ def initialize_scene_and_engine(args, scene_name=None):
                      auto_sun_intensity=config.auto_sun_intensity,
                      auto_sun_radius=config.auto_sun_radius,
                      auto_sun_dist=config.auto_sun_dist,
-                     auto_sun_env_level=config.auto_sun_env_level)
+                     auto_sun_env_level=config.auto_sun_env_level,
+                     clipping_multiplier=config.clipping_multiplier)
                      
     return engine, config, builder

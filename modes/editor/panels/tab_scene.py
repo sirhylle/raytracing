@@ -130,6 +130,30 @@ def build(ui_list, start_y, state, engine):
             lbl(ui_list, 10, ys, "Distance", 12, COL_TEXT_DIM)
             ui_list.append(Slider(VIEW_W+80, ys, 210, 14, 10.0, 5000.0, lambda: state.sun_dist, lambda v: set_env('sun_dist', v)))
             ys += 20
+
+            # Ligne de séparation explicite
+            ys += 15
+            ui_list.append(Separator(ys, "Envt Light Clipping"))
+            #lbl(ui_list, 10, ys, "-"*22 + " Enviro Clipping " + "-"*22, 12, (80, 80, 80))
+            ys += 25
+            
+            def toggle_clip():
+                set_env('env_clipping_enabled', not state.env_clipping_enabled)
+                state.needs_ui_rebuild = True # FORCE le rafraîchissement immédiat de l'UI
+                
+            is_on = state.env_clipping_enabled
+            col_btn = (58, 110, 165) if is_on else None 
+            
+            # Layout compact : "Dynamic Clipping : [ ON ]"
+            lbl(ui_list, 10, ys, "Dynamic Clipping", 12, COL_TEXT)
+            ui_list.append(Button(VIEW_W+240, ys, 50, 16, "ON" if is_on else "OFF", 
+                                  callback=toggle_clip, color_override=col_btn))
+            ys += 20
+            
+            if state.env_clipping_enabled:
+                lbl(ui_list, 10, ys, "Level (x)", 12, COL_TEXT_DIM)
+                ui_list.append(Slider(VIEW_W+80, ys, 210, 14, 0.0, 100.0, lambda: state.env_clipping_multiplier, lambda v: set_env('env_clipping_multiplier', v), power=3))
+                ys += 20
         else:
             lbl(ui_list, 10, ys, "Enable Auto Sun to generate sun light", 12, (100,100,100))
             ys += 20

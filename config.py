@@ -22,6 +22,7 @@ class RenderConfig:
     env_light_level: float = 1.0
     env_direct_level: float = 0.5
     env_indirect_level: float = 0.5
+    clipping_multiplier: float = 20.0
     auto_sun: bool = False
     auto_sun_intensity: float = 50.0
     auto_sun_radius: float = 50.0
@@ -79,6 +80,9 @@ def build_configuration(args, scene_config):
                     elif code == 'E': 
                         print(f"[Override] CLI 'auto_sun_env_level': {final_conf.auto_sun_env_level} -> {val}")
                         final_conf.auto_sun_env_level = val
+                    elif code == 'C':
+                        print(f"[Override] CLI 'clipping_multiplier': {final_conf.clipping_multiplier} -> {val}")
+                        final_conf.clipping_multiplier = val
                     else: print(f"[Warn] Code auto-sun inconnu: {code}")
             except Exception as e:
                 print(f"[Error] Failed to parse auto-sun string: {e}")

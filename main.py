@@ -28,6 +28,7 @@ def main():
     group_env.add_argument('--env-light-level', type=float, help="Light intensity from environment (multiplier)")
     group_env.add_argument('--env-direct-level', type=float, help="Direct lighting of environment (multiplier)")
     group_env.add_argument('--env-indirect-level', type=float, help="Indirect lighting of environment (multiplier)")
+    group_env.add_argument('--clipping-multiplier', type=float, help="Dynamic EnvMap Clipping multiplier (default: 20.0)")
     
     # --- Camera ---
     group_cam = parser.add_argument_group("Camera")
@@ -40,7 +41,7 @@ def main():
     
     # --- Auto-Sun ---
     group_sun = parser.add_argument_group("Auto-Sun")
-    group_sun.add_argument('--auto-sun', nargs='?', const=True, default=None, help='Enable physical sun. Optional config string: "I50.0 R50 D1000 E0.2"')
+    group_sun.add_argument('--auto-sun', nargs='?', const=True, default=None, help='Enable physical sun. Optional config string: "I50.0 R50 D1000 E0.2 C20"')
     group_sun.add_argument('--auto-sun-intensity', type=float, help="Intensity of the physical sun (default: 50)")
     group_sun.add_argument('--auto-sun-radius', type=float, help="Radius of the physical sun (default: 50, affects soft shadows)")
     group_sun.add_argument('--auto-sun-dist', type=float, help="Distance of the sun from origin (default: 1000)")

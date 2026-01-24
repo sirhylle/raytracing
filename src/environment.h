@@ -14,14 +14,16 @@ struct EnvironmentMap {
   Real env_direct_scale = 1.0f;
   Real env_indirect_scale = 1.0f;
   Real rotation = 0.0f;
+  Real clipping_threshold; // Seuil de clipping pour le MIS et le sampling
 
   // Pour l'Importance Sampling
   std::vector<Real> marginal_CDF; // Probabilité de choisir une ligne Y
   std::vector<std::vector<Real>>
       conditional_CDFs; // Probabilité de choisir X sachant Y
 
-  EnvironmentMap(const std::vector<Real> &d, int w, int h)
-      : data(d), width(w), height(h) {
+  EnvironmentMap(const std::vector<Real> &d, int w, int h,
+                 Real threshold = INFINITY_REAL)
+      : data(d), width(w), height(h), clipping_threshold(threshold) {
     build_cdf();
   }
 
@@ -37,6 +39,13 @@ struct EnvironmentMap {
     // On inverse le signe si besoin selon le sens de rotation voulu,
     // mais standard = positif tourne vers la gauche
     rotation = degrees * (PI / 180.0f);
+  }
+
+  // Setter pour le clipping (Reconstruit les CDFs pour ignorer le soleil
+  // clippé)
+  void set_clipping_threshold(Real t) {
+    clipping_threshold = t;
+    build_cdf();
   }
 
   // Trouve la direction du pixel le plus lumineux (Pour le soleil auto)
@@ -109,7 +118,9 @@ struct EnvironmentMap {
       conditional_CDFs[y][0] = 0.0f;
 
       for (int x = 0; x < width; ++x) {
-        Real importance = get_luminance(x, y) * sin_theta;
+        Real raw_lum = get_luminance(x, y);
+        Real clipped_lum = std::min(raw_lum, clipping_threshold);
+        Real importance = clipped_lum * sin_theta;
         row_integral += importance;
         conditional_CDFs[y][x + 1] = row_integral;
       }
@@ -245,6 +256,20 @@ struct EnvironmentMap {
     Vec3 c0 = c00 * (1.0f - fx) + c10 * fx;
     Vec3 c1 = c01 * (1.0f - fx) + c11 * fx;
 
-    return (c0 * (1.0f - fy) + c1 * fy) * strength;
+    Vec3 raw_radiance = (c0 * (1.0f - fy) + c1 * fy) * strength;
+
+    // Application du clipping
+    // [MODIFICATION] Le clipping ne s'applique PAS au fond visible (Mode 0)
+    // pour que l'aspect visuel du ciel reste fidèle.
+    // Il s'applique uniquement à l'éclairage (Direct/Indirect) pour réduire le
+    // bruit (fireflies).
+    if (mode != 0 && clipping_threshold < INFINITY_REAL) {
+      Real max_val = clipping_threshold * strength;
+      return Vec3(std::min(raw_radiance.x(), max_val),
+                  std::min(raw_radiance.y(), max_val),
+                  std::min(raw_radiance.z(), max_val));
+    }
+
+    return raw_radiance;
   }
 };
