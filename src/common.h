@@ -19,17 +19,50 @@ const Real INFINITY_REAL = std::numeric_limits<Real>::infinity();
 // 1. Gestion du faux soleil (InvisibleLight) dans les reflets
 const bool VISIBLE_IN_REFLECTIONS = true;
 
-// 2. Intensité de l'ombre des objets transparents (Verre/Eau)
-// 0.0f = pas d'ombre, 1.0f = ombre complète
+// 2. Intensité de l'ombre des objets transparents (Transparent Shadows)
+// Facteur de transmission pour les fausses caustiques.
+// 1.0f = Transmission complète (Ombre très claire / colorée). Réaliste pour du
+// verre fin. 0.0f = Pas de transmission (Ombre noire). Comme un objet opaque.
+//
+// RECOMMANDATIONS :
+// - 0.50f - 0.70f : Rendu "artistique" avec des ombres bien visibles mais
+// transparentes.
+// - 0.80f - 0.95f : Rendu réaliste pour du verre clair (laisse passer presque
+// toute la lumière).
 const Real DIELECTRIC_SHADOW_TRANSMISSION = 0.8f;
 
-// 3. Epsilon pour éviter l'acné
-// Plus epsilon est petit, plus l'acné est prononcé
+// 3. Epsilon pour éviter l'acné (Self-Intersection)
+// Offset pour éviter qu'un rayon ne re-intersecte la surface d'où il part.
+//
+// COMPROMIS :
+// - Trop petit : "Shadow Acne" (points noirs sur la surface).
+// - Trop grand : "Peter Panning" (l'ombre se détache de l'objet) ou fuites de
+// lumière.
+//
+// IMPACT DE L'ÉCHELLE (SCALE) :
+// La valeur idéale dépend de la taille moyenne des objets dans la scène
+// (~1/10000).
+// - Scène "Unit" (Objets ~1.0, Dist ~10.0)      : EPSILON ~ 0.001f (ou 1e-4) ->
+// Standard.
+// - Scène "Macro" (Objets ~100.0, Dist ~1000.0) : EPSILON ~ 0.1f -> Sinon
+// erreurs de précision float.
 const Real EPSILON = 0.001f;
 
 // 4. Gestion des Fireflies (Lucioles)
-// Plus limit est grand, plus les lucioles sont prononcées
-const Real FIREFLY_CLAMP_LIMIT = 50.0f;
+// Limite l'intensité maximale d'un échantillon indirect pour réduire le bruit
+// (variance).
+//
+// COMPROMIS :
+// - Trop petit : Image stable rapidement mais terne (perte d'énergie, éclats
+// étouffés).
+// - Trop grand : Physiquement correct (HDR) mais risque de pixels blancs
+// (fireflies) persistants.
+//
+// RECOMMANDATIONS :
+// - 10.0f - 20.0f   : Clamp agressif, image très propre rapidement.
+// - 50.0f - 100.0f  : Bon compromis qualité/temps.
+// - > 1000.0f       : Virtuellement désactivé.
+const Real FIREFLY_CLAMP_LIMIT = 100.0f;
 
 // Utilitaire de compression douce (Tone mapping local)
 inline Real soft_clamp(Real x, Real limit) { return x * limit / (x + limit); }
