@@ -146,20 +146,9 @@ struct EnvironmentMap {
     }
   }
 
-  // Importance Sampling : Choisit une direction brillante
+  // Importance Sampling de l'HDRI en tenant compte de la rotation
+  // On sample (u,v) sur la texture, puis on tourne le vecteur résultat.
   Vec3 sample_direction(Real &pdf) const {
-    // L'Importance Sampling ne change pas vraiment avec la rotation
-    // car on sample la texture (u,v) puis on convertit en direction.
-    // Si on veut être puriste, il faudrait tourner le vecteur résultant.
-    // MAIS pour l'instant, sample_direction est utilisé par le Renderer pour
-    // choisir où envoyer les rayons. Si on le laisse tel quel, il va sampler
-    // selon les points chauds de la texture. Le Renderer convertira ce U,V en
-    // vecteur. Il faudra juste s'assurer que le renderer applique la rotation à
-    // ce vecteur s'il l'utilise directement.
-
-    // Pour l'instant on laisse tel quel, c'est une approximation acceptable
-    // car sample_direction retourne une direction en fonction de la texture
-    // brute. Idéalement il faudrait tourner le vecteur résultat :
     Real r1 = random_real();
     auto it_y = std::lower_bound(marginal_CDF.begin(), marginal_CDF.end(), r1);
     int y = std::max(0, (int)(it_y - marginal_CDF.begin()) - 1);
