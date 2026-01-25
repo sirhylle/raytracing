@@ -41,22 +41,20 @@ class SceneBuilder:
         self.registry = {}
         self.asset_library = {}
 
-    # --- Primitives Simples ---
+    # --- Primitives PBR ---
 
-    def add_sphere(self, center, radius, mat_type, color, fuzz=0.0, ir=1.5):
-        # 1. Appel Moteur
-        # Note: center peut être liste ou vec3, on assure le format liste pour le registre
+    def add_sphere(self, center, radius, mat_type, color, roughness=0.5, metallic=0.0, ir=1.5, transmission=0.0, fuzz=None):
+        # Compatibility handling
+        if fuzz is not None: roughness = fuzz
+
         c_list = list(center) if isinstance(center, (list, tuple, np.ndarray)) else [center.x(), center.y(), center.z()]
-        
-        # Le binding C++ attend un Vec3
         v_center = cpp_engine.Vec3(float(c_list[0]), float(c_list[1]), float(c_list[2]))
         
+        # New C++ Signature
         obj_id = self.engine.add_sphere(v_center, float(radius), mat_type, 
                                         cpp_engine.Vec3(float(color[0]), float(color[1]), float(color[2])), 
-                                        float(fuzz), float(ir))
+                                        float(roughness), float(metallic), float(ir), float(transmission))
         
-        # 2. Enregistrement État
-        # Une sphère définie par rayon est vue comme un scale uniforme
         self.registry[obj_id] = {
             'type': 'sphere',
             'pos': c_list,
@@ -64,13 +62,15 @@ class SceneBuilder:
             'scale': [radius, radius, radius],
             'mat_type': mat_type,
             'color': color,
-            'fuzz': float(fuzz),
-            'ir': float(ir)
+            'roughness': float(roughness),
+            'metallic': float(metallic),
+            'ir': float(ir),
+            'transmission': float(transmission)
         }
         return obj_id
 
     def add_checker_sphere(self, center, radius, c1, c2, scale):
-        # Conversion robuste Inputs (List/Tuple/Numpy -> Vec3)
+        # Checker remains simple for now
         def to_v3(v):
             l = list(v) if isinstance(v, (list, tuple, np.ndarray)) else [v.x(), v.y(), v.z()]
             return cpp_engine.Vec3(float(l[0]), float(l[1]), float(l[2])), l
@@ -90,13 +90,16 @@ class SceneBuilder:
             'color': c1_list,
             'color2': c2_list,
             'texture_scale': float(scale),
-            'fuzz': 0.0,
-            'ir': 1.5
+            'roughness': 1.0,
+            'metallic': 0.0,
+            'ir': 1.5,
+            'transmission': 0.0
         }
         return obj_id
 
-    def add_quad(self, Q, u, v, mat_type, color, fuzz=0.0, ir=1.5):
-        # 1. Conversion des inputs (List -> Vec3)
+    def add_quad(self, Q, u, v, mat_type, color, roughness=0.5, metallic=0.0, ir=1.5, transmission=0.0, fuzz=None):
+        if fuzz is not None: roughness = fuzz
+
         def to_v3(val):
             l = list(val) if isinstance(val, (list, tuple, np.ndarray)) else [val.x(), val.y(), val.z()]
             return cpp_engine.Vec3(float(l[0]), float(l[1]), float(l[2])), l
@@ -106,45 +109,37 @@ class SceneBuilder:
         v_v, v_list = to_v3(v)
         v_color, col_list = to_v3(color)
 
-        # [CORRECTION] On crée le Quad à l'origine (0,0,0) dans le moteur C++
-        # Ainsi, sa position ne dépendra QUE de la matrice de transformation.
         origin = cpp_engine.Vec3(0.0, 0.0, 0.0)
+        obj_id = self.engine.add_quad(origin, v_u, v_v, mat_type, v_color, float(roughness), float(metallic), float(ir), float(transmission))
         
-        # On passe 'origin' au lieu de 'v_Q'
-        obj_id = self.engine.add_quad(origin, v_u, v_v, mat_type, v_color, float(fuzz), float(ir))
-        
-        # 2. On garde la VRAIE position dans le registre (pour le Gizmo)
         self.registry[obj_id] = {
             'type': 'quad',
-            'pos': q_list, # Le Gizmo affichera cette position
+            'pos': q_list,
             'u': u_list,
             'v': v_list,
             'rot': [0.0, 0.0, 0.0],
             'scale': [1.0, 1.0, 1.0],
             'mat_type': mat_type,
             'color': col_list,
-            'fuzz': float(fuzz),
-            'ir': float(ir)
+            'roughness': float(roughness),
+            'metallic': float(metallic),
+            'ir': float(ir),
+            'transmission': float(transmission)
         }
         
-        # 3. [CRITIQUE] On applique immédiatement la transformation initiale
-        # On déplace le Quad de (0,0,0) vers sa position Q
         M = tf.translate(q_list[0], q_list[1], q_list[2])
         InvM = np.linalg.inv(M)
-        
         self.engine.update_instance_transform(
             obj_id, 
             np.ascontiguousarray(M, dtype=np.float32), 
             np.ascontiguousarray(InvM, dtype=np.float32)
         )
-
         return obj_id
 
     def add_invisible_sphere_light(self, center, radius, color, raw_color):
         c_list = list(center) if isinstance(center, (list, tuple, np.ndarray)) else [center.x(), center.y(), center.z()]
         v_center = cpp_engine.Vec3(float(c_list[0]), float(c_list[1]), float(c_list[2]))
         
-        # Gestion couleur (parfois Vec3 C++, parfois liste Python)
         r, g, b = 0, 0, 0
         if hasattr(color, 'x'): r, g, b = color.x(), color.y(), color.z()
         else: r, g, b = color[0], color[1], color[2]
@@ -159,7 +154,8 @@ class SceneBuilder:
             'mat_type': 'invisible_light',
             'color': [r, g, b],
             'raw_color': raw_color,
-            'fuzz': 0.0,
+            'roughness': 1.0,
+            'metallic': 0.0,
             'ir': 1.0
         }
         return obj_id
@@ -167,17 +163,6 @@ class SceneBuilder:
     # --- Instances (Meshes) ---
 
     def add_mesh_instance(self, mesh_name, pos=[0.0,0.0,0.0], rot=[0.0,0.0,0.0], scale=[1.0,1.0,1.0]):
-        """
-        Adds a mesh instance to the scene.
-        COMPOSITION ORDER: Scale -> Rotate -> Translate.
-        matrix = T * Ry * Rx * Rz * S
-        
-        Note on Rotation:
-        We apply Y rotation (Heading) first (conceptually, though matrix order might differ depending on convention).
-        Here we use Euler angles composed individually.
-        """
-        # 1. Calcul de la Matrice (Ordre: Scale -> Rotate X/Y/Z -> Translate)
-        # Note: transforms.py gère les degrés
         M = tf.translate(pos[0], pos[1], pos[2]) @ \
             tf.rotate_y(rot[1]) @ \
             tf.rotate_x(rot[0]) @ \
@@ -185,35 +170,40 @@ class SceneBuilder:
             tf.scale(scale[0], scale[1], scale[2])
             
         InvM = np.linalg.inv(M)
-        
         c_M = np.ascontiguousarray(M, dtype=np.float32)
         c_InvM = np.ascontiguousarray(InvM, dtype=np.float32)
         
         obj_id = self.engine.add_instance(mesh_name, c_M, c_InvM)
 
-        # Récupération des données par défaut depuis la bibliothèque
-        def_type = 'lambertian'
+        def_type = 'standard'
         def_col = [0.8, 0.8, 0.8]
-        def_fuzz = 0.0
+        def_rough = 0.5
+        def_metal = 0.0
         def_ir = 1.5
+        def_trans = 0.0
+
         if mesh_name in self.asset_library:
             info = self.asset_library[mesh_name]
             def_type = info.mat_type
             def_col = info.color
-            def_fuzz = info.fuzz
+            # PBR Mapping
+            def_rough = info.roughness
+            def_metal = info.metallic
             def_ir = info.ior
-        
-        # 2. Enregistrement
+            def_trans = info.transmission
+
         self.registry[obj_id] = {
             'type': 'mesh',
             'name': mesh_name,
             'pos': list(pos),
-            'rot': list(rot), # Stocké en degrés pour l'éditeur
+            'rot': list(rot),
             'scale': list(scale),
             'mat_type': def_type, 
             'color': def_col,
-            'fuzz': def_fuzz,
-            'ir': def_ir
+            'roughness': def_rough,
+            'metallic': def_metal,
+            'ir': def_ir,
+            'transmission': def_trans
         }
         return obj_id
 

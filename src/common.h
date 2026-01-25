@@ -246,6 +246,43 @@ inline AABB surrounding_box(const AABB &box0, const AABB &box1) {
 }
 
 // ===============================================================================================
+// BASE ORTHONORMÉE (ONB)
+// ===============================================================================================
+// Permet de passer de l'espace Local (Tangent Space) à l'espace Monde.
+// Indispensable pour le sampling GGX et le Normal Mapping.
+struct ONB {
+  Vec3 axis[3];
+
+  ONB() {}
+
+  Vec3 operator[](int i) const { return axis[i]; }
+  Vec3 &operator[](int i) { return axis[i]; }
+
+  Vec3 u() const { return axis[0]; }
+  Vec3 v() const { return axis[1]; }
+  Vec3 w() const { return axis[2]; }
+
+  // Transforme un vecteur local (ex: échantillon GGX) vers le monde
+  Vec3 local(Real a, Real b, Real c) const {
+    return a * u() + b * v() + c * w();
+  }
+
+  Vec3 local(const Vec3 &a) const {
+    return a.x() * u() + a.y() * v() + a.z() * w();
+  }
+
+  // Construit la base à partir de la normale (Z)
+  // Méthode de Duff et al. (Building an Orthonormal Basis, Revisited)
+  // Plus robuste que les anciennes méthodes basées sur cross(n, up).
+  void build_from_w(const Vec3 &n) {
+    axis[2] = unit_vector(n);
+    Vec3 a = (std::fabs(w().x()) > 0.9f) ? Vec3(0, 1, 0) : Vec3(1, 0, 0);
+    axis[1] = unit_vector(cross(w(), a));
+    axis[0] = cross(w(), v());
+  }
+};
+
+// ===============================================================================================
 // MATRICE 4x4 (Pour les Instances)
 // ===============================================================================================
 

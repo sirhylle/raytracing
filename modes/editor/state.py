@@ -206,9 +206,16 @@ class EditorState:
         if not d: return
         ctype = d.get('mat_type', 'lambertian')
         ccol  = d.get('color', [0.8, 0.8, 0.8])
-        cfuzz = d.get('fuzz', 0.0)
-        cir   = d.get('ir', 1.5)
-        engine.update_instance_material(self.selected_id, ctype, cpp_engine.Vec3(*ccol), cfuzz, cir)
+        
+        # PBR Fields
+        crough = d.get('roughness', 0.5)
+        if 'fuzz' in d: crough = d['fuzz'] # Legacy mapping
+
+        cmetal = d.get('metallic', 0.0)
+        cir    = d.get('ir', 1.5)
+        ctrans = d.get('transmission', 0.0)
+        
+        engine.update_instance_material(self.selected_id, ctype, cpp_engine.Vec3(*ccol), crough, cmetal, cir, ctrans)
         self.dirty = True
 
     def load_new_env_map(self, engine):
@@ -327,10 +334,15 @@ class EditorState:
         pos = data['pos']
         rot = data.get('rot', [0.0, 0.0, 0.0]) # Le loader stocke ça en degrés
         scale = data['scale']
+        
+        # PBR Params
         col = data.get('color', [0.8, 0.8, 0.8])
         mat = data.get('mat_type', 'lambertian')
-        fuzz = data.get('fuzz', 0.0)
+        rough = data.get('roughness', 0.5)
+        metal = data.get('metallic', 0.0)
+        trans = data.get('transmission', 0.0)
         ir = data.get('ir', 1.5)
+        if 'fuzz' in data: rough = data['fuzz']
 
         new_id = -1
 
@@ -338,40 +350,40 @@ class EditorState:
         # Le builder va créer l'objet C++ ET remplir le registre pour nous.
         
         if otype == 'sphere':
-            # add_sphere(center, radius, mat_type, color, fuzz, ir)
-            # Le loader gère la conversion liste -> Vec3
-            new_id = self.builder.add_sphere(pos, scale[0], mat, col, fuzz, ir)
+            # add_sphere(center, radius, mat_type, color, roughness, metallic, ir, transmission)
+            new_id = self.builder.add_sphere(pos, scale[0], mat, col, roughness=rough, metallic=metal, ir=ir, transmission=trans)
 
         elif otype == 'mesh':
-            # add_mesh_instance(mesh_name, pos, rot, scale)
-            # Les Cubes sont gérés ici s'ils sont des meshes
             name = data.get('name', 'Unknown')
             new_id = self.builder.add_mesh_instance(name, pos, rot, scale)
+            # Force properties
+            self.builder.registry[new_id]['color'] = col
+            self.builder.registry[new_id]['mat_type'] = mat
+            self.builder.registry[new_id]['roughness'] = rough
+            self.builder.registry[new_id]['metallic'] = metal
+            self.builder.registry[new_id]['ir'] = ir
+            self.builder.registry[new_id]['transmission'] = trans
+            self.push_material_update(engine)
             
         elif otype == 'light_sun':
-             # add_invisible_sphere_light(center, radius, color, raw_color)
              raw = data.get('raw_color', col)
              new_id = self.builder.add_invisible_sphere_light(pos, scale[0], col, raw)
 
         elif otype == 'checker_sphere':
-            # add_checker_sphere(center, radius, c1, c2, scale)
             c2 = data.get('color2', [0.0, 0.0, 0.0])
             tex_scale = data.get('texture_scale', 4.0)
             new_id = self.builder.add_checker_sphere(pos, scale[0], col, c2, tex_scale)
 
         elif otype == 'quad':
-            # add_quad(Q, u, v, mat_type, color, fuzz, ir)
-            # Grâce à ta modif, on passe les listes u/v direct !
             u_vec = data.get('u', [1,0,0])
             v_vec = data.get('v', [0,1,0])
-            new_id = self.builder.add_quad(pos, u_vec, v_vec, mat, col, fuzz, ir)
+            new_id = self.builder.add_quad(pos, u_vec, v_vec, mat, col, roughness=rough, metallic=metal, ir=ir, transmission=trans)
              
         # 4. Finalisation UX
         if new_id != -1:
             # On ne change pas le nom pour l'instant car il sert à retrouver les meshes
             if 'name' in self.builder.registry[new_id]:
                 pass
-                #self.builder.registry[new_id]['name'] = f"{self.builder.registry[new_id]['name']}_copy"
 
             # On sélectionne le nouvel objet et on active le mode MOVE
             self.selected_id = new_id
@@ -399,14 +411,11 @@ class EditorState:
         
         # 2. Création selon le type
         if type_key == "sphere":
-            new_id = self.builder.add_sphere(spawn_pos_list, 1.0, "lambertian", [0.8, 0.8, 0.8])
+            # Default PBR sphere: Matte Grey
+            new_id = self.builder.add_sphere(spawn_pos_list, 1.0, "lambertian", [0.8, 0.8, 0.8], roughness=0.5)
             
         elif type_key == "cube":
              # Le cube n'est pas une primitive native C++, on utilise add_mesh_instance 
-             # (Il faut que 'cube.obj' existe dans assets/ ou soit généré procéduralement... 
-             # Pour l'instant, disons qu'on fait une sphère carrée si tu n'as pas de cube loaded :D 
-             # Ou mieux : On triche en ajoutant un mesh cube par défaut dans le moteur C++ ?)
-             # SI tu n'as pas de cube.obj, utilise une sphere pour tester.
              pass 
 
         elif type_key == "light_sphere":
@@ -453,7 +462,7 @@ class EditorState:
 
         # 2. Construction du Dictionnaire
         data = {
-            "version": "1.1", # On incrémente légèrement
+            "version": "1.2", # PBR Update
             
             # A. Paramètres Globaux (Render, System, Animation) [MIS A JOUR]
             "render_settings": {
@@ -632,17 +641,30 @@ class EditorState:
             scale = obj["scale"]
             mat = obj.get("mat_type", "lambertian")
             col = obj.get("color", [0.8, 0.8, 0.8])
+            
+            # PBR Load
             fuzz = obj.get("fuzz", 0.0)
+            rough = obj.get("roughness", fuzz)
+            metal = obj.get("metallic", 0.0)
             ir = obj.get("ir", 1.5)
-            name = obj.get("name") 
+            trans = obj.get("transmission", 0.0)
 
             new_id = -1
             if otype == "sphere":
-                new_id = self.builder.add_sphere(pos, scale[0], mat, col, fuzz, ir)
+                new_id = self.builder.add_sphere(pos, scale[0], mat, col, roughness=rough, metallic=metal, ir=ir, transmission=trans)
             elif otype == "mesh":
                 asset_name = obj.get("asset_name")
                 # Pas de logique complexe ici, add_mesh_instance gère l'appel moteur
                 new_id = self.builder.add_mesh_instance(asset_name, pos, rot, scale)
+                # FORCE props
+                self.builder.registry[new_id]['color'] = col
+                self.builder.registry[new_id]['mat_type'] = mat
+                self.builder.registry[new_id]['roughness'] = rough
+                self.builder.registry[new_id]['metallic'] = metal
+                self.builder.registry[new_id]['ir'] = ir
+                self.builder.registry[new_id]['transmission'] = trans
+                self.push_material_update(self.builder.engine)
+                
             elif otype == "checker_sphere":
                 c2 = obj.get("color2", [0,0,0])
                 tscale = obj.get("texture_scale", 10.0)
@@ -650,7 +672,7 @@ class EditorState:
             elif otype == "quad":
                 u = obj.get("u", [1,0,0])
                 v = obj.get("v", [0,1,0])
-                new_id = self.builder.add_quad(pos, u, v, mat, col, fuzz, ir)
+                new_id = self.builder.add_quad(pos, u, v, mat, col, roughness=rough, metallic=metal, ir=ir, transmission=trans)
 
             if new_id != -1 and name:
                 self.builder.registry[new_id]['name'] = name

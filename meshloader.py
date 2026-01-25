@@ -36,10 +36,12 @@ class MeshInfo:
     center: np.ndarray  # Le centre géométrique
 
     # Infos Matériau par défaut de l'asset
-    mat_type: str = "lambertian"
+    mat_type: str = "standard"
     color: list = field(default_factory=lambda: [0.8, 0.8, 0.8])
-    fuzz: float = 0.0
+    roughness: float = 0.5
+    metallic: float = 0.0
     ior: float = 1.5
+    transmission: float = 0.0
     
     # Helpers pratiques (distances depuis le pivot 0,0,0)
     @property
@@ -52,143 +54,13 @@ class MeshInfo:
         return (f"<MeshInfo '{self.name}': {self.mat_type} | W={self.size[0]:.2f}, H={self.size[1]:.2f}, D={self.size[2]:.2f} | "
                 f"Bottom Y={self.bottom_y:.3f}>")
 
-# ==================================================================================
-# 2. Fonctions de Chargement
-# ==================================================================================
-
-def load_mesh_to_engine(engine, file_path, scale=1.0, translation=[0,0,0], auto_center=False,
-                        override_mat=None, override_color=None, override_ior=None):
-    """
-    Charge un fichier 3D et l'ajoute directement à la scène (HittableList).
-    Retourne un objet MeshInfo.
-    """
-    if not os.path.exists(file_path):
-        print(f"[Error] Mesh file not found: {file_path}")
-        return None
-
-    print(f"[Loader] Processing mesh: {file_path}...")
-    
-    try:
-        scene_or_mesh = trimesh.load(file_path, force=None)
-    except Exception as e:
-        print(f"[Error] Failed to load mesh: {e}")
-        return None
-
-    geometries = []
-    if isinstance(scene_or_mesh, trimesh.Scene):
-        geometries = list(scene_or_mesh.geometry.values())
-    else:
-        geometries = [scene_or_mesh]
-
-    # --- Pré-calcul pour auto-centrage global ---
-    all_verts_raw = []
-    for g in geometries: 
-        all_verts_raw.append(g.vertices)
-    
-    center_mass = np.array([0,0,0])
-    if auto_center and all_verts_raw:
-        combined = np.vstack(all_verts_raw)
-        center_mass = combined.mean(axis=0)
-
-    # Liste pour stocker tous les vertices finaux (pour MeshInfo)
-    all_final_verts = [] 
-
-    print(f"[Loader] Found {len(geometries)} sub-meshes.")
-
-    for geom in geometries:
-        # --- A. Conversion Matériau (.mtl -> PBR) ---
-        mat_type = "lambertian"
-        color = [0.8, 0.8, 0.8]
-        fuzz = 0.0
-        ior = 1.5
-        
-        if hasattr(geom.visual, 'material'):
-            mat = geom.visual.material
-            if hasattr(mat, 'diffuse'):
-                rgba = mat.diffuse
-                if rgba.dtype == np.uint8: color = rgba[:3] / 255.0
-                else: color = rgba[:3]
-
-            opacity = getattr(mat, 'opacity', 1.0)
-            if len(getattr(mat, 'diffuse', [])) == 4:
-                alpha = mat.diffuse[3] / 255.0 if mat.diffuse.dtype == np.uint8 else mat.diffuse[3]
-                if alpha < opacity: opacity = alpha
-
-            if opacity < 0.99:
-                mat_type = "dielectric"
-                ior = getattr(mat, 'refraction_index', 1.5)
-                if np.mean(color) < 0.1: color = [0.9, 0.9, 0.9]
-
-            elif hasattr(mat, 'specular'):
-                spec = mat.specular
-                if spec.dtype == np.uint8: spec = spec / 255.0
-                if np.mean(spec[:3]) > 0.2:
-                    mat_type = "metal"
-                    shininess = getattr(mat, 'shininess', 50.0)
-                    fuzz = max(0.0, min(1.0, 1.0 - (shininess / 1000.0)))
-
-        # --- Overrides ---
-        if override_mat is not None: mat_type = override_mat
-        if override_color is not None: color = override_color
-        if override_ior is not None: ior = override_ior
-
-        # --- B. Nettoyage Géométrie ---
-        geom.fix_normals()
-        verts = geom.vertices.copy()
-        
-        if auto_center:
-            verts -= center_mass
-        
-        verts *= scale
-        
-        # On sauvegarde les vertices transformés (avant translation finale) pour le MeshInfo local
-        # (Si on veut le MeshInfo global world-space, il faudrait ajouter la translation)
-        # Ici on garde la logique "taille de l'objet"
-        all_final_verts.append(verts.copy()) 
-
-        verts += np.array(translation)
-        
-        norms = geom.vertex_normals.copy()
-        
-        c_verts = np.ascontiguousarray(verts, dtype=np.float32)
-        c_norms = np.ascontiguousarray(norms, dtype=np.float32)
-        c_faces = np.ascontiguousarray(geom.faces, dtype=np.int32)
-
-        if isinstance(color, np.ndarray): color = color.tolist()
-        vec_color = cpp_engine.Vec3(float(color[0]), float(color[1]), float(color[2]))
-
-        engine.add_mesh(c_verts, c_faces, c_norms, mat_type, vec_color, float(fuzz), float(ior))       
-        
-    # --- C. Construction et Retour de MeshInfo ---
-    if all_final_verts:
-        total_verts = np.vstack(all_final_verts)
-        min_v = total_verts.min(axis=0)
-        max_v = total_verts.max(axis=0)
-        
-        info = MeshInfo(
-            name=os.path.basename(file_path),
-            min_coords=min_v,
-            max_coords=max_v,
-            size=max_v - min_v,
-            center=(min_v + max_v) / 2.0
-        )
-        print(f"[Loader] {info}")
-        return info
-    
-    return None
-
-
-def load_asset(engine, asset_name, file_path, override_mat=None, override_color=None, override_ior=None):
+def load_asset(engine, asset_name, file_path, 
+               override_mat=None, override_color=None, 
+               override_roughness=None, override_metallic=None, 
+               override_ior=None, override_transmission=None):
     """
     Loads a mesh into the Engine's Asset Library (memory) WITHOUT adding it to the scene graph.
-    
-    FEATURE: SMART PIVOT (Feet-to-Zero)
-    -----------------------------------
-    It automatically re-centers the mesh on X/Z, but aligns the bottom (min Y) to Y=0.
-    This ensures that when we place the object at (0,0,0) in the scene, it stands ON the ground,
-    not halfway through it.
-    
-    Returns: A MeshInfo object containing metadata.
+    Supports PBR overrides.
     """
     if not os.path.exists(file_path):
         print(f"[Error] Mesh file not found: {file_path}")
@@ -221,24 +93,40 @@ def load_asset(engine, asset_name, file_path, override_mat=None, override_color=
         mean_z = combined[:, 2].mean()
         center_mass = np.array([mean_x, min_y, mean_z])
 
+    # Default logic PBR
+    last_mat_type = "standard"
+    last_color = [0.8, 0.8, 0.8]
+    last_rough = 0.5
+    last_metal = 0.0
+    last_ior = 1.5
+    last_trans = 0.0
+
     for geom in geometries:
         # 1. Matériaux (Simplifié)
-        mat_type = "lambertian"
+        mat_type = "standard"
         color = [0.8, 0.8, 0.8]
-        fuzz = 0.0
+        roughness = 0.5
+        metallic = 0.0
         ior = 1.5
-
+        transmission = 0.0
+        
+        # Try to infer from trimesh visual (limited)
         if hasattr(geom.visual, 'material'):
             mat = geom.visual.material
             if hasattr(mat, 'diffuse'):
                 rgba = mat.diffuse
-                if rgba.dtype == np.uint8: color = rgba[:3] / 255.0
-                else: color = rgba[:3]
+                if isinstance(rgba, np.ndarray):
+                    if rgba.dtype == np.uint8: color = rgba[:3] / 255.0
+                    else: color = rgba[:3]
+                else: color = rgba[:3] if len(rgba)>=3 else [0.8,0.8,0.8]
         
         # --- APPLICATION DES OVERRIDES ---
         if override_mat: mat_type = override_mat
         if override_color: color = override_color
-        if override_ior is not None: ior = override_ior # <--- LIGNE AJOUTÉE
+        if override_roughness is not None: roughness = override_roughness
+        if override_metallic is not None: metallic = override_metallic
+        if override_ior is not None: ior = override_ior
+        if override_transmission is not None: transmission = override_transmission
 
         # 2. Géométrie
         _ = geom.vertex_normals 
@@ -260,12 +148,15 @@ def load_asset(engine, asset_name, file_path, override_mat=None, override_color=
         # Enregistrement des infos matériau
         last_mat_type = mat_type
         last_color = color
-        last_fuzz = float(fuzz)
+        last_rough = float(roughness)
+        last_metal = float(metallic)
         last_ior = float(ior)
+        last_trans = float(transmission)
 
         # Envoi à l'engine (Asset)
         engine.load_mesh_asset(asset_name, c_verts, c_faces, c_norms, 
-                               mat_type, vec_color, float(fuzz), float(ior))
+                               mat_type, vec_color, 
+                               float(roughness), float(metallic), float(ior), float(transmission))
 
     # --- C. Construction et Retour de MeshInfo ---
     if all_final_verts:
@@ -281,8 +172,10 @@ def load_asset(engine, asset_name, file_path, override_mat=None, override_color=
             center=(min_v + max_v) / 2.0,
             mat_type=last_mat_type,
             color=last_color,
-            fuzz=last_fuzz,
-            ior=last_ior
+            roughness=last_rough,
+            metallic=last_metal,
+            ior=last_ior,
+            transmission=last_trans
         )
         print(f"[Loader] Asset Ready: {info}")
         return info

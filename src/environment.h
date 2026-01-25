@@ -195,6 +195,44 @@ struct EnvironmentMap {
     return unit_vector(dir);
   }
 
+  // Calculate PDF for a given direction (Needed for MIS)
+  Real pdf_value(const Vec3 &dir) const {
+    if (dir.length_squared() < 1e-6f)
+      return 0.0f;
+    Vec3 unit_dir = unit_vector(dir);
+
+    // Direction -> Texture Coordinates
+    auto theta = std::acos(unit_dir.y());
+    auto phi_world = std::atan2(-unit_dir.z(), unit_dir.x()) + PI;
+
+    // Apply Rotation
+    Real phi_texture = phi_world + rotation;
+
+    Real u = phi_texture / (2 * PI);
+    Real v = theta / PI;
+
+    // Pixels
+    int x = static_cast<int>(u * width) % width;
+    int y = static_cast<int>(v * height);
+    if (x < 0)
+      x += width;
+    y = std::max(0, std::min(y, height - 1));
+
+    // Sin Theta term
+    Real sin_theta = std::sin(theta);
+    if (sin_theta <= 0)
+      return 0.0f; // Pole singularity
+
+    // PDF Calculation (Must match sample_direction logic approximately)
+    // pdf = prob_pixel * N / (2 * PI^2 * sin_theta)
+
+    Real prob_y = marginal_CDF[y + 1] - marginal_CDF[y];
+    Real prob_x_given_y = conditional_CDFs[y][x + 1] - conditional_CDFs[y][x];
+    Real prob_pixel = prob_y * prob_x_given_y;
+
+    return prob_pixel * (width * height) / (2 * PI * PI * sin_theta);
+  }
+
   Vec3 sample(const Vec3 &dir, int mode) const {
     if (dir.length_squared() < 1e-6f)
       return Vec3(0, 0, 0);

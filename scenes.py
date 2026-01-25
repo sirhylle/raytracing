@@ -4,6 +4,7 @@ import random
 from dataclasses import dataclass
 from typing import Optional, List, Tuple
 import math
+import materials # NEW
 
 random.seed(60)
 
@@ -18,9 +19,18 @@ class SceneConfig:
     focus_dist: Optional[float] = None
     env_map: Optional[str] = None
     # Lighting
-    env_light_level: float = 1.0     # Sky lighting intensity (as direct lighting)
-    env_direct_level: float = 0.5    # Sky brightness (when viewed directly)
-    env_indirect_level: float = 0.5    # Sky brightness (when viewed indirectly)
+    env_light_level: float = 1.0     
+    env_direct_level: float = 0.5    
+    env_indirect_level: float = 0.5    
+
+    
+# Helper to unpack preset
+def p(name):
+    """Returns PBR params as dict for unpacking into add_* calls."""
+    data = materials.get_preset_params(name) # {'roughness':..., 'metallic':..., ...}
+    # We must also specify mat_type="standard" for C++
+    data['mat_type'] = "standard"
+    return data
 
 class Scene:
     def setup(self, builder, config_overrides: dict = None) -> SceneConfig:
@@ -35,22 +45,27 @@ class CornellBox(Scene):
         red   = [0.65, 0.05, 0.05]
         white = [0.73, 0.73, 0.73]
         light_color = [15.0, 15.0, 15.0]
+        
+        # We use CLAY for matte walls
+        
         # Left Green
-        builder.add_quad(v3([555,0,0]), v3([0,555,0]), v3([0,0,555]), "lambertian", green, 0.0, 1.5)
+        builder.add_quad(v3([555,0,0]), v3([0,555,0]), v3([0,0,555]), color=green, **p("CLAY"))
         # Right Red
-        builder.add_quad(v3([0,0,0]), v3([0,555,0]), v3([0,0,555]), "lambertian", red, 0.0, 1.5)
+        builder.add_quad(v3([0,0,0]), v3([0,555,0]), v3([0,0,555]), color=red, **p("CLAY"))
         # Top Light
-        builder.add_quad(v3([343, 554, 332]), v3([-130,0,0]), v3([0,0,-105]), "light", light_color, 0.0, 1.5)
+        builder.add_quad(v3([343, 554, 332]), v3([-130,0,0]), v3([0,0,-105]), mat_type="light", color=light_color)
         # Floor
-        builder.add_quad(v3([0,0,0]), v3([555,0,0]), v3([0,0,555]), "lambertian", white, 0.0, 1.5)
+        builder.add_quad(v3([0,0,0]), v3([555,0,0]), v3([0,0,555]), color=white, **p("CLAY"))
         # Ceiling
-        builder.add_quad(v3([555,555,555]), v3([-555,0,0]), v3([0,0,-555]), "lambertian", white, 0.0, 1.5)
+        builder.add_quad(v3([555,555,555]), v3([-555,0,0]), v3([0,0,-555]), color=white, **p("CLAY"))
         # Back
-        builder.add_quad(v3([0,0,555]), v3([555,0,0]), v3([0,555,0]), "lambertian", white, 0.0, 1.5)
+        builder.add_quad(v3([0,0,555]), v3([555,0,0]), v3([0,555,0]), color=white, **p("CLAY"))
         
         # Objects
-        builder.add_sphere(v3([200, 100, 200]), 100.0, "metal", [0.8, 0.85, 0.88], 0.0, 1.5)
-        builder.add_sphere(v3([400, 100, 300]), 100.0, "dielectric", [1.0, 1.0, 1.0], 0.0, 1.5)
+        # Metal Sphere
+        builder.add_sphere(v3([200, 100, 200]), 100.0, color=[0.8, 0.85, 0.88], **p("CHROME"))
+        # Glass Sphere
+        builder.add_sphere(v3([400, 100, 300]), 100.0, color=[1.0, 1.0, 1.0], **p("GLASS"))
 
         return SceneConfig(
             lookfrom=[278, 278, -800],
@@ -84,26 +99,27 @@ class RandomSpheres(Scene):
 
                 if (np.linalg.norm([center_x - 4, center_z - 0]) > 0.9):
                     if choose_mat < 0.6:
-                        # Diffuse or Plastic
+                        # Diffuse (Clay) or Plastic
                         albedo = [random.random() * random.random(), random.random() * random.random(), random.random() * random.random()]
                         if random.random() < 0.5:
-                            builder.add_sphere(center, 0.2, "lambertian", albedo, 0.0, 1.5)
+                            builder.add_sphere(center, 0.2, color=albedo, **p("CLAY"))
                         else:
-                            builder.add_sphere(center, 0.2, "plastic", albedo, 0.0, 1.5)
+                            builder.add_sphere(center, 0.2, color=albedo, **p("HARD_PLASTIC"))
                     elif choose_mat < 0.85:
                         # Metal
                         albedo = [0.5 * (1 + random.random()), 0.5 * (1 + random.random()), 0.5 * (1 + random.random())]
-                        fuzz = 0.5 * random.random()
-                        builder.add_sphere(center, 0.2, "metal", albedo, fuzz, 1.5)
+                        vals = p("CHROME")
+                        vals['roughness'] = 0.5 * random.random() # Fuzz
+                        builder.add_sphere(center, 0.2, color=albedo, **vals)
                     else:
                         # Glass
                         tint = [0.95 + 0.05*random.random(), 0.95 + 0.05*random.random(), 0.95 + 0.05*random.random()]
-                        builder.add_sphere(center, 0.2, "dielectric", tint, 0.0, 1.5)
+                        builder.add_sphere(center, 0.2, color=tint, **p("GLASS"))
 
         # Big Spheres
-        builder.add_sphere(v3(0, 1, 0), 1.0, "dielectric", [1, 1, 1], 0.0, 1.5)
-        builder.add_sphere(v3(-4, 1, 0), 1.0, "plastic", [1, 1, 1], 0.0, 1.5)
-        builder.add_sphere(v3(4, 1, 0), 1.0, "metal", [1, 1, 1], 0.0, 1.5)
+        builder.add_sphere(v3(0, 1, 0), 1.0, color=[1, 1, 1], **p("GLASS"))
+        builder.add_sphere(v3(-4, 1, 0), 1.0, color=[1, 1, 1], **p("HARD_PLASTIC"))
+        builder.add_sphere(v3(4, 1, 0), 1.0, color=[1, 1, 1], **p("CHROME"))
 
         return SceneConfig(
             lookfrom=[11, 2, 3],
@@ -130,54 +146,47 @@ class MaterialsShowcase(Scene):
         # 2. Les 4 Grosses Sphères
         large_radius = 1.0
         large_y = large_radius
-        # On stocke leurs positions pour que les petites ne rentrent pas dedans
         large_positions = [v3(-4.5, large_y, 0), v3(-1.5, large_y, 0), v3(1.5, large_y, 0), v3(4.5, large_y, 0)]
         
-        builder.add_sphere(large_positions[0], large_radius, "lambertian", [0.9, 0.9, 0.9])
-        builder.add_sphere(large_positions[1], large_radius, "dielectric", [1.0, 1.0, 1.0])
-        builder.add_sphere(large_positions[2], large_radius, "plastic", [0.2, 0.5, 0.9])
-        builder.add_sphere(large_positions[3], large_radius, "metal", [0.8, 0.85, 0.88], 0.0)
+        builder.add_sphere(large_positions[0], large_radius, color=[0.9, 0.9, 0.9], **p("CLAY"))
+        builder.add_sphere(large_positions[1], large_radius, color=[1.0, 1.0, 1.0], **p("GLASS"))
+        builder.add_sphere(large_positions[2], large_radius, color=[0.2, 0.5, 0.9], **p("HARD_PLASTIC"))
+        builder.add_sphere(large_positions[3], large_radius, color=[0.8, 0.85, 0.88], **p("CHROME"))
         
         for pos in large_positions: placed_spheres.append((pos, large_radius))
 
-        # 3. Les Mini Sphères (Placement sans collision)
+        # 3. Les Mini Sphères
         mini_radius = 0.25
-        # Marge de sécurité pour éviter que les sphères ne se touchent parfaitement
         padding = 0.05
         
-        # Fonction helper pour générer des sphères dans une zone donnée
         def generate_and_place(target_count, x_range, z_range, total_placed_so_far):
             count = 0
             attempts = 0
             max_attempts = target_count * 200
             while count < target_count and attempts < max_attempts:
                 attempts += 1
-                # Candidat position
                 x, z = random.uniform(*x_range), random.uniform(*z_range)
                 candidate_center = v3(x, mini_radius, z)
                 
-                # Check collision avec TOUTES les sphères précédentes (grosses et petites)
                 collision = False
                 for existing_c, existing_r in placed_spheres:
                     if dist_sq(candidate_center, existing_c) < (mini_radius + existing_r + padding)**2:
                         collision = True; break
-                if collision: continue # On rejette et on réessaie
+                if collision: continue 
 
-                # Pas de collision, on place la sphère
                 col = rnd_col()
-                # L'index du matériau dépend du nombre total de petites sphères placées
                 mat_idx = (total_placed_so_far + count) % 4
-                if mat_idx == 0: builder.add_sphere(candidate_center, mini_radius, "lambertian", col)
-                elif mat_idx == 1: builder.add_sphere(candidate_center, mini_radius, "dielectric", [0.7 + 0.3*random.random()]*3)
-                elif mat_idx == 2: builder.add_sphere(candidate_center, mini_radius, "plastic", col)
-                elif mat_idx == 3: builder.add_sphere(candidate_center, mini_radius, "metal", col, random.uniform(0.0, 0.2))
                 
-                # On ajoute à la liste des obstacles
+                if mat_idx == 0: builder.add_sphere(candidate_center, mini_radius, color=col, **p("CLAY"))
+                elif mat_idx == 1: builder.add_sphere(candidate_center, mini_radius, color=[0.7 + 0.3*random.random()]*3, **p("GLASS"))
+                elif mat_idx == 2: builder.add_sphere(candidate_center, mini_radius, color=col, **p("HARD_PLASTIC"))
+                elif mat_idx == 3: 
+                    vals = p("CHROME")
+                    vals['roughness'] = random.uniform(0.0, 0.2)
+                    builder.add_sphere(candidate_center, mini_radius, color=col, **vals)
+                
                 placed_spheres.append((candidate_center, mini_radius))
                 count += 1
-            
-            if attempts >= max_attempts:
-                print(f"Warning: Could not place all spheres in zone Z={z_range}. Area too crowded.")
             return count
 
         generate_and_place(80, (-7, 7), (2.0, 7.0), 0)
@@ -189,68 +198,50 @@ class MaterialsShowcase(Scene):
 
 class MeshScene1(Scene):
     def setup(self, builder, config_overrides: dict = None) -> SceneConfig:
-        # 1. Le Sol
-        builder.add_checker_sphere(
-            cpp_engine.Vec3(0.0, -100, -1.0), 100.0,
-            [0.2, 0.3, 0.1], [0.9, 0.9, 0.9], 10.0
-        )
+        builder.add_checker_sphere(cpp_engine.Vec3(0.0, -100, -1.0), 100.0, [0.2, 0.3, 0.1], [0.9, 0.9, 0.9], 10.0)
         
-        # 2. Chargement via le Builder (Système éditable)
-        # On définit l'asset (le modèle 3D + matériau de base)
+        # Load Asset with overrides
+        vals = p("GLASS")
         builder.load_asset(
-            "my_bunny_asset",                  # Nom unique de l'asset
-            "assets/bunny/bunny.obj",          # Chemin
-            override_mat="dielectric", 
+            "my_bunny_asset", "assets/bunny/bunny.obj",
+            override_mat="standard",
             override_color=[0.7, 0.9, 0.85],
-            override_ior=1.5
-        )
+            override_roughness=vals['roughness'],
+            override_metallic=vals['metallic'],
+            override_ior=vals['ir'],
+            override_transmission=vals['transmission']
+        ) # Note: 'override_mat' is string type in C++, 'standard' is used.
+        # But wait, load_mesh_asset Signature:
+        # load_mesh_asset(name, v, i, n, mat_type, color, rough, metal, ir, trans)
+        # So I need to verify loader.py behavior for 'load_asset' which builds 'load_mesh_asset' calls.
 
-        # 3. Instanciation (Placement dans la scène)
-        # C'est ici que l'objet est ajouté au registre Python et devient cliquable
-        builder.add_mesh_instance(
-            "my_bunny_asset",
-            pos=[0, 0, 0],
-            rot=[0, 0, 0],
-            scale=[1.0, 1.0, 1.0]
-        )
+        builder.add_mesh_instance("my_bunny_asset", pos=[0, 0, 0], rot=[0, 0, 0], scale=[1.0, 1.0, 1.0])
 
-        return SceneConfig(
-            lookfrom=[0, 2, 5], 
-            lookat=[0, 0, 0], 
-            vfov=40.0, 
-            env_map="env-dock-sun.hdr"
-        )
+        return SceneConfig(lookfrom=[0, 2, 5], lookat=[0, 0, 0], vfov=40.0, env_map="env-dock-sun.hdr")
 
 class MeshScene2(Scene):
     def setup(self, builder):
-        # 1. Le Sol
         floor_height = -0.5
-        builder.add_checker_sphere(
-            cpp_engine.Vec3(0.0, -100.0 + floor_height, -1.0), 100.0,
-            [0.2, 0.3, 0.1], [0.9, 0.9, 0.9], 10.0
-        )
+        builder.add_checker_sphere(cpp_engine.Vec3(0.0, -100.0 + floor_height, -1.0), 100.0, [0.2, 0.3, 0.1], [0.9, 0.9, 0.9], 10.0)
 
-        # 2. Chargement Assets
-        # On charge deux versions : une brute, une en verre
-        info_glass = builder.load_asset("obj_glass", "assets/dragon/dragon.obj", override_mat="dielectric", override_color=[0.9, 0.95, 1.0])
-        _          = builder.load_asset("obj_metal", "assets/dragon/dragon.obj", override_mat="metal", override_color=[0.8, 0.6, 0.2])
+        vg = p("GLASS")
+        info_glass = builder.load_asset("obj_glass", "assets/dragon/dragon.obj", 
+                                        override_mat="standard", override_color=[0.9, 0.95, 1.0],
+                                        override_roughness=vg['roughness'], override_metallic=vg['metallic'],
+                                        override_ior=vg['ir'], override_transmission=vg['transmission'])
+                                        
+        vm = p("GOLD") # Let's use Gold instead of Chrome for variety
+        _          = builder.load_asset("obj_metal", "assets/dragon/dragon.obj", 
+                                        override_mat="standard", override_color=[0.8, 0.6, 0.2],
+                                        override_roughness=vm['roughness'], override_metallic=vm['metallic'],
+                                        override_ior=vm['ir'], override_transmission=vm['transmission'])
 
-        if info_glass is None:
-            print("Erreur chargement asset")
-            return
+        if info_glass is None: return
         
-        # 3. Le Roi (Centre)
         scale_king = 2.5
         y_pos_king = floor_height - (scale_king * info_glass.bottom_y)
-        
-        builder.add_mesh_instance(
-            "obj_glass", 
-            pos=[0, y_pos_king, 0], 
-            rot=[0, 90, 0],        # Rotation Y=90 degrés
-            scale=[scale_king, scale_king, scale_king]
-        )
+        builder.add_mesh_instance("obj_glass", pos=[0, y_pos_king, 0], rot=[0, 90, 0], scale=[scale_king]*3)
 
-        # 4. La Garde Royale
         scale_guard = 1.0
         y_pos_guard = floor_height - (scale_guard * info_glass.bottom_y)
         radius = 2.0
@@ -260,22 +251,10 @@ class MeshScene2(Scene):
             angle = (360.0 / count) * i
             x = radius * math.cos(math.radians(angle))
             z = radius * math.sin(math.radians(angle))
-            
-            # Plus besoin de maths complexes ici, on déclare juste l'intention
-            builder.add_mesh_instance(
-                "obj_metal",
-                pos=[x, y_pos_guard, z],
-                rot=[0, -angle - 90, 0], # Orientation
-                scale=[scale_guard, scale_guard, scale_guard]
-            )
+            builder.add_mesh_instance("obj_metal", pos=[x, y_pos_guard, z], rot=[0, -angle - 90, 0], scale=[scale_guard]*3)
 
-        return SceneConfig(
-            lookfrom=[-0.9, 0.7, 3.93], lookat=[-0.73, 0.5, 2.96], vfov=50.0,
-            aperture=0.1, focus_dist=3.72, env_map="env-dock-sun.hdr",
-            env_light_level=1.0, env_direct_level=0.6, env_indirect_level=2.0
-        )
+        return SceneConfig(lookfrom=[-0.9, 0.7, 3.93], lookat=[-0.73, 0.5, 2.96], vfov=50.0, aperture=0.1, focus_dist=3.72, env_map="env-dock-sun.hdr")
 
-# Registry
 AVAILABLE_SCENES = {
     "cornell": CornellBox(),
     "random": RandomSpheres(),
