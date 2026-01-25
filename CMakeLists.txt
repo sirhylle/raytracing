@@ -26,11 +26,16 @@ if(OpenMP_CXX_FOUND)
 endif()
 
 if(MSVC)
-    # Windows : /arch:AVX2 active les instructions AVX2 et FMA
-    # /fp:fast autorise la fusion a*b+c
+    # Windows : /arch:AVX2 active les instructions AVX2 et FMA (High Performance x86_64)
     target_compile_options(cpp_engine PRIVATE /O2 /fp:fast /arch:AVX2)
 else()
-    # Linux/Mac : -march=native active FMA automatiquement si le CPU l'a.
-    # On peut ajouter -mfma explicitement pour être sûr, mais native suffit généralement.
-    target_compile_options(cpp_engine PRIVATE -Ofast -march=native -mfma)
+    # Linux/Mac : -march=native optimise pour le CPU local (Intel ou Apple Silicon)
+    # -Ofast active les optimisations agressives (fast-math)
+    target_compile_options(cpp_engine PRIVATE -Ofast -march=native)
+    
+    # On ajoute -mfma uniquement sur x86_64 pour être explicite (souvent inclus dans native)
+    # Sur ARM64 (Apple Silicon), FMA est standard et -mfma peut ne pas exister ou être un no-op
+    if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)")
+        target_compile_options(cpp_engine PRIVATE -mfma)
+    endif()
 endif()

@@ -3,8 +3,6 @@ import numpy as np
 import random
 from dataclasses import dataclass
 from typing import Optional, List, Tuple
-import meshloader
-import transforms as tf
 import math
 
 random.seed(60)

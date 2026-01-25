@@ -3,13 +3,12 @@ import subprocess
 import os
 import tempfile
 import uuid
-import sys
 
 # --- CONFIGURATION ---
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 OIDN_EXE_NAME = "oidnDenoise.exe" if os.name == 'nt' else "oidnDenoise"
 # On cherche dans un dossier 'oidn' au même niveau que le script
-OIDN_PATH = os.path.join(CURRENT_DIR, "oidn", OIDN_EXE_NAME)
+OIDN_PATH = os.path.join(CURRENT_DIR, "oidn", "bin", OIDN_EXE_NAME)
 
 def _save_pfm(file_path, image):
     """
@@ -115,10 +114,20 @@ def denoise_image(noisy_img, albedo=None, normal=None):
             base_cmd.extend(["--nrm", f_nrm])
             files_to_clean.append(f_nrm)
 
-        # 2. Tentative 1 : GPU (CUDA / Device 0)
-        # On utilise '--device cuda' pour cibler explicitement Nvidia
-        cmd_gpu = base_cmd + ["--device", "cuda"]
-        success = _run_oidn_command(cmd_gpu, "GPU (Nvidia RTX)")
+        # 2. Tentative 1 : GPU / Default
+        cmd_gpu = []
+        desc_gpu = ""
+        
+        if os.name == 'nt':
+            # Windows : on tente CUDA explicitement (optim pour RTX)
+            cmd_gpu = base_cmd + ["--device", "cuda"]
+            desc_gpu = "GPU (Nvidia RTX)"
+        else:
+            # Mac/Linux : on laisse OIDN choisir (Metal pour Mac, ou CPU/SyCL sur Linux)
+            cmd_gpu = base_cmd + ["--device", "default"]
+            desc_gpu = "Device par défaut (Metal/CPU)"
+
+        success = _run_oidn_command(cmd_gpu, desc_gpu)
 
         # 3. Tentative 2 : CPU (Fallback) si le GPU a échoué
         if not success:

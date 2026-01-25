@@ -22,7 +22,6 @@ import numpy as np
 import imageio.v3 as iio
 import scenes
 import transforms as tf
-import math
 from config import RenderConfig
 
 # ==================================================================================

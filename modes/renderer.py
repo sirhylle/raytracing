@@ -27,6 +27,7 @@ import multiprocessing
 import math
 from tqdm import tqdm
 import glob
+from denoise import denoise_image
 
 
 
@@ -133,7 +134,6 @@ def save_debug_layer(data, filename, is_normal=False):
 def try_denoise(pixels, **kwargs):
     """Tente de débruiter l'image."""
     try:
-        from denoise import denoise_image
         return denoise_image(pixels, **kwargs)
     except ImportError:
         return None

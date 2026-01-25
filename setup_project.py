@@ -8,7 +8,8 @@ import platform
 from pathlib import Path
 
 # --- CONFIGURATION ---
-OIDN_URL = "https://github.com/RenderKit/oidn/releases/download/v2.3.0/oidn-2.3.0.x64.windows.zip"
+# --- CONFIGURATION ---
+OIDN_REPO_API = "https://api.github.com/repos/RenderKit/oidn/releases/latest"
 OIDN_DIR = "oidn"
 ASSETS_DIR = "assets"
 ASSETS = {
@@ -36,16 +37,69 @@ MODULE_NAME = "cpp_engine"
 def step(msg):
     print(f"\n[SETUP] ➤ {msg}")
 
-# --- 1. GESTION OIDN ---
+# --- 1. GESTION OIDN (AUTO-UPDATE) ---
+def get_platform_oidn_asset_filter():
+    sys_name = platform.system()
+    machine = platform.machine().lower()
+    
+    if sys_name == "Windows":
+        return ".x64.windows.zip"
+    elif sys_name == "Linux":
+        return ".x86_64.linux.tar.gz"
+    elif sys_name == "Darwin": # macOS
+        if "arm" in machine or "aarch" in machine:
+            return ".arm64.macos.tar.gz"
+        else:
+            return ".x86_64.macos.tar.gz"
+    return None
+
 def install_oidn():
-    if os.path.exists(OIDN_DIR) and os.path.exists(os.path.join(OIDN_DIR, "oidnDenoise.exe")):
+    # Check si déjà installé (approximatif, on regarde si le binaire existe)
+    # Sur Windows c'est bin/oidnDenoise.exe, sur Linux/Mac c'est bin/oidnDenoise
+    bin_name = "oidnDenoise.exe" if os.name == 'nt' else "oidnDenoise"
+    expected_bin = os.path.join(OIDN_DIR, "bin", bin_name)
+    
+    if os.path.exists(OIDN_DIR) and os.path.exists(expected_bin):
         print(f"   ✔ Dossier '{OIDN_DIR}' prêt.")
         return
 
-    step(f"Téléchargement de OIDN...")
-    zip_name = "oidn.zip"
+    step("Recherche de la dernière version de OIDN (GitHub API)...")
     
+    import json
+    import platform
+    import tarfile
+
+    asset_filter = get_platform_oidn_asset_filter()
+    if not asset_filter:
+        print(f"   ❌ Plateforme non supportée automatiquement: {platform.system()} {platform.machine()}")
+        return
+
     try:
+        # 1. Fetch JSON Release
+        with urllib.request.urlopen(OIDN_REPO_API) as response:
+            data = json.loads(response.read().decode())
+        
+        tag_name = data.get("tag_name", "Unknown")
+        print(f"   ℹ Version trouvée : {tag_name}")
+        
+        # 2. Find matching asset
+        download_url = None
+        asset_name = None
+        
+        for asset in data.get("assets", []):
+            name = asset["name"]
+            if name.endswith(asset_filter):
+                download_url = asset["browser_download_url"]
+                asset_name = name
+                break
+        
+        if not download_url:
+            print(f"   ❌ Aucun asset correspondant à '{asset_filter}' trouvé dans la release.")
+            return
+
+        # 3. Download
+        step(f"Téléchargement de {asset_name}...")
+        
         def reporthook(blocknum, blocksize, totalsize):
             readsofar = blocknum * blocksize
             if totalsize > 0:
@@ -53,30 +107,52 @@ def install_oidn():
                 sys.stdout.write(f"\r   Progress: {percent:.1f}%")
                 sys.stdout.flush()
         
-        urllib.request.urlretrieve(OIDN_URL, zip_name, reporthook)
+        urllib.request.urlretrieve(download_url, asset_name, reporthook)
         print("\n   ✔ Téléchargement terminé.")
 
+        # 4. Extract
         print("   Extraction...")
-        with zipfile.ZipFile(zip_name, 'r') as zip_ref:
-            zip_ref.extractall(".")
-
-        # Nettoyage et déplacement
-        extracted_name = "oidn-2.3.0.x64.windows" # À adapter si la version change
-        bin_folder = os.path.join(extracted_name, "bin")
         
-        if os.path.exists(OIDN_DIR): shutil.rmtree(OIDN_DIR)
+        extracted_folder_name = None
         
-        if os.path.exists(bin_folder):
-            shutil.move(bin_folder, OIDN_DIR)
+        if asset_name.endswith(".zip"):
+            with zipfile.ZipFile(asset_name, 'r') as zip_ref:
+                # On devine le nom du dossier extrait (souvent oidn-2.x.x...)
+                root_name = zip_ref.namelist()[0].split('/')[0]
+                extracted_folder_name = root_name
+                zip_ref.extractall(".")
+        elif asset_name.endswith(".tar.gz") or asset_name.endswith(".tgz"):
+            with tarfile.open(asset_name, "r:gz") as tar:
+                # On devine le nom du dossier extrait
+                root_name = tar.getnames()[0].split('/')[0]
+                extracted_folder_name = root_name
+                tar.extractall(".")
+        
+        # 5. Move & Cleanup
+        if extracted_folder_name and os.path.exists(extracted_folder_name):
+            # Sur Windows l'archive contient souvent le dossier 'bin' directement dans le dossier racine
+            # On veut déplacer le contenu de extracted_folder_name vers OIDN_DIR
+            
+            if os.path.exists(OIDN_DIR): shutil.rmtree(OIDN_DIR)
+            shutil.move(extracted_folder_name, OIDN_DIR)
             print(f"   ✔ Installé dans ./{OIDN_DIR}")
-        else:
-            print("   ❌ Erreur : Dossier bin introuvable dans l'archive.")
 
-        if os.path.exists(zip_name): os.remove(zip_name)
-        if os.path.exists(extracted_name): shutil.rmtree(extracted_name)
+            # Sur Unix/Mac, il faut rendre le binaire exécutable
+            if os.name != 'nt':
+                bin_path = os.path.join(OIDN_DIR, "bin", "oidnDenoise")
+                if os.path.exists(bin_path):
+                    import stat
+                    st = os.stat(bin_path)
+                    os.chmod(bin_path, st.st_mode | stat.S_IEXEC)
+                    print(f"   ✔ Permissions +x appliquées sur {bin_path}")
+        else:
+            print(f"   ❌ Erreur d'extraction : dossier '{extracted_folder_name}' introuvable.")
+
+        if os.path.exists(asset_name): os.remove(asset_name)
 
     except Exception as e:
         print(f"   ❌ Erreur OIDN : {e}")
+
 
 # --- 1b. GESTION ASSETS ---
 def install_assets():
@@ -180,6 +256,57 @@ def install_env_maps():
 
 
 # --- 2. BUILD SYSTEM (Nanobind + CMake) ---
+def check_build_tools():
+    step("Vérification des outils de compilation...")
+    
+    # 1. Check CMake (Géré par uv, mais on vérifie quand même)
+    try:
+        subprocess.run(["uv", "run", "cmake", "--version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        print("   ✔ CMake est présent (via uv).")
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        print("   ❌ ERREUR CRITIQUE: 'cmake' introuvable dans le PATH.")
+        print("   -> Assurez-vous d'avoir fait 'uv sync' (qui installe le package cmake pypi).")
+        sys.exit(1)
+
+    # 2. Check Compiler (Le vrai point dur)
+    # On essaie de détecter un compilateur C++ commun
+    compilers = []
+    if os.name == 'nt':
+        compilers = ["cl", "g++", "clang++"]
+    else:
+        compilers = ["c++", "g++", "clang++"]
+        
+    found_compiler = False
+    
+    # 2a. Check dans le PATH
+    for comp in compilers:
+        if shutil.which(comp):
+            found_compiler = True
+            print(f"   ✔ Compilateur détecté (PATH) : {comp}")
+            break
+    
+    # 2b. Check spécial Windows (vswhere ou Ninja/CMake capability)
+    if not found_compiler and os.name == 'nt':
+        # CMake est malin, il sait trouver VS même sans PATH.
+        # On va faire confiance à la présence de "vswhere" ou d'une install standard VS.
+        vswhere = os.path.expandvars(r"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe")
+        if os.path.exists(vswhere):
+             found_compiler = True
+             print(f"   ✔ Visual Studio détecté (via vswhere).")
+
+    if not found_compiler:
+        print("   ⚠️  ATTENTION: Aucun compilateur C++ standard (cl, g++, clang++) n'a été trouvé dans le PATH.")
+        print("   Cependant, si Visual Studio est installé, CMake le trouvera peut-être tout seul.")
+        print("   La compilation risque d'échouer si rien n'est trouvé.")
+        if os.name == 'nt':
+             print("   Conseil : Lancez ce script depuis le 'x64 Native Tools Command Prompt for VS 20xx' si ça échoue.")
+        
+        # On ne quitte pas forcément, car cmake peut trouver un compilo non standard,
+        # mais on prévient l'utilisateur.
+        print("\n   Appuyez sur Entrée pour tenter quand même, ou Ctrl+C pour annuler.")
+        try: input()
+        except: sys.exit(1)
+
 def check_uv():
     step("Vérification dépendances (uv sync)...")
     subprocess.run(["uv", "sync"], check=True)
@@ -228,6 +355,7 @@ def main():
     print("=== AUTO-SETUP RAYTRACER (NANOBIND) ===")
     try:
         check_uv()
+        check_build_tools()
         install_oidn()
         install_assets()
         install_env_maps()
