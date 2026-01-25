@@ -88,13 +88,13 @@ class EditorState:
 
         # --- ENVIRONMENT & SUN ---
         self.env_rotation = 0.0
-        self.env_light_level = conf.env_light_level
-        self.env_direct_level = conf.env_direct_level
-        self.env_indirect_level = conf.env_indirect_level
+        self.env_exposure = conf.env_exposure
+        self.env_background = conf.env_background
+        self.env_diffuse = conf.env_diffuse
+        self.env_specular = conf.env_specular
         
         self.sun_id = -1
         self.sun_enabled = conf.auto_sun
-        self.auto_sun_env_level = conf.auto_sun_env_level
         self.sun_intensity = conf.auto_sun_intensity
         self.sun_radius = conf.auto_sun_radius
         self.sun_dist = conf.auto_sun_dist
@@ -234,9 +234,9 @@ class EditorState:
         # Chargement via Loader
         median = loader.load_environment(
             self.builder, file_path,
-            env_direct_level=self.env_direct_level, env_light_level=self.env_light_level, env_indirect_level=self.env_indirect_level,
-            auto_sun=True, auto_sun_intensity=self.sun_intensity, auto_sun_radius=self.sun_radius,
-            auto_sun_dist=self.sun_dist, auto_sun_env_level=self.auto_sun_env_level,
+            env_diffuse=self.env_diffuse, env_background=self.env_background, env_specular=self.env_specular,
+            auto_sun=self.sun_enabled, auto_sun_intensity=self.sun_intensity, auto_sun_radius=self.sun_radius,
+            auto_sun_dist=self.sun_dist,
             clipping_multiplier=self.env_clipping_multiplier
         )
         self.env_median_luminance = median
@@ -258,9 +258,9 @@ class EditorState:
         self.accum_spp = 0
 
     def update_environment(self, engine):
-        lighting_level = self.auto_sun_env_level if (self.sun_enabled and self.sun_id != -1) else self.env_light_level
+        # NEW: Direct Pass-Through (No Swapping)
         engine.set_env_rotation(self.env_rotation)
-        engine.set_env_levels(self.env_direct_level, lighting_level, self.env_indirect_level)
+        engine.set_env_levels(self.env_exposure, self.env_background, self.env_diffuse, self.env_specular)
         
         # Mise à jour directe du clipping (via API Engine)
         if hasattr(engine, 'get_env_clipping_threshold'): # Safety check
@@ -495,15 +495,15 @@ class EditorState:
             # C. Environnement (inchangé)
             "environment": {
                 "map_path": self.conf.env_map,
-                "light_level": self.env_light_level,
-                "direct_level": self.env_direct_level,
-                "indirect_level": self.env_indirect_level,
+                "exposure": self.env_exposure,
+                "background_level": self.env_background,
+                "diffuse_level": self.env_diffuse,
+                "specular_level": self.env_specular,
                 "rotation": self.env_rotation,
                 "auto_sun": self.sun_enabled,
                 "sun_intensity": self.sun_intensity,
                 "sun_radius": self.sun_radius,
-                "sun_dist": self.sun_dist,
-                "sun_env_level": self.auto_sun_env_level
+                "sun_dist": self.sun_dist
             },
 
             # D. Liste des Objets (inchangé)
@@ -591,17 +591,19 @@ class EditorState:
         self.focus_dist = cam.get("focus_dist", 10.0)
         self.move_speed = max(1.0, length * 0.8)
 
-        # 4. RESTAURATION ENVIRONNEMENT (inchangé)
+        # 4. RESTAURATION ENVIRONNEMENT
         env = data["environment"]
-        self.env_light_level = env.get("light_level", 1.0)
-        self.env_direct_level = env.get("direct_level", 1.0)
-        self.env_indirect_level = env.get("indirect_level", 1.0)
+        self.env_exposure = env.get("exposure", 1.0)
+        self.env_background = env.get("background_level", env.get("light_level", 1.0)) # Legacy mapping: light_level -> background
+        self.env_diffuse = env.get("diffuse_level", env.get("direct_level", 1.0)) # Legacy mapping: direct_level -> diffuse
+        self.env_specular = env.get("specular_level", env.get("indirect_level", 1.0)) # Legacy mapping: indirect_level -> specular
+        
         self.env_rotation = env.get("rotation", 0.0)
         self.sun_enabled = env.get("auto_sun", False)
         self.sun_intensity = env.get("sun_intensity", 50.0)
         self.sun_radius = env.get("sun_radius", 10.0)
         self.sun_dist = env.get("sun_dist", 1000.0)
-        self.auto_sun_env_level = env.get("sun_env_level", 1.0)
+        # auto_sun_env_level deprecated
         
         env_map_path = env.get("map_path")
         if env_map_path:
@@ -610,14 +612,13 @@ class EditorState:
              
              self.env_median_luminance = loader.load_environment(
                  self.builder, env_map_path,
-                 env_light_level=self.env_light_level,
-                 env_direct_level=self.env_direct_level,
-                 env_indirect_level=self.env_indirect_level,
+                 env_background=self.env_background,
+                 env_diffuse=self.env_diffuse,
+                 env_specular=self.env_specular,
                  auto_sun=self.sun_enabled,
                  auto_sun_intensity=self.sun_intensity,
                  auto_sun_radius=self.sun_radius,
                  auto_sun_dist=self.sun_dist,
-                 auto_sun_env_level=self.auto_sun_env_level,
                  clipping_multiplier=self.env_clipping_multiplier
              )
         
@@ -641,6 +642,7 @@ class EditorState:
             scale = obj["scale"]
             mat = obj.get("mat_type", "lambertian")
             col = obj.get("color", [0.8, 0.8, 0.8])
+            name = obj.get("name") # FIX: Define name variable
             
             # PBR Load
             fuzz = obj.get("fuzz", 0.0)

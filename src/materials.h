@@ -140,19 +140,39 @@ public:
     return cos < 0 ? 0 : cos / PI;
   }
 
+  // struct to hold separated BSDF components
+  struct BsdfComponents {
+    Vec3 diffuse;
+    Vec3 specular;
+  };
+
+  virtual BsdfComponents eval_bsdf_components(const Ray &r_in,
+                                              const HitRecord &rec,
+                                              const Vec3 &scattered_dir) const {
+    // Default fallback: everything is diffuse
+    Vec3 total = eval_bsdf(r_in, rec, scattered_dir);
+    return {total, Vec3(0, 0, 0)};
+  }
+
   virtual Vec3 emit(const Ray &r_in, const HitRecord &rec, Real u, Real v,
                     const Vec3 &p) const {
     return Vec3(0, 0, 0);
   }
 
   virtual bool is_transparent() const { return false; }
+
+  // NEW: Calculates absorption/throughput for Shadow Rays
+  virtual Vec3 shadow_attenuation(const Ray &r_in, const HitRecord &rec) const {
+    return Vec3(0, 0, 0);
+  }
+
   virtual Vec3 get_albedo(const HitRecord &rec) const { return Vec3(0, 0, 0); }
   virtual ~Material() = default;
 };
 
-// ===============================================================================================
+// ===================================
 // PBR MATERIAL (Standard Surface / GGX)
-// ===============================================================================================
+// ===================================
 
 class GgxMaterial : public Material {
 public:
@@ -169,11 +189,42 @@ public:
     return albedo;
   }
 
-  virtual bool is_transparent() const override { return transmission > 0.9f; }
+  virtual bool is_transparent() const override { return transmission > 0.001f; }
+
+  virtual Vec3 shadow_attenuation(const Ray &r_in,
+                                  const HitRecord &rec) const override {
+    // Volumetric Absorption (Beer's Law) + Fresnel + Metallic Blend
+
+    // 1. Fresnel Loss (Reflection)
+    Vec3 unit_direction = unit_vector(r_in.dir);
+    Real cos_theta = std::fmin(dot(-unit_direction, rec.normal), 1.0f);
+    Real refraction_ratio = rec.front_face ? (1.0f / ior) : ior;
+    Real R = fresnel_dielectric_exact(cos_theta, refraction_ratio);
+
+    // 2. Base Throughput
+    // Transmission factor reduced by reflection (1-R) and metal opacity (1-M)
+    Vec3 throughput =
+        Vec3(1.0f, 1.0f, 1.0f) * transmission * (1.0f - R) * (1.0f - metallic);
+
+    // 3. Volumetric Absorption (Beer's Law)
+    // Only applied when EXITING the medium (Back Face), as 'rec.t' represents
+    // the distance traveled inside.
+    if (!rec.front_face) {
+      // We assume Albedo represents the color at distance = 1.0 unit
+      // Absorption = Albedo^Distance
+      throughput.e[0] *= std::pow(albedo.x(), rec.t);
+      throughput.e[1] *= std::pow(albedo.y(), rec.t);
+      throughput.e[2] *= std::pow(albedo.z(), rec.t);
+    }
+    // If Entering (Front Face), absorption is 0, just Fresnel/Base applied.
+
+    return throughput;
+  }
 
   // New Evaluation function for NEE (BSDF * cos_theta)
-  virtual Vec3 eval_bsdf(const Ray &r_in, const HitRecord &rec,
-                         const Vec3 &scattered_dir) const override {
+  virtual BsdfComponents
+  eval_bsdf_components(const Ray &r_in, const HitRecord &rec,
+                       const Vec3 &scattered_dir) const override {
     Vec3 l = unit_vector(scattered_dir);
     Vec3 v = unit_vector(-r_in.dir);
     Vec3 n = rec.normal;
@@ -183,12 +234,11 @@ public:
 
     // Below horizon -> 0
     if (n_dot_l <= 0.0f || n_dot_v <= 0.0f)
-      return Vec3(0, 0, 0);
+      return {Vec3(0, 0, 0), Vec3(0, 0, 0)};
 
-    // 1. Transmission / Glass Handling in NEE?
-    if (transmission > 0.0f) {
-      // Simplification: NEE ignores transmission for now
-      // return Vec3(0,0,0);
+    // 1. Transmission ignored in NEE
+    if (transmission > 0.999f && metallic < 0.001f) {
+      return {Vec3(0, 0, 0), Vec3(0, 0, 0)};
     }
 
     // 2. Diffuse / Specular Mix
@@ -200,20 +250,11 @@ public:
 
     if (metallic > 0.0f) {
       // Conductor: Use Schlick with F0 = Albedo
-      Vec3 F0 = albedo; // Simplified metal F0
-      // Or if we strictly follow F0 Mix:
-      // Real r0 = (ior-1)/(ior+1)^2 ? No, metals have complex IOR.
-      // We use Albedo as F0 for metals.
+      Vec3 F0 = albedo;
       F = schlick_fresnel_color(v_dot_h, F0);
     } else {
       // Dielectric: Use Exact Fresnel
-      // Note: F0 also depends on View? No, F depends on V.H
-      // Standard PBR uses Schlick for everything.
-      // User requested Exact Fresnel.
-      // But Exact Fresnel is for IOR.
-      // Let's use Exact for the Dielectric part.
-      Real F_diel = fresnel_dielectric_exact(
-          v_dot_h, 1.0f / ior); // Assuming Air->Material
+      Real F_diel = fresnel_dielectric_exact(v_dot_h, 1.0f / ior);
       F = Vec3(F_diel, F_diel, F_diel);
     }
 
@@ -230,7 +271,14 @@ public:
     Vec3 kD = (Vec3(1.0f, 1.0f, 1.0f) - F) * (1.0f - metallic);
     Vec3 diffuse = (kD * albedo / PI) * n_dot_l;
 
-    return diffuse + specular;
+    return {diffuse, specular};
+  }
+
+  // Legacy kept for compatibility if needed (but we will switch renderer.h)
+  virtual Vec3 eval_bsdf(const Ray &r_in, const HitRecord &rec,
+                         const Vec3 &scattered_dir) const override {
+    auto comps = eval_bsdf_components(r_in, rec, scattered_dir);
+    return comps.diffuse + comps.specular;
   }
 
   // PDF Calculation for MIS
@@ -292,30 +340,55 @@ public:
     Real eff_transmission = transmission * (1.0f - metallic);
 
     if (eff_transmission > 0.0f && random_real() < eff_transmission) {
-      srec.is_specular = true; // Delta dist (refract/reflect)
+      srec.is_specular = true;
       srec.attenuation = albedo;
 
       Real refraction_ratio = rec.front_face ? (1.0f / ior) : ior;
       Vec3 unit_direction = unit_vector(r_in.dir);
-      Real cos_theta = std::fmin(dot(-unit_direction, rec.normal), 1.0f);
 
-      // Use Exact Fresnel for transmission choice
+      // GGX Microfacet Refraction (The Pro Way)
+      // Instead of refracting via the geometric normal 'rec.normal',
+      // we sample a microfacet normal 'h' based on roughness.
+
+      Vec3 h;
+      if (roughness < 0.001f) {
+        h = rec.normal;
+        srec.roughness = 0.0f;
+      } else {
+        // Sample GGX Normal using ONB
+        ONB onb;
+        onb.build_from_w(rec.normal);
+        Vec3 local_h = sample_ggx_ndf(rec.normal, roughness);
+        h = onb.local(local_h);
+        srec.roughness = roughness;
+      }
+
+      // Ensure h is in the same hemisphere as proper normal relative to ray (?)
+      // Actually standard GGX sampling gives h in +Z.
+      // If ray is coming from inside, we might need to flip logic?
+      // Standard Refract function handles normal direction usually.
+
+      // Calculate Fresnel on Microfacet H
+      Real cos_theta = std::fmin(dot(-unit_direction, h), 1.0f);
       Real F = fresnel_dielectric_exact(cos_theta, refraction_ratio);
 
       Vec3 direction;
       // Note: fresnel_dielectric_exact handles TIR inside (returns 1.0)
 
-      if (random_real() < F)
-        direction = reflect(unit_direction, rec.normal);
-      else
-        direction = refract(unit_direction, rec.normal, refraction_ratio);
-
-      // Roughness for transmission
-      if (roughness > 0.0f)
-        direction += roughness * random_in_unit_sphere();
+      // Stochastic Fresnel choice
+      if (random_real() < F) {
+        // Reflect off microfacet
+        direction = reflect(unit_direction, h);
+      } else {
+        // Refract via microfacet
+        direction = refract(unit_direction, h, refraction_ratio);
+        // If refract returns (0,0,0) due to TIR (though fresnel should have
+        // caught it), fallback to reflect
+        if (direction.length_squared() < 1e-6f)
+          direction = reflect(unit_direction, h);
+      }
 
       srec.specular_ray = Ray(rec.p, direction, r_in.tm);
-      srec.roughness = roughness; // Transmission Roughness
       return true;
     }
 
@@ -466,6 +539,10 @@ public:
   Vec3 emit_color;
   InvisibleLight(const Vec3 &c) : emit_color(c) {}
   virtual bool is_transparent() const override { return true; }
+  virtual Vec3 shadow_attenuation(const Ray &r_in,
+                                  const HitRecord &rec) const override {
+    return Vec3(1.0f, 1.0f, 1.0f);
+  }
   virtual bool scatter(const Ray &r_in, const HitRecord &rec,
                        ScatterRecord &srec) const override {
     if (VISIBLE_IN_REFLECTIONS && !r_in.is_primary && !r_in.is_shadow)

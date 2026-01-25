@@ -8,48 +8,21 @@
 //   This is the heart of the rendering engine. It implements a Unidirectional
 //   Path Tracer with Next Event Estimation (NEE).
 //
-//   It solves the Rendering Equation (Kajiya 1986) by integrating light
-//   arriving at the camera through recursive Monte Carlo sampling.
-//
-// ALGORITHM OVERVIEW:
-//   1. ray_color(): Recursive function that traces the path of a photon
-//   backwards from the eye.
-//      L_o = L_e + Integral( f_r * L_i * cos(theta) )
-//
-//   2. Next Event Estimation (sample_direct_light):
-//      Instead of waiting for a random bounce to hit a light source (which is
-//      rare), we explicitly sample light sources at every bounce (except for
-//      specular surfaces). This significantly reduces noise (variance).
-//
 // ===============================================================================================
 
 #include "common.h"
-#include "environment.h" // Pour EnvironmentMap
-#include "geometry.h"    // Pour HittableList
+#include "environment.h"
+#include "geometry.h"
 #include "hittable.h"
-#include "materials.h" // Pour ScatterRecord
+#include "materials.h"
 
-// ===============================================================================================
-// MOTEUR DE RENDU (Path Tracing Core)
-// ===============================================================================================
-
-// -----------------------------------------------------------------------------------------------
-// ALGORITHM: DIRECT LIGHT SAMPLING (Next Event Estimation)
-// -----------------------------------------------------------------------------------------------
-// Calculates the direct illumination contribution at a point 'rec.p' from all
-// light sources.
-// - It samples either the Environment Map or Geometric Lights (Area Lights).
-// - It casts a Shadow Ray to check visibility.
-// - It applies Multiple Importance Sampling (MIS) heuristics (simplified here
-// as PDF balancing).
-// -----------------------------------------------------------------------------------------------
 // Helper: Power Heuristic
 inline Real power_heuristic(Real pdf_f, Real pdf_g) {
   Real f2 = pdf_f * pdf_f;
   Real g2 = pdf_g * pdf_g;
   Real den = f2 + g2;
   if (den < 1e-10f)
-    return 0.0f; // Prevent NaN
+    return 0.0f;
   return f2 / den;
 }
 
@@ -65,7 +38,15 @@ inline Vec3 sample_direct_light(const Ray &r, const HitRecord &rec,
 
   // Strategy: 50/50 EnvMap vs Geometric Lights
   bool sample_env = false;
-  bool env_is_active = env_map && (env_map->env_direct_scale > 0.001f);
+
+  // Determine Environment Mode based on Surface Roughness
+  // Roughness < 0.2 means the surface is Glossy/Specular -> Use Specular Scale
+  // Roughness >= 0.2 means the surface is Diffuse/Matte -> Use Diffuse Scale
+  int env_mode = (srec.roughness < 0.2f) ? 2 : 1;
+  Real active_scale = (env_mode == 2) ? env_map->env_specular_scale
+                                      : env_map->env_diffuse_scale;
+
+  bool env_is_active = env_map && (active_scale > 0.001f);
   bool lights_are_active = !lights.raw_objects.empty();
 
   if (env_is_active && lights_are_active) {
@@ -92,7 +73,7 @@ inline Vec3 sample_direct_light(const Ray &r, const HitRecord &rec,
     if (lights_are_active)
       light_pdf_val *= 0.5f;
 
-    potential_light_emission = env_map->sample(dir, 1);
+    potential_light_emission = env_map->sample(dir, env_mode);
     if (potential_light_emission.length_squared() <= 0)
       light_pdf_val = 0;
     is_env_sample = true;
@@ -110,10 +91,12 @@ inline Vec3 sample_direct_light(const Ray &r, const HitRecord &rec,
 
   // --- B. Validation & MIS Calculation ---
   if (light_pdf_val > 0) {
-    // 1. Evaluate BSDF for this light direction
-    Vec3 bsdf_val = rec.mat_ptr->eval_bsdf(r, rec, light_ray.dir);
+    // 1. Evaluate BSDF components separately
+    auto bsdf_comps = rec.mat_ptr->eval_bsdf_components(r, rec, light_ray.dir);
 
-    if (bsdf_val.x() > 0 || bsdf_val.y() > 0 || bsdf_val.z() > 0) {
+    // Check if any component contributes
+    if ((bsdf_comps.diffuse.length_squared() > 0 ||
+         bsdf_comps.specular.length_squared() > 0)) {
 
       // 2. Calculate Scattering PDF (p_bsdf) for MIS
       Real bsdf_pdf = rec.mat_ptr->scattering_pdf(r, rec, light_ray);
@@ -129,32 +112,37 @@ inline Vec3 sample_direct_light(const Ray &r, const HitRecord &rec,
         if (world.hit(shadow_ray, EPSILON, INFINITY_REAL, hit_obstacle)) {
           if (hit_obstacle.mat_ptr->is_transparent()) {
 
-            // CRITICAL FIX: If we are targeting a Geometric Light, and we hit a
-            // transparent object... Check if THIS object IS the light we are
-            // looking for!
+            // CRITICAL FIX: Deterministic Shadow Throughput for Transparency
+            // We follow the user request: Shadow intensity depends on
+            // Transmission. Using standard Beer's Law approximation for thin
+            // surfaces (Throughput = Albedo * Transmission) No more stochastic
+            // scatter or arbitrary constants.
+
+            // 1. Light Check (Transparent object IS the light?)
             if (!is_env_sample) {
               Vec3 emission_found = hit_obstacle.mat_ptr->emit(
                   shadow_ray, hit_obstacle, 0, 0, hit_obstacle.p);
               if (emission_found.length_squared() > 0) {
-                potential_light_emission = emission_found;
+                potential_light_emission = emission_found; // Geometric Light
                 light_visible = true;
-                // We found our light! Stop traversing.
-                // Note: We multiply by accumulated transmission so far.
-                // direct_light calculation later uses 'transmission' *
-                // 'potential_light_emission'.
                 break;
               }
             }
 
-            ScatterRecord srec_shadow;
-            if (hit_obstacle.mat_ptr->scatter(shadow_ray, hit_obstacle,
-                                              srec_shadow)) {
-              transmission = transmission * srec_shadow.attenuation;
-              Vec3 check_emit = hit_obstacle.mat_ptr->emit(
-                  shadow_ray, hit_obstacle, 0, 0, hit_obstacle.p);
-              if (check_emit.length_squared() == 0)
-                transmission = transmission * DIELECTRIC_SHADOW_TRANSMISSION;
+            // 2. Attenuation
+            Vec3 attenuation = hit_obstacle.mat_ptr->shadow_attenuation(
+                shadow_ray, hit_obstacle);
+
+            // If completely opaque (attenuation 0), stop.
+            // Note: shadow_attenuation() returns (0,0,0) for opaque materials.
+            if (attenuation.length_squared() < 1e-6f) {
+              transmission = Vec3(0, 0, 0);
+              break;
             }
+
+            transmission = transmission * attenuation;
+
+            // Advance Ray
             shadow_ray = Ray(hit_obstacle.p + EPSILON * shadow_ray.dir,
                              shadow_ray.dir, shadow_ray.tm, true);
           } else {
@@ -181,21 +169,33 @@ inline Vec3 sample_direct_light(const Ray &r, const HitRecord &rec,
         }
       }
 
-      // 4. Final Contribution with MIS Weight
+      // 4. Final Contribution with MIS Weight and Split BSDF Scales
       if (light_visible) {
-        // Power Heuristic: W_nee = p_light^2 / (p_light^2 + p_bsdf^2)
-        // Note: For delta lights (point), p_light is infinite?
-        // Our lights are Area Lights, so p_light is finite.
-
         Real w_mis = power_heuristic(light_pdf_val, bsdf_pdf);
 
-        // For Delta Material (Mirror), bsdf_pdf is 0/undefined, but we
-        // shouldn't be here (srec.is_specular handles delta). Actually, for
-        // Mirror, srec.is_specular=true, so we skip NEE entirely in ray_color.
-        // So here we are guaranteed non-delta BSDF.
+        Vec3 final_bsdf_contrib;
+        if (is_env_sample) {
+          // Fetch RAW light (unscaled!)
+          // We resample RAW from direction for accuracy, bypassing the previous
+          // 'sample()' baked scale.
+          Vec3 raw_light = env_map->sample_raw(light_ray.dir);
+          // Apply Exposure
+          raw_light = raw_light * env_map->env_exposure;
 
-        direct_light = potential_light_emission * bsdf_val * transmission *
-                       (w_mis / light_pdf_val);
+          // Combine components with their respective scales
+          final_bsdf_contrib =
+              (bsdf_comps.diffuse * env_map->env_diffuse_scale) +
+              (bsdf_comps.specular * env_map->env_specular_scale);
+
+          direct_light = raw_light * final_bsdf_contrib * transmission *
+                         (w_mis / light_pdf_val);
+
+        } else {
+          // Geometric Light (No extra scales, just emission)
+          final_bsdf_contrib = bsdf_comps.diffuse + bsdf_comps.specular;
+          direct_light = potential_light_emission * final_bsdf_contrib *
+                         transmission * (w_mis / light_pdf_val);
+        }
       }
     }
   }
@@ -206,18 +206,11 @@ inline Vec3 sample_direct_light(const Ray &r, const HitRecord &rec,
 // -----------------------------------------------------------------------------------------------
 // ALGORITHM: PATH TRACING RECURSION (MIS Aware)
 // -----------------------------------------------------------------------------------------------
-// -----------------------------------------------------------------------------------------------
-// ALGORITHM: PATH TRACING RECURSION (MIS Aware)
-// -----------------------------------------------------------------------------------------------
-// -----------------------------------------------------------------------------------------------
-// ALGORITHM: PATH TRACING RECURSION (MIS Aware)
-// -----------------------------------------------------------------------------------------------
-inline Vec3
-ray_color(const Ray &r, const Hittable &world, const HittableList &lights,
-          const EnvironmentMap *env_map, int depth,
-          Real prev_bsdf_pdf = 1.0f, // PDF of the ray generation
-          Real prev_roughness =
-              1.0f // New: Roughness of previous bounce (0=Mirror, 1=Matte)
+inline Vec3 ray_color(const Ray &r, const Hittable &world,
+                      const HittableList &lights, const EnvironmentMap *env_map,
+                      int depth,
+                      Real prev_bsdf_pdf = 1.0f, // PDF of the ray generation
+                      Real prev_roughness = 1.0f // Roughness of previous bounce
 ) {
 
   // 1. Bounce Limit
@@ -238,33 +231,35 @@ ray_color(const Ray &r, const Hittable &world, const HittableList &lights,
       if (r.is_primary) {
         mode = 0; // Visible Background
       } else if (prev_roughness < 0.2f) {
-        // Treating Glossy/Specular bounces as "Reflections"
-        // This allows the "Indirect/Reflections" slider to control Metal/Glass
-        // appearance.
-        mode = 2;
+        mode = 2; // Reflections
       } else {
-        // Treating Rough/Matte bounces as "Illumination"
-        // This allows the "Direct/Global Light" slider to control Scene
-        // Brightness.
-        mode = 1;
+        mode = 1; // Illumination
       }
 
       Vec3 L_e = env_map->sample(r.dir, mode);
 
-      // If purely specular (delta), MIS weight is 1.0.
-      // Checking roughness < epsilon is a proxy for delta.
-      if (prev_roughness < 0.001f)
+      // CRITICAL FIX: Primary Rays must not be weighted by MIS.
+      // They are "Dirac" observations from the camera (Strategy 1 with 100%
+      // weight). If we apply MIS, the huge PDF of the unclipped sun (Strategy
+      // 2) will crush the BSDF/Camera weight to zero -> Black Sun.
+      if (r.is_primary || prev_roughness < 0.001f)
         return L_e;
 
       // Calculate what the Light PDF would have been for this direction
       Real light_pdf = 0.0f;
-      bool env_is_active = env_map->env_direct_scale > 0.001f;
+
+      Real active_scale = (mode == 2) ? env_map->env_specular_scale
+                                      : env_map->env_diffuse_scale;
+      if (mode == 0)
+        active_scale = env_map->env_background_scale;
+
+      bool env_is_active = active_scale > 0.001f;
       bool lights_are_active = !lights.raw_objects.empty();
 
       if (env_is_active) {
         light_pdf = env_map->pdf_value(r.dir);
         if (lights_are_active)
-          light_pdf *= 0.5f; // 50/50 chance
+          light_pdf *= 0.5f;
       }
 
       Real w_mis = power_heuristic(prev_bsdf_pdf, light_pdf);
@@ -276,11 +271,12 @@ ray_color(const Ray &r, const Hittable &world, const HittableList &lights,
   // 3. Emission Hit
   Vec3 emitted = rec.mat_ptr->emit(r, rec, rec.u, rec.v, rec.p);
   if (emitted.length_squared() > 0) {
-    if (prev_roughness < 0.001f)
+    if (prev_roughness < 0.001f || r.is_primary)
       return emitted;
 
-    // Calculate Light PDF for this point
-    bool env_is_active = env_map && (env_map->env_direct_scale > 0.001f);
+    // Active Check using Diffuse/Specular scales
+    bool env_is_active = env_map && (env_map->env_diffuse_scale > 0.001f ||
+                                     env_map->env_specular_scale > 0.001f);
     bool lights_are_active = !lights.raw_objects.empty();
 
     if (lights_are_active) {
@@ -320,9 +316,9 @@ ray_color(const Ray &r, const Hittable &world, const HittableList &lights,
   Vec3 total = direct_light + indirect;
 
   // Firefly Clamp
-  total.e[0] = soft_clamp(total.x(), FIREFLY_CLAMP_LIMIT);
-  total.e[1] = soft_clamp(total.y(), FIREFLY_CLAMP_LIMIT);
-  total.e[2] = soft_clamp(total.z(), FIREFLY_CLAMP_LIMIT);
+  total.e[0] = firefly_clamp(total.x(), FIREFLY_CLAMP_LIMIT);
+  total.e[1] = firefly_clamp(total.y(), FIREFLY_CLAMP_LIMIT);
+  total.e[2] = firefly_clamp(total.z(), FIREFLY_CLAMP_LIMIT);
 
   return total;
 }

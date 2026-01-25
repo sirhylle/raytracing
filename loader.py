@@ -220,8 +220,8 @@ class SceneBuilder:
     def set_environment(self, data, clipping_threshold=float('inf')):
         self.engine.set_environment(data, clipping_threshold)
     
-    def set_env_levels(self, bg, dir, indir):
-        self.engine.set_env_levels(bg, dir, indir)
+    def set_env_levels(self, exposure, bg, diffuse, specular):
+        self.engine.set_env_levels(float(exposure), float(bg), float(diffuse), float(specular))
 
     def get_env_sun_info(self):
         return self.engine.get_env_sun_info()
@@ -273,9 +273,9 @@ def create_auto_sun(builder, intensity, radius, distance):
     return oid, dir_arr, raw_col_arr
 
 def load_environment(builder, env_path, 
-    env_light_level=None, env_direct_level=None, env_indirect_level=None, 
+    env_exposure=1.0, env_background=1.0, env_diffuse=1.0, env_specular=1.0, 
     auto_sun=False, auto_sun_intensity=None, auto_sun_radius=None,
-    auto_sun_dist=None, auto_sun_env_level=None, clipping_multiplier=None):
+    auto_sun_dist=None, clipping_multiplier=None):
     """Charge la HDRI et configure le soleil physique automatique via le Builder."""
 
     if not env_path or not os.path.exists(env_path):
@@ -322,24 +322,12 @@ def load_environment(builder, env_path,
         # Envoi au moteur (Données + Seuil)
         builder.set_environment(img, clipping_threshold)
         
-        # Configuration des niveaux
-        # direct_lvl = Visibilité Caméra (Arg 1)
-        cam_vis = env_direct_level if env_direct_level is not None else 1.0
-        # light_lvl = Éclairage de la scène (Arg 2)
-        # Si Auto-Sun est actif, on peut vouloir baisser l'env map pour laisser la place au soleil physique
-        lighting = env_light_level if env_light_level is not None else 1.0
-        if auto_sun and auto_sun_env_level is not None:
-            lighting = auto_sun_env_level
-        # indirect_lvl = Reflets (Arg 3)
-        refl = env_indirect_level if env_indirect_level is not None else 1.0
-        
-        builder.set_env_levels(cam_vis, lighting, refl)
+        # Environment Levels (Pro Split)
+        # Passed directly to engine
+        builder.set_env_levels(env_exposure, env_background, env_diffuse, env_specular)
 
         if auto_sun:
             print("[Loader] Auto-Sun: Analyzing Environment...")
-            
-            # On applique le niveau d'environnement réduit pour l'Auto-Sun
-            builder.set_env_levels(cam_vis, auto_sun_env_level, refl)
 
             # Appel de la logique partagée
             create_auto_sun(
@@ -349,9 +337,12 @@ def load_environment(builder, env_path,
                 auto_sun_dist
             )
             print(f"[Loader] Auto-Sun added via Builder. Registry Updated.")
+            
+        return median_val if 'median_val' in locals() else 1.0
 
     except Exception as e:
         print(f"[Loader] Failed to load environment map: {e}")
+        return 1.0
 
 def initialize_scene_and_engine(args, scene_name=None):
     """
@@ -386,14 +377,14 @@ def initialize_scene_and_engine(args, scene_name=None):
 
     # Environment (Passe le builder)
     load_environment(builder, config.env_map, 
-                     env_light_level=config.env_light_level, 
-                     env_direct_level=config.env_direct_level, 
-                     env_indirect_level=config.env_indirect_level,
+                     env_exposure=config.env_exposure,
+                     env_background=config.env_background, 
+                     env_diffuse=config.env_diffuse, 
+                     env_specular=config.env_specular,
                      auto_sun=config.auto_sun,
                      auto_sun_intensity=config.auto_sun_intensity,
                      auto_sun_radius=config.auto_sun_radius,
                      auto_sun_dist=config.auto_sun_dist,
-                     auto_sun_env_level=config.auto_sun_env_level,
                      clipping_multiplier=config.clipping_multiplier)
                      
     return engine, config, builder

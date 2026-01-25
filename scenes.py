@@ -19,9 +19,10 @@ class SceneConfig:
     focus_dist: Optional[float] = None
     env_map: Optional[str] = None
     # Lighting
-    env_light_level: float = 1.0     
-    env_direct_level: float = 0.5    
-    env_indirect_level: float = 0.5    
+    env_exposure: float = 1.0
+    env_background: float = 1.0     
+    env_diffuse: float = 0.5    
+    env_specular: float = 0.5    
 
     
 # Helper to unpack preset
@@ -46,38 +47,43 @@ class CornellBox(Scene):
         white = [0.73, 0.73, 0.73]
         light_color = [15.0, 15.0, 15.0]
         
-        # We use CLAY for matte walls
+        # Scale Factor: 0.01
+        # Original: 555 -> 5.55
         
         # Left Green
-        builder.add_quad(v3([555,0,0]), v3([0,555,0]), v3([0,0,555]), color=green, **p("CLAY"))
+        builder.add_quad(v3([5.55,0,0]), v3([0,5.55,0]), v3([0,0,5.55]), color=green, **p("CLAY"))
         # Right Red
-        builder.add_quad(v3([0,0,0]), v3([0,555,0]), v3([0,0,555]), color=red, **p("CLAY"))
+        builder.add_quad(v3([0,0,0]), v3([0,5.55,0]), v3([0,0,5.55]), color=red, **p("CLAY"))
         # Top Light
-        builder.add_quad(v3([343, 554, 332]), v3([-130,0,0]), v3([0,0,-105]), mat_type="light", color=light_color)
+        # Orig: [343, 554, 332], [-130,0,0], [0,0,-105]
+        builder.add_quad(v3([3.43, 5.54, 3.32]), v3([-1.30,0,0]), v3([0,0,-1.05]), mat_type="light", color=light_color)
         # Floor
-        builder.add_quad(v3([0,0,0]), v3([555,0,0]), v3([0,0,555]), color=white, **p("CLAY"))
+        builder.add_quad(v3([0,0,0]), v3([5.55,0,0]), v3([0,0,5.55]), color=white, **p("CLAY"))
         # Ceiling
-        builder.add_quad(v3([555,555,555]), v3([-555,0,0]), v3([0,0,-555]), color=white, **p("CLAY"))
+        builder.add_quad(v3([5.55,5.55,5.55]), v3([-5.55,0,0]), v3([0,0,-5.55]), color=white, **p("CLAY"))
         # Back
-        builder.add_quad(v3([0,0,555]), v3([555,0,0]), v3([0,555,0]), color=white, **p("CLAY"))
+        builder.add_quad(v3([0,0,5.55]), v3([5.55,0,0]), v3([0,5.55,0]), color=white, **p("CLAY"))
         
-        # Objects
+        # Objects (Radius 100 -> 1.0)
         # Metal Sphere
-        builder.add_sphere(v3([200, 100, 200]), 100.0, color=[0.8, 0.85, 0.88], **p("CHROME"))
+        # Orig: [200, 100, 200]
+        builder.add_sphere(v3([2.00, 1.00, 2.00]), 1.0, color=[0.8, 0.85, 0.88], **p("CHROME"))
         # Glass Sphere
-        builder.add_sphere(v3([400, 100, 300]), 100.0, color=[1.0, 1.0, 1.0], **p("GLASS"))
+        # Orig: [400, 100, 300]
+        builder.add_sphere(v3([4.00, 1.00, 3.00]), 1.0, color=[1.0, 1.0, 1.0], **p("GLASS"))
 
         return SceneConfig(
-            lookfrom=[278, 278, -800],
-            lookat=[278, 278, 0],
+            lookfrom=[2.78, 2.78, -8.00], # Orig: 278, 278, -800
+            lookat=[2.78, 2.78, 0],       # Orig: 278, 278, 0
             vup=[0, 1, 0],
             vfov=40.0,
             aperture=0.0,
-            focus_dist=10.0,
-            env_map="",
-            env_light_level=5.0,
-            env_direct_level=0.5,
-            env_indirect_level=0.5
+            focus_dist=10.0, # Scaled reasonable dist
+            env_map=None,
+            env_exposure=1.0,
+            env_background=0.0, # Box is closed, no background needed usually (or black)
+            env_diffuse=0.5,
+            env_specular=0.5
         )
 
 class RandomSpheres(Scene):
@@ -127,9 +133,10 @@ class RandomSpheres(Scene):
             vup=[0, 1, 0],
             vfov=40.0, aperture=0.05, focus_dist=10.0,
             env_map=None, 
-            env_light_level=1.0,
-            env_direct_level=0.5,
-            env_indirect_level=0.5
+            env_exposure=1.0,
+            env_background=1.0,
+            env_diffuse=0.5,
+            env_specular=0.5
         )
 
 class MaterialsShowcase(Scene):
@@ -193,7 +200,7 @@ class MaterialsShowcase(Scene):
 
         return SceneConfig(
             lookfrom=[0, 3, 8], lookat=[0, 1, 0], vup=[0, 1, 0], vfov=50.0, aperture=0.1, focus_dist=8.0,
-            env_map="env-dock-sun.hdr", env_light_level=1.0, env_direct_level=0.6, env_indirect_level=2.0
+            env_map="env-dock-sun.hdr", env_exposure=1.0, env_background=1.0, env_diffuse=0.6, env_specular=2.0
         )
 
 class MeshScene1(Scene):

@@ -19,15 +19,16 @@ class RenderConfig:
     
     # --- Environment ---
     env_map: Optional[str] = "env-dock-sun.hdr"
-    env_light_level: float = 1.0
-    env_direct_level: float = 0.5
-    env_indirect_level: float = 0.5
+    env_exposure: float = 1.0     # Master scale
+    env_background: float = 1.0   # Camera visibility
+    env_diffuse: float = 1.0      # GI/Lighting
+    env_specular: float = 1.0     # Reflections
     clipping_multiplier: float = 20.0
     auto_sun: bool = False
     auto_sun_intensity: float = 50.0
     auto_sun_radius: float = 50.0
     auto_sun_dist: float = 1000.0
-    auto_sun_env_level: float = 0.2
+    # auto_sun_env_level Removed (Legacy)
     
     # --- Animation ---
     animate: bool = False
@@ -65,7 +66,7 @@ def build_configuration(args, scene_config):
                 # On découpe par espace : "I10 R30 D1000" -> ["I10", "R30", "D1000"]
                 parts = args.auto_sun.split()
                 for p in parts:
-                    code = p[0].upper()      # La lettre (I, R, D, E)
+                    code = p[0].upper()      # La lettre (I, R, D, C)
                     val = float(p[1:])       # Le nombre
                     
                     if code == 'I': 
@@ -77,9 +78,7 @@ def build_configuration(args, scene_config):
                     elif code == 'D': 
                         print(f"[Override] CLI 'auto_sun_dist': {final_conf.auto_sun_dist} -> {val}")
                         final_conf.auto_sun_dist = val
-                    elif code == 'E': 
-                        print(f"[Override] CLI 'auto_sun_env_level': {final_conf.auto_sun_env_level} -> {val}")
-                        final_conf.auto_sun_env_level = val
+                    # 'E' code removed (Legacy auto_sun_env_level)
                     elif code == 'C':
                         print(f"[Override] CLI 'clipping_multiplier': {final_conf.clipping_multiplier} -> {val}")
                         final_conf.clipping_multiplier = val

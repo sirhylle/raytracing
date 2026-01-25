@@ -90,19 +90,20 @@ def build(ui_list, start_y, state, engine):
         ui_list.append(Slider(VIEW_W+80, ys, 210, 14, 0.0, 360.0, lambda: state.env_rotation, lambda v: set_env('env_rotation', v)))
         ys += 25
         
-        lbl(ui_list, 10, ys, "Cam Direct", 12, COL_TEXT_DIM)
-        ui_list.append(Slider(VIEW_W+80, ys, 210, 14, 0.0, 20.0, lambda: state.env_direct_level, lambda v: set_env('env_direct_level', v), power=1.5))
+        lbl(ui_list, 10, ys, "Exposure", 12, COL_TEXT_DIM)
+        ui_list.append(Slider(VIEW_W+80, ys, 210, 14, 0.0, 5.0, lambda: state.env_exposure, lambda v: set_env('env_exposure', v)))
+        ys += 25
+
+        lbl(ui_list, 10, ys, "Background", 12, COL_TEXT_DIM)
+        ui_list.append(Slider(VIEW_W+80, ys, 210, 14, 0.0, 10.0, lambda: state.env_background, lambda v: set_env('env_background', v), power=1.5))
         ys += 25
         
-        col_lbl = COL_TEXT_DIM if not state.sun_enabled else (80, 80, 80)
-        lbl(ui_list, 10, ys, "Global Light", 12, col_lbl)
-        sl = Slider(VIEW_W+80, ys, 210, 14, 0.0, 20.0, lambda: state.env_light_level, lambda v: set_env('env_light_level', v), power=3)
-        sl.enabled = not state.sun_enabled
-        ui_list.append(sl)
+        lbl(ui_list, 10, ys, "Diffuse", 12, COL_TEXT_DIM)
+        ui_list.append(Slider(VIEW_W+80, ys, 210, 14, 0.0, 10.0, lambda: state.env_diffuse, lambda v: set_env('env_diffuse', v), power=2))
         ys += 25
         
-        lbl(ui_list, 10, ys, "Reflections", 12, COL_TEXT_DIM)
-        ui_list.append(Slider(VIEW_W+80, ys, 210, 14, 0.0, 20.0, lambda: state.env_indirect_level, lambda v: set_env('env_indirect_level', v), power=1.5))
+        lbl(ui_list, 10, ys, "Specular", 12, COL_TEXT_DIM)
+        ui_list.append(Slider(VIEW_W+80, ys, 210, 14, 0.0, 10.0, lambda: state.env_specular, lambda v: set_env('env_specular', v), power=1.5))
         ys += 35
     else: ys += 5
 
@@ -119,9 +120,10 @@ def build(ui_list, start_y, state, engine):
             ui_list.append(Slider(VIEW_W+80, ys, 210, 14, 0.0, 2000.0, lambda: state.sun_intensity, lambda v: set_env('sun_intensity', v), power=2))
             ys += 20
             
-            lbl(ui_list, 10, ys, "Ambience", 12, COL_TEXT_DIM)
-            ui_list.append(Slider(VIEW_W+80, ys, 210, 14, 0.0, 10.0, lambda: state.auto_sun_env_level, lambda v: set_env('auto_sun_env_level', v), power=3))
-            ys += 20
+            # Ambience removed (User controls Diffuse above)
+            # lbl(ui_list, 10, ys, "Ambience", 12, COL_TEXT_DIM)
+            # ui_list.append(Slider(VIEW_W+80, ys, 210, 14, 0.0, 10.0, lambda: state.auto_sun_env_level, lambda v: set_env('auto_sun_env_level', v), power=3))
+            # ys += 20
 
             lbl(ui_list, 10, ys, "Softness", 12, COL_TEXT_DIM)
             ui_list.append(Slider(VIEW_W+80, ys, 210, 14, 1.0, 200.0, lambda: state.sun_radius, lambda v: set_env('sun_radius', v)))

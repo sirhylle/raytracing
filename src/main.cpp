@@ -261,13 +261,28 @@ public:
     auto it = instances_map.find(id);
     if (it == instances_map.end())
       return;
+
     std::shared_ptr<Instance> ptr_to_remove = it->second;
+
+    // Remove from World
     auto &objs = world.owned_objects;
     objs.erase(std::remove(objs.begin(), objs.end(), ptr_to_remove),
                objs.end());
+
+    // Remove from Lights
     auto &l_objs = lights.owned_objects;
     l_objs.erase(std::remove(l_objs.begin(), l_objs.end(), ptr_to_remove),
                  l_objs.end());
+
+    // Update Raw Objects (CRITICAL: HittableList::hit uses raw_objects!)
+    world.raw_objects.clear();
+    for (auto &o : world.owned_objects)
+      world.raw_objects.push_back(o.get());
+
+    lights.raw_objects.clear();
+    for (auto &o : lights.owned_objects)
+      lights.raw_objects.push_back(o.get());
+
     instances_map.erase(it);
     world_bvh = nullptr;
     reset_accumulation();
@@ -313,10 +328,12 @@ public:
                                                   clipping_threshold);
   }
 
-  void set_env_levels(Real back, Real dir, Real indir) {
+  void set_env_levels(Real exposure, Real back, Real diffuse, Real specular) {
     if (background)
-      background->set_scales(back, dir, indir);
+      background->set_scales(exposure, back, diffuse, specular);
   }
+
+  // ...
 
   std::pair<Vec3, Vec3> get_env_sun_info() {
     if (background)
@@ -620,8 +637,8 @@ NB_MODULE(cpp_engine, m) {
       .def("set_camera", &PyScene::set_camera)
       .def("set_environment", &PyScene::set_environment, nb::arg("image"),
            nb::arg("clipping_threshold") = INFINITY_REAL)
-      .def("set_env_levels", &PyScene::set_env_levels, nb::arg("back"),
-           nb::arg("dir"), nb::arg("indir") = 1.0f)
+      .def("set_env_levels", &PyScene::set_env_levels, nb::arg("exposure"),
+           nb::arg("back"), nb::arg("diffuse"), nb::arg("specular") = 1.0f)
       .def("set_env_rotation", &PyScene::set_env_rotation, nb::arg("degrees"))
       .def("get_progress", &PyScene::get_progress)
       .def("render", &PyScene::render, nb::arg("width"), nb::arg("height"),

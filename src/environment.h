@@ -10,9 +10,13 @@ struct EnvironmentMap {
   std::vector<Real> data;
   int width;
   int height;
-  Real env_visible_scale = 1.0f;
-  Real env_direct_scale = 1.0f;
-  Real env_indirect_scale = 1.0f;
+
+  // New unified scales (Pro Workflow)
+  Real env_background_scale = 1.0f; // Visible to Camera
+  Real env_diffuse_scale = 1.0f;    // Global Illumination
+  Real env_specular_scale = 1.0f;   // Reflections
+  Real env_exposure = 1.0f;         // Master Intensity
+
   Real rotation = 0.0f;
   Real clipping_threshold; // Seuil de clipping pour le MIS et le sampling
 
@@ -27,22 +31,17 @@ struct EnvironmentMap {
     build_cdf();
   }
 
-  void set_scales(Real vis, Real direct, Real indirect) {
-    env_visible_scale = vis;
-    env_direct_scale = direct;
-    env_indirect_scale = indirect;
+  void set_scales(Real exposure, Real background, Real diffuse, Real specular) {
+    env_exposure = exposure;
+    env_background_scale = background;
+    env_diffuse_scale = diffuse;
+    env_specular_scale = specular;
   }
 
   // Setter pour la rotation (reçoit des degrés)
-  void set_rotation(Real degrees) {
-    // Conversion Degrés -> Radians
-    // On inverse le signe si besoin selon le sens de rotation voulu,
-    // mais standard = positif tourne vers la gauche
-    rotation = degrees * (PI / 180.0f);
-  }
+  void set_rotation(Real degrees) { rotation = degrees * (PI / 180.0f); }
 
-  // Setter pour le clipping (Reconstruit les CDFs pour ignorer le soleil
-  // clippé)
+  // Setter pour le clipping
   void set_clipping_threshold(Real t) {
     clipping_threshold = t;
     build_cdf();
@@ -72,17 +71,10 @@ struct EnvironmentMap {
       }
     }
 
-    // Conversion (x,y) -> Direction
     Real u = (best_x + 0.5f) / width;
     Real v = (best_y + 0.5f) / height;
     Real theta = v * PI;
-    // Calcul de l'angle Phi dans l'espace texture
     Real phi_texture = (u * 2 * PI) - PI;
-
-    // Si l'environnement est tourné de +R, le pixel (u,v) correspond
-    // à une direction monde tournée de -R.
-    // sample() fait : phi_texture = phi_monde + rotation
-    // Donc : phi_monde = phi_texture - rotation
     Real phi_world = phi_texture - rotation;
 
     Real sin_theta = std::sin(theta);
@@ -90,7 +82,6 @@ struct EnvironmentMap {
     Real sin_phi = std::sin(phi_world);
     Real cos_phi = std::cos(phi_world);
 
-    // Y-up convention
     Vec3 dir(sin_theta * cos_phi, cos_theta, -sin_theta * sin_phi);
     return {unit_vector(dir), best_color};
   }
@@ -119,6 +110,11 @@ struct EnvironmentMap {
 
       for (int x = 0; x < width; ++x) {
         Real raw_lum = get_luminance(x, y);
+
+        // Safety: Filter NaNs/Infs in the source data immediately
+        if (!std::isfinite(raw_lum))
+          raw_lum = 0.0f;
+
         Real clipped_lum = std::min(raw_lum, clipping_threshold);
         Real importance = clipped_lum * sin_theta;
         row_integral += importance;
@@ -146,8 +142,7 @@ struct EnvironmentMap {
     }
   }
 
-  // Importance Sampling de l'HDRI en tenant compte de la rotation
-  // On sample (u,v) sur la texture, puis on tourne le vecteur résultat.
+  // Importance Sampling
   Vec3 sample_direction(Real &pdf) const {
     Real r1 = random_real();
     auto it_y = std::lower_bound(marginal_CDF.begin(), marginal_CDF.end(), r1);
@@ -163,8 +158,6 @@ struct EnvironmentMap {
 
     Real theta = v * PI;
     Real phi_texture = (u * 2 * PI) - PI;
-
-    // Conversion Texture Space -> World Space
     Real phi_world = phi_texture - rotation;
 
     Real sin_theta = std::sin(theta);
@@ -174,17 +167,13 @@ struct EnvironmentMap {
 
     Vec3 dir(sin_theta * cos_phi, cos_theta, -sin_theta * sin_phi);
 
-    // Estimation PDF simple
     Real pixel_lum = get_luminance(x, y);
-    Real pdf_uv = (pixel_lum * sin_theta);
 
     // Approximatif mais suffisant pour le NEE
     if (sin_theta == 0)
       pdf = 0;
     else {
       Real safe_sin = std::max(sin_theta, 1e-5f);
-      // Note: La formule exacte est complexe sans l'intégrale totale stockée,
-      // mais l'idée est que la PDF est proportionnelle à la brillance.
       Real prob_y = marginal_CDF[y + 1] - marginal_CDF[y];
       Real prob_x_given_y = conditional_CDFs[y][x + 1] - conditional_CDFs[y][x];
       Real prob_pixel = prob_y * prob_x_given_y;
@@ -201,30 +190,22 @@ struct EnvironmentMap {
       return 0.0f;
     Vec3 unit_dir = unit_vector(dir);
 
-    // Direction -> Texture Coordinates
     auto theta = std::acos(unit_dir.y());
     auto phi_world = std::atan2(-unit_dir.z(), unit_dir.x()) + PI;
-
-    // Apply Rotation
     Real phi_texture = phi_world + rotation;
 
     Real u = phi_texture / (2 * PI);
     Real v = theta / PI;
 
-    // Pixels
     int x = static_cast<int>(u * width) % width;
     int y = static_cast<int>(v * height);
     if (x < 0)
       x += width;
     y = std::max(0, std::min(y, height - 1));
 
-    // Sin Theta term
     Real sin_theta = std::sin(theta);
     if (sin_theta <= 0)
-      return 0.0f; // Pole singularity
-
-    // PDF Calculation (Must match sample_direction logic approximately)
-    // pdf = prob_pixel * N / (2 * PI^2 * sin_theta)
+      return 0.0f;
 
     Real prob_y = marginal_CDF[y + 1] - marginal_CDF[y];
     Real prob_x_given_y = conditional_CDFs[y][x + 1] - conditional_CDFs[y][x];
@@ -237,23 +218,27 @@ struct EnvironmentMap {
     if (dir.length_squared() < 1e-6f)
       return Vec3(0, 0, 0);
 
-    Real strength = 1.0f;
+    Real weight = 1.0f;
+    // Mode 0: Background/Primary
+    // Mode 1: Diffuse/Illumination
+    // Mode 2: Specular/Reflections
     if (mode == 0)
-      strength = env_visible_scale;
+      weight = env_background_scale;
     else if (mode == 1)
-      strength = env_direct_scale;
+      weight = env_diffuse_scale;
     else if (mode == 2)
-      strength = env_indirect_scale;
+      weight = env_specular_scale;
 
-    if (strength <= 0)
+    // Apply Global Exposure
+    weight *= env_exposure;
+
+    if (weight <= 0)
       return Vec3(0, 0, 0);
 
     auto unit_dir = unit_vector(dir);
     auto theta = std::acos(unit_dir.y());
     auto phi_world = std::atan2(-unit_dir.z(), unit_dir.x()) + PI;
 
-    // Application de la rotation
-    // On décale l'angle de lecture pour simuler la rotation de la sphère
     Real phi_texture = phi_world + rotation;
 
     Real u = phi_texture / (2 * PI);
@@ -283,20 +268,83 @@ struct EnvironmentMap {
     Vec3 c0 = c00 * (1.0f - fx) + c10 * fx;
     Vec3 c1 = c01 * (1.0f - fx) + c11 * fx;
 
-    Vec3 raw_radiance = (c0 * (1.0f - fy) + c1 * fy) * strength;
+    Vec3 raw_radiance = (c0 * (1.0f - fy) + c1 * fy) * weight;
 
     // Application du clipping
-    // [MODIFICATION] Le clipping ne s'applique PAS au fond visible (Mode 0)
-    // pour que l'aspect visuel du ciel reste fidèle.
-    // Il s'applique uniquement à l'éclairage (Direct/Indirect) pour réduire le
-    // bruit (fireflies).
     if (mode != 0 && clipping_threshold < INFINITY_REAL) {
-      Real max_val = clipping_threshold * strength;
-      return Vec3(std::min(raw_radiance.x(), max_val),
-                  std::min(raw_radiance.y(), max_val),
-                  std::min(raw_radiance.z(), max_val));
+      Real max_val = clipping_threshold * weight;
+      Real r = std::min(raw_radiance.x(), max_val);
+      Real g = std::min(raw_radiance.y(), max_val);
+      Real b = std::min(raw_radiance.z(), max_val);
+
+      // Safety: If raw was NaN or Inf, std::min might behave unexpectedly or
+      // propagate it. We force finite checks.
+      if (!std::isfinite(r))
+        r = 0.0f;
+      if (!std::isfinite(g))
+        g = 0.0f;
+      if (!std::isfinite(b))
+        b = 0.0f;
+
+      return Vec3(r, g, b);
+    }
+
+    // Safety for non-clipped values
+    if (!std::isfinite(raw_radiance.x()) || !std::isfinite(raw_radiance.y()) ||
+        !std::isfinite(raw_radiance.z())) {
+      return Vec3(0, 0, 0);
     }
 
     return raw_radiance;
+  }
+
+  // New: Sample Raw HDR color without scales (for Diffuse/Specular split)
+  // New: Sample Raw HDR color without scales (for Diffuse/Specular split)
+  Vec3 sample_raw(const Vec3 &dir) const {
+    // Explicit implementation because simple sample() applies global exposure
+    // and scales. We want the RAW pixel data here (unscaled) because we apply
+    // exposure/scales separately in NEE.
+    if (dir.length_squared() < 1e-6f)
+      return Vec3(0, 0, 0);
+
+    auto unit_dir = unit_vector(dir);
+    auto theta = std::acos(unit_dir.y());
+    auto phi_world = std::atan2(-unit_dir.z(), unit_dir.x()) + PI;
+    Real phi_texture = phi_world + rotation;
+
+    Real u = phi_texture / (2 * PI);
+    Real v = theta / PI;
+    Real px = u * width - 0.5f;
+    Real py = v * height - 0.5f;
+    int x0 = static_cast<int>(std::floor(px));
+    int y0 = static_cast<int>(std::floor(py));
+    Real fx = px - x0;
+    Real fy = py - y0;
+
+    auto get_pixel = [&](int x, int y) {
+      x = (x % width + width) % width;
+      y = std::max(0, std::min(y, height - 1));
+      int idx = (y * width + x) * 3;
+      if (idx < 0 || idx + 2 >= data.size())
+        return Vec3(0, 0, 0);
+      return Vec3(data[idx], data[idx + 1], data[idx + 2]);
+    };
+
+    Vec3 c00 = get_pixel(x0, y0);
+    Vec3 c10 = get_pixel(x0 + 1, y0);
+    Vec3 c01 = get_pixel(x0, y0 + 1);
+    Vec3 c11 = get_pixel(x0 + 1, y0 + 1);
+
+    Vec3 c0 = c00 * (1.0f - fx) + c10 * fx;
+    Vec3 c1 = c01 * (1.0f - fx) + c11 * fx;
+    Vec3 raw = c0 * (1.0f - fy) + c1 * fy;
+
+    // Clipping is generally desirable even for raw
+    if (clipping_threshold < INFINITY_REAL) {
+      Real max_val = clipping_threshold; // No scale applied
+      return Vec3(std::min(raw.x(), max_val), std::min(raw.y(), max_val),
+                  std::min(raw.z(), max_val));
+    }
+    return raw;
   }
 };
