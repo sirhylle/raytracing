@@ -208,7 +208,7 @@ class SceneBuilder:
 
     # --- Instances (Meshes) ---
 
-    def add_mesh_instance(self, mesh_name, pos=[0.0,0.0,0.0], rot=[0.0,0.0,0.0], scale=[1.0,1.0,1.0]):
+    def add_mesh_instance(self, mesh_name, pos=[0.0,0.0,0.0], rot=[0.0,0.0,0.0], scale=[1.0,1.0,1.0], registry_type="mesh"):
         M = tf.translate(pos[0], pos[1], pos[2]) @ \
             tf.rotate_y(rot[1]) @ \
             tf.rotate_x(rot[0]) @ \
@@ -239,7 +239,8 @@ class SceneBuilder:
             def_trans = info.transmission
 
         self.registry[obj_id] = {
-            'type': 'mesh',
+            'type': registry_type,
+            'asset_name': mesh_name, # Vital for persistence
             'name': mesh_name,
             'pos': list(pos),
             'rot': list(rot),

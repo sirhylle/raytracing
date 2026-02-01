@@ -490,7 +490,7 @@ class EditorState:
              if info: self.builder.asset_library["primitive_cube"] = info
              
              # Instance
-             new_id = self.builder.add_mesh_instance("primitive_cube", pos=spawn_pos_list)
+             new_id = self.builder.add_mesh_instance("primitive_cube", pos=spawn_pos_list, registry_type="mesh_prim")
              # Force mat settings
              if new_id in self.builder.registry:
                  self.builder.registry[new_id]['mat_type'] = "lambertian"
@@ -509,17 +509,17 @@ class EditorState:
         elif type_key == "pyramid":
              info = meshloader.create_pyramid(self.builder.engine, 2.0, 2.0)
              if info: self.builder.asset_library["primitive_pyramid"] = info
-             new_id = self.builder.add_mesh_instance("primitive_pyramid", pos=spawn_pos_list)
+             new_id = self.builder.add_mesh_instance("primitive_pyramid", pos=spawn_pos_list, registry_type="mesh_prim")
 
         elif type_key == "tetrahedron":
              info = meshloader.create_tetrahedron(self.builder.engine, 2.0)
              if info: self.builder.asset_library["primitive_tetrahedron"] = info
-             new_id = self.builder.add_mesh_instance("primitive_tetrahedron", pos=spawn_pos_list)
+             new_id = self.builder.add_mesh_instance("primitive_tetrahedron", pos=spawn_pos_list, registry_type="mesh_prim")
 
         elif type_key == "icosahedron":
              info = meshloader.create_icosahedron(self.builder.engine, 2.0)
              if info: self.builder.asset_library["primitive_icosahedron"] = info
-             new_id = self.builder.add_mesh_instance("primitive_icosahedron", pos=spawn_pos_list)
+             new_id = self.builder.add_mesh_instance("primitive_icosahedron", pos=spawn_pos_list, registry_type="mesh_prim")
 
         elif type_key == "light_sphere":
             new_id = self.builder.add_invisible_sphere_light(spawn_pos_list, 1.0, [10,10,10], [10,10,10])
@@ -796,18 +796,80 @@ class EditorState:
             new_id = -1
             if otype == "sphere":
                 new_id = self.builder.add_sphere(pos, scale[0], mat, col, roughness=rough, metallic=metal, ir=ir, transmission=trans)
+            elif otype == "cylinder":
+                # scale[0]=radius, scale[1]=height
+                new_id = self.builder.add_cylinder(pos, scale[0], scale[1], mat, col, roughness=rough, metallic=metal, ir=ir, transmission=trans)
+            elif otype == "cone":
+                new_id = self.builder.add_cone(pos, scale[0], scale[1], mat, col, roughness=rough, metallic=metal, ir=ir, transmission=trans)
+            elif otype == "mesh_prim":
+                asset_name = obj.get("asset_name")
+                
+                # REGENERATION DES PRIMITIVES VIRTUELLES
+                if asset_name and asset_name not in self.builder.asset_library:
+                    print(f"[Loader] Regenerating virtual primitive: {asset_name}")
+                    info = None
+                    if asset_name == "primitive_cube":
+                        info = meshloader.create_cube(self.builder.engine, 2.0)
+                    elif asset_name == "primitive_pyramid":
+                         info = meshloader.create_pyramid(self.builder.engine, 2.0, 2.0)
+                    elif asset_name == "primitive_tetrahedron":
+                         info = meshloader.create_tetrahedron(self.builder.engine, 2.0)
+                    elif asset_name == "primitive_icosahedron":
+                         info = meshloader.create_icosahedron(self.builder.engine, 2.0)
+                    
+                    if info:
+                        self.builder.asset_library[asset_name] = info
+
+                new_id = self.builder.add_mesh_instance(asset_name, pos, rot, scale, registry_type="mesh_prim")
+                
+                # FORCE props
+                if new_id != -1:
+                    self.builder.registry[new_id]['color'] = col
+                    self.builder.registry[new_id]['mat_type'] = mat
+                    self.builder.registry[new_id]['roughness'] = rough
+                    self.builder.registry[new_id]['metallic'] = metal
+                    self.builder.registry[new_id]['ir'] = ir
+                    self.builder.registry[new_id]['transmission'] = trans
+                    self.push_material_update(self.builder.engine)
+            
             elif otype == "mesh":
                 asset_name = obj.get("asset_name")
-                # Pas de logique complexe ici, add_mesh_instance gère l'appel moteur
-                new_id = self.builder.add_mesh_instance(asset_name, pos, rot, scale)
-                # FORCE props
-                self.builder.registry[new_id]['color'] = col
-                self.builder.registry[new_id]['mat_type'] = mat
-                self.builder.registry[new_id]['roughness'] = rough
-                self.builder.registry[new_id]['metallic'] = metal
-                self.builder.registry[new_id]['ir'] = ir
-                self.builder.registry[new_id]['transmission'] = trans
-                self.push_material_update(self.builder.engine)
+                # Standard OBJ loading (implicit via asset_name)
+                # If asset_name is a path, engine handles it or we should load it?
+                # For now assume asset is already loaded or engine lazy loads?
+                # Wait, if we restart app, engine.asset_map is empty.
+                # add_mesh_instance calls engine.add_instance(mesh_name).
+                # If mesh_name is not in engine, it crashes or fails?
+                # We need to Ensure asset is loaded or mesh_load it!
+                # Since we don't store "filepath" separately (it IS asset_name?), we rely on previous import logic?
+                # Ah, import uses asset_name = filepath.
+                # So if asset_name exists on disk, we should load it if not present?
+                
+                # Verify if loaded
+                # Actually, standard mesh loader workflow:
+                # 1. drag drop -> calls meshloader.load_mesh -> registers in asset_library
+                # So upon Reload, we must check if asset_name is in registry.
+                # If not, try to load it from disk (asset_name is likely absolute or relative path).
+                
+                if asset_name and asset_name not in self.builder.asset_library:
+                    # Attempt reload from disk
+                    if os.path.exists(asset_name):
+                         print(f"[Loader] Reloading external mesh: {asset_name}")
+                         # Use meshloader basic load
+                         # Note: mat override logic in meshloader?
+                         info = meshloader.load_mesh(self.builder.engine, asset_name)
+                         if info: self.builder.asset_library[asset_name] = info
+                
+                new_id = self.builder.add_mesh_instance(asset_name, pos, rot, scale, registry_type="mesh")
+                
+                if new_id != -1:
+                    self.builder.registry[new_id]['color'] = col
+                    self.builder.registry[new_id]['mat_type'] = mat
+                    self.builder.registry[new_id]['roughness'] = rough
+                    self.builder.registry[new_id]['metallic'] = metal
+                    self.builder.registry[new_id]['ir'] = ir
+                    self.builder.registry[new_id]['transmission'] = trans
+                    self.push_material_update(self.builder.engine)
                 
             elif otype == "checker_sphere":
                 c2 = obj.get("color2", [0,0,0])
@@ -817,6 +879,7 @@ class EditorState:
                 u = obj.get("u", [1,0,0])
                 v = obj.get("v", [0,1,0])
                 new_id = self.builder.add_quad(pos, u, v, mat, col, roughness=rough, metallic=metal, ir=ir, transmission=trans)
+
 
             if new_id != -1 and name:
                 self.builder.registry[new_id]['name'] = name
