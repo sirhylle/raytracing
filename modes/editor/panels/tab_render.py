@@ -129,11 +129,23 @@ def build(ui_list, start_y, state, engine, on_start_render):
     if draw_header("PREVIEW", "PREVIEW"):
         lbl(ui_list, 10, ys+3, "Scale", 12, COL_TEXT_DIM)
         def set_res(v): state.res_auto = (v=='AUTO'); state.res_scale = v if v!='AUTO' else 1; state.dirty = True
-        grp_res = []
+        grp_res = [] # Not really used for button grouping logic here, custom manual logic below
         
-        btn(ui_list, 60, ys, 50, 22, "Auto", set_res, 'AUTO', True, grp_res, state.res_auto).corners={'tl':4, 'bl':4}
-        btn(ui_list, 110, ys, 40, 22, "1:1", set_res, 1, True, grp_res, (not state.res_auto and state.res_scale==1)).corners={}
-        btn(ui_list, 150, ys, 40, 22, "1:2", set_res, 2, True, grp_res, (state.res_scale==2)).corners={'tr':4, 'br':4}
+        # Row 1: Auto Only (Full Width)
+        btn(ui_list, 60, ys, 180, 22, "Auto (Dynamic)", set_res, 'AUTO', True, grp_res, state.res_auto).corners={'tl':4, 'bl':4, 'tr':4, 'br':4}
+        ys += 26
+        
+        # Row 2: Manual Ratios (1:4, 1:2, 1:1, 2:1)
+        lbl(ui_list, 10, ys+3, "Manual", 12, COL_TEXT_DIM)
+        
+        # 4 boutons répartis sur 130px de large
+        w_btn = 45
+        x = 60
+        btn(ui_list, x,    ys, w_btn, 22, "1:4", set_res, 4,   True, grp_res, (not state.res_auto and state.res_scale==4)).corners={'tl':4, 'bl':4}
+        btn(ui_list, x+w_btn, ys, w_btn, 22, "1:2", set_res, 2,   True, grp_res, (not state.res_auto and state.res_scale==2)).corners={}
+        btn(ui_list, x+(2*w_btn), ys, w_btn, 22, "1:1", set_res, 1,   True, grp_res, (not state.res_auto and state.res_scale==1)).corners={}
+        btn(ui_list, x+(3*w_btn), ys, w_btn, 22, "2:1", set_res, 0.5, True, grp_res, (not state.res_auto and state.res_scale==0.5)).corners={'tr':4, 'br':4}
+        
         ys += 40
 
     # ==================== FOOTER ACTION ====================

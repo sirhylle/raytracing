@@ -16,6 +16,7 @@ DESCRIPTION:
 """
 import trimesh
 import numpy as np
+import math
 import os
 import cpp_engine
 from dataclasses import dataclass, field
@@ -117,16 +118,11 @@ def process_trimesh_objects(engine, asset_name, scene_or_mesh,
         mean_z = combined[:, 2].mean()
         center_mass = np.array([mean_x, min_y, mean_z])
 
-    # Default logic PBR
-    last_mat_type = "standard"
-    last_color = [0.8, 0.8, 0.8]
-    last_rough = 0.5
-    last_metal = 0.0
-    last_ior = 1.5
-    last_trans = 0.0
+    # Default logic PBR (Found in loop)
 
     for geom in geometries:
-        # 1. Matériaux (Simplifié)
+        # 1. Extraction des propriétés du fichier (Source of Truth)
+        # Valeurs par défaut "safe"
         mat_type = "standard"
         color = [0.8, 0.8, 0.8]
         roughness = 0.5
@@ -134,19 +130,73 @@ def process_trimesh_objects(engine, asset_name, scene_or_mesh,
         ior = 1.5
         transmission = 0.0
         
-        # Try to infer from trimesh visual (limited)
-        if hasattr(geom.visual, 'material'):
+        if hasattr(geom, 'visual') and hasattr(geom.visual, 'material'):
             mat = geom.visual.material
+            if hasattr(mat, 'name') and mat.name:
+                print(f"[Loader]   -> Found Material: '{mat.name}'")
+            
+            # --- A. Couleur / Albedo ---
             if hasattr(mat, 'diffuse'):
-                rgba = mat.diffuse
-                if isinstance(rgba, np.ndarray):
-                    if rgba.dtype == np.uint8: color = rgba[:3] / 255.0
-                    else: color = rgba[:3]
-                else: color = rgba[:3] if len(rgba)>=3 else [0.8,0.8,0.8]
-        
-        # --- APPLICATION DES OVERRIDES ---
-        if override_mat: mat_type = override_mat
-        if override_color: color = override_color
+                # trimesh peut renvoyer un color object ou un numpy array
+                diff = mat.diffuse
+                if isinstance(diff, np.ndarray):
+                    if diff.dtype == np.uint8: color = (diff[:3] / 255.0).tolist()
+                    else: color = diff[:3].tolist()
+                elif isinstance(diff, (list, tuple)) and len(diff) >= 3:
+                     # Parfois c'est [r,g,b,a]
+                     color = list(diff)[:3]
+            # Fallback PBR GLTF
+            elif hasattr(mat, 'baseColorFactor'):
+                 c = mat.baseColorFactor
+                 if len(c) >= 3: color = list(c)[:3]
+
+            # --- B. Roughness ---
+            # 1. PBR Direct
+            if hasattr(mat, 'roughnessFactor'):
+                roughness = float(mat.roughnessFactor)
+            # 2. Legacy OBJ (Ns / Shininess)
+            elif hasattr(mat, 'shininess'):
+                # Mapping empirique: Roughness = sqrt(2 / (Ns + 2))
+                # Ns va souvent de 0 à 1000
+                ns = float(mat.shininess)
+                if ns <= 0.001:
+                    roughness = 1.0 # Fully Matte
+                else:
+                    roughness = math.sqrt(2.0 / (ns + 2.0))
+            
+            # --- C. Metallic ---
+            if hasattr(mat, 'metallicFactor'):
+                metallic = float(mat.metallicFactor)
+            elif hasattr(mat, 'specular'):
+                # Heuristique faible: si specular est très brillant -> metallic ?
+                # Pour l'instant, OBJ est souvent diélectrique.
+                pass
+
+            # --- D. Transmission / Opacity ---
+            # Trimesh 'transparency' est souvent bizarre (d ou Tr).
+            # On regarde 'opacity' si dispo (1=opaque, 0=transparent)
+            opacity = 1.0
+            if hasattr(mat, 'opacity'): # Common in trimesh processed mats
+                opacity = float(mat.opacity)
+            elif hasattr(mat, 'transparency'):
+                # Parfois transparency = 1 - opacity, parfois c'est l'inverse...
+                # Trimesh semble normaliser 'transparency' comme alpha si c'est chargé depuis 'd'.
+                pass
+            
+            if opacity < 0.99:
+                transmission = 1.0 - opacity
+                
+            # --- E. IOR ---
+            if hasattr(mat, 'ior'): # PBR extension
+                ior_val = float(mat.ior)
+                if ior_val > 0: ior = ior_val
+            # OBJ n'a pas toujours Ni accessible facilement via visual.material standard de trimesh
+            # Sauf si PBRMaterial.
+
+        # --- APPLICATION DES OVERRIDES (Priorité Utilisateur) ---
+        # Seulement si l'argument est NON-NONE
+        if override_mat is not None: mat_type = override_mat
+        if override_color is not None: color = override_color
         if override_roughness is not None: roughness = override_roughness
         if override_metallic is not None: metallic = override_metallic
         if override_ior is not None: ior = override_ior
@@ -166,10 +216,13 @@ def process_trimesh_objects(engine, asset_name, scene_or_mesh,
         c_norms = np.ascontiguousarray(norms, dtype=np.float32)
         c_faces = np.ascontiguousarray(geom.faces, dtype=np.int32)
         
+        # Color safety check
         if isinstance(color, np.ndarray): color = color.tolist()
+        if len(color) < 3: color = [0.8, 0.8, 0.8]
+        
         vec_color = cpp_engine.Vec3(float(color[0]), float(color[1]), float(color[2]))
 
-        # Enregistrement des infos matériau
+        # Enregistrement des infos matériau (pour le MeshInfo final - prend le dernier)
         last_mat_type = mat_type
         last_color = color
         last_rough = float(roughness)

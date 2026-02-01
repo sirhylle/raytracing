@@ -37,7 +37,7 @@ const bool VISIBLE_IN_REFLECTIONS = true;
 // Standard.
 // - Scène "Macro" (Objets ~100.0, Dist ~1000.0) : EPSILON ~ 0.1f -> Sinon
 // erreurs de précision float.
-const Real EPSILON = 0.0001f;
+const Real EPSILON = 0.001f;
 
 // 4. Gestion des Fireflies (Lucioles)
 // Limite l'intensité maximale d'un échantillon indirect pour réduire le bruit

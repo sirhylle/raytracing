@@ -39,7 +39,7 @@ class EditorState:
         self.builder = builder 
         self.res_scale = 1
         self.current_fps = 0.0
-        self.res_auto = False
+        self.res_auto = True
         self.preview_mode = 0 
 
         # --- VIEWPORT LOGIC ---
@@ -461,6 +461,10 @@ class EditorState:
              if new_id in self.builder.registry:
                  self.builder.registry[new_id]['mat_type'] = "lambertian"
                  self.builder.registry[new_id]['color'] = [0.8, 0.8, 0.8]
+                 self.builder.registry[new_id]['roughness'] = 0.5
+                 self.builder.registry[new_id]['metallic'] = 0.0
+                 self.builder.registry[new_id]['ir'] = 0.0
+                 self.builder.registry[new_id]['transmission'] = 0.0    
 
         elif type_key == "light_sphere":
             new_id = self.builder.add_invisible_sphere_light(spawn_pos_list, 1.0, [10,10,10], [10,10,10])
@@ -478,7 +482,7 @@ class EditorState:
              # (2,0,0) x (0,0,2) = (0, -4, 0). YES.
              
              # High emission color
-             new_id = self.builder.add_quad(Q, u, v, "lambertian", [15.0, 15.0, 15.0])
+             new_id = self.builder.add_quad(Q, u, v, "light", [15.0, 15.0, 15.0])
             
         elif type_key == "quad_floor":
              # Un quad plat au sol (XZ), ABAISSÉ (-2.0)

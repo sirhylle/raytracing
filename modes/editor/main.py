@@ -494,18 +494,46 @@ def run(engine, config, builder):
             
             # Hysteresis Scale (Adaptation dynamique qualité)
             scale = app_state.res_scale
-            if app_state.res_auto:
-                if scale == 1 and last_render_dt > 0.06: scale = 2
-                elif scale == 2 and last_render_dt > 0.06: scale = 4
-                elif scale == 4 and last_render_dt < 0.016: scale = 2
-                elif scale == 2 and last_render_dt < 0.016: scale = 1
-                else: scale = 1
             
-            rw, rh = max(1, render_w // scale), max(1, render_h // scale)
+            if app_state.res_auto:
+                # Seuils
+                current_dt = last_render_dt
+                FPS_LOW = 0.1  # ~10 FPS -> Downscale
+                FPS_HIGH = 0.025 # ~40 FPS -> Upscale
+                
+                # --- LOGIQUE DOWNSCALE (Performance) ---
+                if current_dt > FPS_LOW:
+                    if scale == 0.5: scale = 1
+                    elif scale == 1: scale = 2
+                    elif scale == 2: scale = 4
+                    elif scale == 4: pass # Max downscale
+                
+                # --- LOGIQUE UPSCALE (Qualité) ---
+                elif current_dt < FPS_HIGH:
+                    if scale == 4: scale = 2
+                    elif scale == 2: scale = 1
+                    elif scale == 1: 
+                        # On ne passe en SuperSampling (0.5) que si on n'est PAS en Raytracing
+                        # En Raytracing, 0.5 revient à 4 SPP, géré par l'accumulateur.
+                        if app_state.preview_mode != 2: 
+                            scale = 0.5
+                    elif scale == 0.5: pass # Max quality
+                
+                app_state.res_scale = scale # Mémorisation pour stabilité frame suivante
+            
+            # Calcul de la résolution de rendu (rw, rh)
+            # scale 0.5 -> rw = 2 * render_w (SuperSampling)
+            # scale 4.0 -> rw = 0.25 * render_w (Pixelated)
+            rw = int(render_w / scale)
+            rh = int(render_h / scale)
+            
+            # Sécurité min/max
+            rw = max(1, min(4096, rw))
+            rh = max(1, min(4096, rh))
 
             if app_state.preview_mode == 2: # RAY
                 batch = app_state.ray_batch_size
-                raw = engine.render_accumulate(render_w, render_h, batch, render_threads)
+                raw = engine.render_accumulate(rw, rh, batch, render_threads)
                 app_state.accum_spp += batch
             else: # PREVIEW
                 raw = engine.render_preview(rw, rh, app_state.preview_mode, render_threads)
@@ -524,8 +552,10 @@ def run(engine, config, builder):
             img_transposed = np.transpose(img_uint8, (1, 0, 2))
             surf = pygame.surfarray.make_surface(img_transposed)
             
-            if scale > 1:
-                surf = pygame.transform.scale(surf, (render_w, render_h))
+            # FIX: Ensure final surface matches rendering viewport exactly
+            # This handles Upscaling (Scale > 1) AND Downscaling (Scale < 1 / Supersampling)
+            if surf.get_width() != render_w or surf.get_height() != render_h:
+                 surf = pygame.transform.smoothscale(surf, (render_w, render_h))
             
             app_state.current_image = surf
             last_render_dt = time.time() - t0

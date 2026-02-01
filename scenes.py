@@ -203,6 +203,18 @@ class MaterialsShowcase(Scene):
             env_map="env-dock-sun.hdr", env_exposure=1.0, env_background=1.0, env_diffuse=0.6, env_specular=2.0
         )
 
+class Empty(Scene):
+    def setup(self, builder, config_overrides: dict = None) -> SceneConfig:
+        def v3(x, y, z): return cpp_engine.Vec3(float(x), float(y), float(z))
+
+        # 1. Le Sol (Plateau damier)
+        builder.add_checker_sphere(v3(0, -1000, 0), 1000.0, [0.1, 0.1, 0.1], [0.5, 0.5, 0.5], 2.0)
+        
+        return SceneConfig(
+            lookfrom=[0, 3, 8], lookat=[0, 1, 0], vup=[0, 1, 0], vfov=50.0, aperture=0.0, focus_dist=8.0,
+            env_map="env-dock-sun.hdr", env_exposure=1.0, env_background=1.0, env_diffuse=0.6, env_specular=2.0
+        )
+
 class MeshScene1(Scene):
     def setup(self, builder, config_overrides: dict = None) -> SceneConfig:
         builder.add_checker_sphere(cpp_engine.Vec3(0.0, -100, -1.0), 100.0, [0.2, 0.3, 0.1], [0.9, 0.9, 0.9], 10.0)
@@ -267,5 +279,6 @@ AVAILABLE_SCENES = {
     "random": RandomSpheres(),
     "showcase": MaterialsShowcase(),
     "mesh1": MeshScene1(),
-    "mesh2": MeshScene2()
+    "mesh2": MeshScene2(),
+    "empty": Empty()
 }

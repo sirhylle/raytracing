@@ -68,7 +68,14 @@ def draw_footer_status(screen, fonts, state):
     
     # 1. FPS (Gauche) - On lit la valeur stockée dans state
     fps_txt = f"FPS: {int(state.current_fps):.0f}"
-    screen.blit(f.render(fps_txt, True, col), (VIEW_W + 10, y + 5))
+    
+    # Scale Text
+    s = state.res_scale
+    if s < 0.9: scale_txt = "2:1"
+    else: scale_txt = f"1:{int(s)}"
+    
+    label_left = f"{fps_txt}   |   Scale: {scale_txt}"
+    screen.blit(f.render(label_left, True, col), (VIEW_W + 10, y + 5))
     
     # 2. Infos Rendu (Droite)
     info_str = f"SPP: {state.accum_spp}   |   {state.conf.width}x{state.conf.height}"
