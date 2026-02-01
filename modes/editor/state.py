@@ -102,6 +102,15 @@ class EditorState:
         self.env_clipping_multiplier = conf.clipping_multiplier if hasattr(conf, 'clipping_multiplier') else 20.0
         self.env_clipping_enabled = True # Remplacé par True par défaut pour l'instant
         self.env_median_luminance = 0.0 
+
+        # --- SYSTEM VARS (Runtime) ---
+        self.epsilon = 0.001
+        self.firefly_clamp = 100.0
+        try:
+            self.epsilon = cpp_engine.get_epsilon()
+            self.firefly_clamp = cpp_engine.get_firefly_clamp()
+        except:
+            print("[Warning] Could not fetch system vars from engine (outdated binary?)")
         
         # Tentative de récupération de la médiane depuis le setup initial du moteur
         init_thresh = builder.engine.get_env_clipping_threshold()
@@ -178,7 +187,7 @@ class EditorState:
         self.conf.width = int(w)
         self.conf.height = int(h)
         self.target_aspect = self.conf.width / self.conf.height
-        
+
         # On recalcule le rectangle d'affichage (Letterboxing)
         # Note: On a besoin de VIEW_W/H. Ils sont importés depuis ui_core.
         self.calculate_viewport(VIEW_W, VIEW_H)
@@ -202,6 +211,27 @@ class EditorState:
                                          np.ascontiguousarray(InvM, dtype=np.float32))
         self.dirty = True
 
+    def update_epsilon(self, val):
+        try:
+            val = float(val)
+            self.epsilon = val
+            cpp_engine.set_epsilon(val)
+            self.dirty = True
+            # Might need accumulation reset? Generally yes for geometry intersections issues
+            if hasattr(self.builder.engine, 'reset_accumulation'): self.builder.engine.reset_accumulation()
+        except Exception as e:
+            print(f"Error setting epsilon: {e}")
+
+    def update_firefly_clamp(self, val):
+        try:
+            val = float(val)
+            self.firefly_clamp = val
+            cpp_engine.set_firefly_clamp(val)
+            self.dirty = True
+            if hasattr(self.builder.engine, 'reset_accumulation'): self.builder.engine.reset_accumulation()
+        except Exception as e:
+            print(f"Error setting firefly clamp: {e}")
+
     def push_material_update(self, engine):
         d = self.get_selected_info()
         if not d: return
@@ -224,7 +254,11 @@ class EditorState:
         file_path = filedialog.askopenfilename(title="Load Environment Map", filetypes=[("HDR/IMG", "*.hdr *.exr *.jpg *.png")], initialdir="./env-maps")
         root.destroy()
         if not file_path: return
+        if not file_path: return
         
+        # Update Config for persistence
+        self.conf.env_map = file_path
+
         # Nettoyage ancien soleil
         if self.sun_id != -1:
             engine.remove_instance(self.sun_id)
@@ -555,6 +589,12 @@ class EditorState:
                 "fps": getattr(self.conf, 'fps', 24),
                 "turntable_radius": getattr(self.conf, 'radius', 0.0) # Renommé pour clarté
             },
+            
+            # A2. System Vars
+            "system": {
+                "epsilon": self.epsilon,
+                "firefly_clamp": self.firefly_clamp
+            },
 
             # B. Caméra
             "camera": {
@@ -567,7 +607,7 @@ class EditorState:
 
             # C. Environnement (inchangé)
             "environment": {
-                "map_path": self.conf.env_map,
+                "map_path": os.path.relpath(self.conf.env_map, os.getcwd()) if (self.conf.env_map and os.path.exists(self.conf.env_map)) else self.conf.env_map,
                 "exposure": self.env_exposure,
                 "background_level": self.env_background,
                 "diffuse_level": self.env_diffuse,
@@ -645,6 +685,12 @@ class EditorState:
             if "fps" in rs: self.conf.fps = rs["fps"]
             if "turntable_radius" in rs: self.conf.radius = rs["turntable_radius"]
 
+            # System Vars
+            if "system" in data:
+                 sys_conf = data["system"]
+                 if "epsilon" in sys_conf: self.update_epsilon(sys_conf["epsilon"])
+                 if "firefly_clamp" in sys_conf: self.update_firefly_clamp(sys_conf["firefly_clamp"])
+
             # Mise à jour Aspect Ratio Viewport
             if self.conf.height > 0:
                 self.target_aspect = self.conf.width / self.conf.height
@@ -680,6 +726,8 @@ class EditorState:
         
         env_map_path = env.get("map_path")
         if env_map_path:
+             self.conf.env_map = env_map_path # Persistence Update
+             
              if not os.path.isabs(env_map_path):
                  env_map_path = os.path.abspath(os.path.join(os.getcwd(), env_map_path))
              

@@ -37,7 +37,7 @@ const bool VISIBLE_IN_REFLECTIONS = true;
 // Standard.
 // - Scène "Macro" (Objets ~100.0, Dist ~1000.0) : EPSILON ~ 0.1f -> Sinon
 // erreurs de précision float.
-const Real EPSILON = 0.001f;
+extern Real EPSILON;
 
 // 4. Gestion des Fireflies (Lucioles)
 // Limite l'intensité maximale d'un échantillon indirect pour réduire le bruit
@@ -53,8 +53,7 @@ const Real EPSILON = 0.001f;
 // - 10.0f - 20.0f   : Clamp agressif, image très propre rapidement.
 // - 50.0f - 100.0f  : Bon compromis qualité/temps.
 // - > 1000.0f       : Virtuellement désactivé.
-const Real FIREFLY_CLAMP_LIMIT =
-    100.0f; // Limit raised to preserve caustics energy
+extern Real FIREFLY_CLAMP_LIMIT;
 const bool USE_HARD_CLAMP =
     false; // True = Hard Cutoff (Preserves energy below limit), False = Soft
            // Rolloff (Smoother but darkens highlights)

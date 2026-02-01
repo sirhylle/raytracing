@@ -29,6 +29,9 @@
 #include "materials.h"
 #include "renderer.h"
 
+Real EPSILON = 0.001f;
+Real FIREFLY_CLAMP_LIMIT = 100.0f;
+
 namespace nb = nanobind;
 using namespace nb::literals;
 
@@ -650,4 +653,9 @@ NB_MODULE(cpp_engine, m) {
       .def("get_env_clipping_threshold", &PyScene::get_env_clipping_threshold)
       .def("set_env_clipping_threshold", &PyScene::set_env_clipping_threshold)
       .def("get_env_sun_info", &PyScene::get_env_sun_info);
+
+  m.def("get_epsilon", []() { return EPSILON; });
+  m.def("set_epsilon", [](Real val) { EPSILON = val; });
+  m.def("get_firefly_clamp", []() { return FIREFLY_CLAMP_LIMIT; });
+  m.def("set_firefly_clamp", [](Real val) { FIREFLY_CLAMP_LIMIT = val; });
 }

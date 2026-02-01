@@ -113,6 +113,20 @@ def build(ui_list, start_y, state, engine, on_start_render):
                                    lambda: get_c('leave_cores', 0), lambda v: set_c('leave_cores', int(v)), fmt="{:.0f}"))
         lbl(ui_list, 170, ys+4, "(Keep n cores free)", 11, (100,100,100))
         ys += 30
+
+        # Epsilon
+        lbl(ui_list, 10, ys+4, "Ray Epsilon", 12, COL_TEXT_DIM)
+        ui_list.append(NumberField(VIEW_W+100, ys, 60, 22, 
+                                   lambda: state.epsilon, lambda v: state.update_epsilon(v), fmt="{:.4f}"))
+        lbl(ui_list, 170, ys+4, "(Bias)", 11, (100,100,100))
+        ys += 30
+
+        # Firefly Clamp
+        lbl(ui_list, 10, ys+4, "Firefly Clamp", 12, COL_TEXT_DIM)
+        ui_list.append(NumberField(VIEW_W+100, ys, 60, 22, 
+                                   lambda: state.firefly_clamp, lambda v: state.update_firefly_clamp(v), fmt="{:.1f}"))
+        lbl(ui_list, 170, ys+4, "(Max Intensity)", 11, (100,100,100))
+        ys += 40
         
         # Checkboxes (boutons toggle)
         # Save Raw
