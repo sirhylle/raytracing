@@ -27,6 +27,7 @@ import copy
 import tkinter as tk
 from tkinter import filedialog
 import loader
+import meshloader
 import os
 import json
 import copy
@@ -394,6 +395,41 @@ class EditorState:
             self.dirty = True
             print(f"Duplicate: ID {self.selected_id} created.")
 
+    def load_mesh_dialog(self, engine):
+        """Ouvre un dialogue pour charger un mesh .obj/.glb etc."""
+        root = tk.Tk(); root.withdraw(); root.attributes('-topmost', True)
+        init_dir = "./assets" if os.path.exists("./assets") else "."
+        file_path = filedialog.askopenfilename(title="Load Mesh Asset", 
+                                               filetypes=[("3D Models", "*.obj *.glb *.stl *.ply")], 
+                                               initialdir=init_dir)
+        root.destroy()
+        if not file_path: return
+        
+        # 1. Chargement de l'asset via MeshLoader (via Builder)
+        # On utilise le nom du fichier comme nom d'asset
+        filename = os.path.basename(file_path)
+        asset_name = os.path.splitext(filename)[0]
+        
+        info = self.builder.load_asset(asset_name, file_path)
+        
+        if info:
+            # 2. Spawn devant la caméra
+            fx = math.sin(self.yaw) * math.cos(self.pitch)
+            fy = math.sin(self.pitch)
+            fz = math.cos(self.yaw) * math.cos(self.pitch)
+            fwd = np.array([fx, fy, fz])
+            spawn_pos = self.cam_pos + (fwd * 5.0)
+            
+            # 3. Création de l'instance
+            new_id = self.builder.add_mesh_instance(info.name, pos=spawn_pos.tolist())
+            
+            if new_id != -1:
+                self.selected_id = new_id
+                self.gizmo_mode = "MOVE"
+                self.set_active_tab("OBJECT")
+                self.dirty = True
+                self.needs_ui_rebuild = True
+
     def add_primitive(self, type_key):
         """Crée un objet devant la caméra."""
         
@@ -415,15 +451,38 @@ class EditorState:
             new_id = self.builder.add_sphere(spawn_pos_list, 1.0, "lambertian", [0.8, 0.8, 0.8], roughness=0.5)
             
         elif type_key == "cube":
-             # Le cube n'est pas une primitive native C++, on utilise add_mesh_instance 
-             pass 
+             # Utilisation du helper meshloader pour créer le cube virtuel
+             info = meshloader.create_cube(self.builder.engine, 2.0)
+             if info: self.builder.asset_library["primitive_cube"] = info
+             
+             # Instance
+             new_id = self.builder.add_mesh_instance("primitive_cube", pos=spawn_pos_list)
+             # Force mat settings
+             if new_id in self.builder.registry:
+                 self.builder.registry[new_id]['mat_type'] = "lambertian"
+                 self.builder.registry[new_id]['color'] = [0.8, 0.8, 0.8]
 
         elif type_key == "light_sphere":
             new_id = self.builder.add_invisible_sphere_light(spawn_pos_list, 1.0, [10,10,10], [10,10,10])
+        
+        elif type_key == "light_quad":
+             # Ceiling Light : Quad au dessus, émissif
+             center = [spawn_pos_list[0], spawn_pos_list[1] + 2.5, spawn_pos_list[2]]
+             s = 2.0
+             # Quad horizontal facing down (Normal -Y)
+             # Start Corner Q
+             Q = [center[0]-s, center[1], center[2]-s]
+             u = [2*s, 0, 0]   # +X
+             v = [0, 0, 2*s]   # +Z
+             # Cross(u, v) -> Down (-Y) ? 
+             # (2,0,0) x (0,0,2) = (0, -4, 0). YES.
+             
+             # High emission color
+             new_id = self.builder.add_quad(Q, u, v, "lambertian", [15.0, 15.0, 15.0])
             
         elif type_key == "quad_floor":
-             # Un quad plat au sol (XZ)
-             center = spawn_pos_list
+             # Un quad plat au sol (XZ), ABAISSÉ (-2.0)
+             center = [spawn_pos_list[0], spawn_pos_list[1] - 2.0, spawn_pos_list[2]]
              y = center[1]
              s = 5.0 # taille
              Q = [center[0]-s, y, center[2]-s]
@@ -432,10 +491,20 @@ class EditorState:
              new_id = self.builder.add_quad(Q, u, v, "lambertian", [0.5, 0.5, 0.5])
 
         elif type_key == "quad_wall":
-             # Un quad vertical (XY)
-             center = spawn_pos_list
+             # Un quad vertical (XY), DÉCALÉ À DROITE (+X)
+             # +X est à droite si on regarde -Z.
+             right_vec = np.cross(fwd, np.array([0,1,0]))
+             if np.linalg.norm(right_vec) > 0.01:
+                 right_vec /= np.linalg.norm(right_vec)
+             else:
+                 right_vec = np.array([1,0,0])
+                 
+             offset_pos = spawn_pos + (right_vec * 3.0) 
+             center = offset_pos.tolist()
+             
              z = center[2]
              s = 5.0
+             # Quad facing +Z (vers camera si on est en -Z)
              Q = [center[0]-s, center[1]-s, z]
              u = [2*s, 0, 0]
              v = [0, 2*s, 0]
