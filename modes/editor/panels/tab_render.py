@@ -162,6 +162,24 @@ def build(ui_list, start_y, state, engine, on_start_render):
         
         ys += 40
 
+        # Depth (Bounces)
+        lbl(ui_list, 10, ys+3, "Bounces", 12, COL_TEXT_DIM)
+        
+        # Helper pour update depth (avec cast int)
+        def set_depth(d): 
+             d_int = int(d)
+             if state.preview_depth != d_int:
+                 state.preview_depth = d_int
+                 if hasattr(engine, 'reset_accumulation'): engine.reset_accumulation()
+                 state.accum_spp = 0
+                 state.dirty = True
+
+        # Slider 1 a 30 (Log power 1.0 = Linear is fine for small range, or 1.5 for precision at low values)
+        # On utilise display "center" pour la valeur
+        ui_list.append(Slider(VIEW_W+80, ys, 160, 22, 1, 30, lambda: state.preview_depth, set_depth, power=1.5))
+
+        ys += 40
+
     # ==================== FOOTER ACTION ====================
     # On laisse un peu d'espace avant le gros bouton
     # ys += 10

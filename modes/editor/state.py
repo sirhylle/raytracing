@@ -41,6 +41,7 @@ class EditorState:
         self.current_fps = 0.0
         self.res_auto = True
         self.preview_mode = 0 
+        self.preview_depth = 6 # Paramètre Profondeur Preview (User Request) 
 
         # --- VIEWPORT LOGIC ---
         self.target_aspect = conf.width / conf.height
@@ -253,7 +254,6 @@ class EditorState:
         root = tk.Tk(); root.withdraw(); root.attributes('-topmost', True)
         file_path = filedialog.askopenfilename(title="Load Environment Map", filetypes=[("HDR/IMG", "*.hdr *.exr *.jpg *.png")], initialdir="./env-maps")
         root.destroy()
-        if not file_path: return
         if not file_path: return
         
         # Update Config for persistence

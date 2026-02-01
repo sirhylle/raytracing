@@ -475,7 +475,9 @@ public:
   }
 
   nb::ndarray<nb::numpy, float> render_accumulate(int width, int height,
-                                                  int spp, int n_threads) {
+                                                  int spp = 1,
+                                                  int n_threads = 0,
+                                                  int depth = 6) {
     size_t num_pixels = (size_t)width * height;
     if (width != acc_width || height != acc_height ||
         accumulation_buffer.size() != num_pixels * 3) {
@@ -502,7 +504,7 @@ public:
             Ray r = camera->get_ray(u, v);
             r.is_primary = true;
             batch_color +=
-                ray_color(r, *world_bvh, lights, background.get(), 6, true);
+                ray_color(r, *world_bvh, lights, background.get(), depth, true);
           }
           int idx = ((height - 1 - j) * width + i) * 3;
           accumulation_buffer[idx + 0] += batch_color.x();
@@ -647,7 +649,9 @@ NB_MODULE(cpp_engine, m) {
       .def("render", &PyScene::render, nb::arg("width"), nb::arg("height"),
            nb::arg("spp"), nb::arg("depth"), nb::arg("n_threads") = 0)
       .def("render_preview", &PyScene::render_preview)
-      .def("render_accumulate", &PyScene::render_accumulate)
+      .def("render_accumulate", &PyScene::render_accumulate, nb::arg("width"),
+           nb::arg("height"), nb::arg("spp") = 1, nb::arg("n_threads") = 0,
+           nb::arg("depth") = 6)
       .def("reset_accumulation", &PyScene::reset_accumulation)
       .def("pick_focus_distance", &PyScene::pick_focus_distance)
       .def("get_env_clipping_threshold", &PyScene::get_env_clipping_threshold)

@@ -533,7 +533,7 @@ def run(engine, config, builder):
 
             if app_state.preview_mode == 2: # RAY
                 batch = app_state.ray_batch_size
-                raw = engine.render_accumulate(rw, rh, batch, render_threads)
+                raw = engine.render_accumulate(rw, rh, batch, render_threads, app_state.preview_depth)
                 app_state.accum_spp += batch
             else: # PREVIEW
                 raw = engine.render_preview(rw, rh, app_state.preview_mode, render_threads)
