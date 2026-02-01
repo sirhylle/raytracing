@@ -499,6 +499,27 @@ class EditorState:
                  self.builder.registry[new_id]['metallic'] = 0.0
                  self.builder.registry[new_id]['ir'] = 0.0
                  self.builder.registry[new_id]['transmission'] = 0.0    
+        
+        elif type_key == "cylinder":
+             new_id = self.builder.add_cylinder(spawn_pos_list, 1.0, 2.0, "lambertian", [0.8, 0.8, 0.8])
+             
+        elif type_key == "cone":
+             new_id = self.builder.add_cone(spawn_pos_list, 1.0, 2.0, "lambertian", [0.8, 0.8, 0.8])
+
+        elif type_key == "pyramid":
+             info = meshloader.create_pyramid(self.builder.engine, 2.0, 2.0)
+             if info: self.builder.asset_library["primitive_pyramid"] = info
+             new_id = self.builder.add_mesh_instance("primitive_pyramid", pos=spawn_pos_list)
+
+        elif type_key == "tetrahedron":
+             info = meshloader.create_tetrahedron(self.builder.engine, 2.0)
+             if info: self.builder.asset_library["primitive_tetrahedron"] = info
+             new_id = self.builder.add_mesh_instance("primitive_tetrahedron", pos=spawn_pos_list)
+
+        elif type_key == "icosahedron":
+             info = meshloader.create_icosahedron(self.builder.engine, 2.0)
+             if info: self.builder.asset_library["primitive_icosahedron"] = info
+             new_id = self.builder.add_mesh_instance("primitive_icosahedron", pos=spawn_pos_list)
 
         elif type_key == "light_sphere":
             new_id = self.builder.add_invisible_sphere_light(spawn_pos_list, 1.0, [10,10,10], [10,10,10])

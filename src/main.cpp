@@ -19,6 +19,7 @@
 #include <string>
 
 // --- NOS MODULES ---
+#include "advanced_geometries.h"
 #include "bvh.h"
 #include "camera.h"
 #include "common.h"
@@ -150,6 +151,70 @@ public:
     inv.m[1][3] = -center.y() * inv_r;
     inv.m[2][3] = -center.z() * inv_r;
     return create_and_register_instance(unit_sphere, m, inv, true);
+  }
+
+  // --- ADVANCED GEOMETRIES ---
+
+  int add_cylinder(const Vec3 &center, Real radius, Real height,
+                   std::string mat_type, const Vec3 &color,
+                   Real roughness = 0.5f, Real metallic = 0.0f, Real ir = 1.5f,
+                   Real transmission = 0.0f) {
+    auto mat =
+        create_material(mat_type, color, roughness, metallic, ir, transmission);
+    auto unit_cyl = std::make_shared<Cylinder>(mat); // R=1, H=1 (-0.5 to 0.5)
+
+    Matrix4 m;
+    // Scale: Radius (X,Z), Height (Y)
+    m.m[0][0] = radius;
+    m.m[1][1] = height;
+    m.m[2][2] = radius;
+    // Convert translation to matrix column
+    m.m[0][3] = center.x();
+    m.m[1][3] = center.y();
+    m.m[2][3] = center.z();
+
+    Matrix4 inv;
+    Real irad = 1.0f / radius;
+    Real ih = 1.0f / height;
+    inv.m[0][0] = irad;
+    inv.m[1][1] = ih;
+    inv.m[2][2] = irad;
+    inv.m[0][3] = -center.x() * irad;
+    inv.m[1][3] = -center.y() * ih;
+    inv.m[2][3] = -center.z() * irad;
+
+    bool is_light = (mat_type == "light" || mat_type == "invisible_light");
+    return create_and_register_instance(unit_cyl, m, inv, is_light);
+  }
+
+  int add_cone(const Vec3 &center, Real radius, Real height,
+               std::string mat_type, const Vec3 &color, Real roughness = 0.5f,
+               Real metallic = 0.0f, Real ir = 1.5f, Real transmission = 0.0f) {
+    auto mat =
+        create_material(mat_type, color, roughness, metallic, ir, transmission);
+    auto unit_cone =
+        std::make_shared<Cone>(mat); // R=1, H=1 (Y from -0.5 to 0.5)
+
+    Matrix4 m;
+    m.m[0][0] = radius;
+    m.m[1][1] = height;
+    m.m[2][2] = radius;
+    m.m[0][3] = center.x();
+    m.m[1][3] = center.y();
+    m.m[2][3] = center.z();
+
+    Matrix4 inv;
+    Real irad = 1.0f / radius;
+    Real ih = 1.0f / height;
+    inv.m[0][0] = irad;
+    inv.m[1][1] = ih;
+    inv.m[2][2] = irad;
+    inv.m[0][3] = -center.x() * irad;
+    inv.m[1][3] = -center.y() * ih;
+    inv.m[2][3] = -center.z() * irad;
+
+    bool is_light = (mat_type == "light" || mat_type == "invisible_light");
+    return create_and_register_instance(unit_cone, m, inv, is_light);
   }
 
   int add_quad(const Vec3 &Q, const Vec3 &u, const Vec3 &v,
@@ -598,6 +663,15 @@ NB_MODULE(cpp_engine, m) {
            nb::arg("ir") = 1.5f, nb::arg("transmission") = 0.0f)
       .def("add_invisible_sphere_light", &PyScene::add_invisible_sphere_light)
       .def("add_checker_sphere", &PyScene::add_checker_sphere)
+      .def("add_cylinder", &PyScene::add_cylinder, nb::arg("center"),
+           nb::arg("radius"), nb::arg("height"), nb::arg("mat_type"),
+           nb::arg("color"), nb::arg("roughness") = 0.5f,
+           nb::arg("metallic") = 0.0f, nb::arg("ir") = 1.5f,
+           nb::arg("transmission") = 0.0f)
+      .def("add_cone", &PyScene::add_cone, nb::arg("center"), nb::arg("radius"),
+           nb::arg("height"), nb::arg("mat_type"), nb::arg("color"),
+           nb::arg("roughness") = 0.5f, nb::arg("metallic") = 0.0f,
+           nb::arg("ir") = 1.5f, nb::arg("transmission") = 0.0f)
       .def("add_quad", &PyScene::add_quad, nb::arg("Q"), nb::arg("u"),
            nb::arg("v"), nb::arg("mat_type"), nb::arg("color"),
            nb::arg("roughness") = 0.5f, nb::arg("metallic") = 0.0f,

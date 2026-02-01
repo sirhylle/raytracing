@@ -34,6 +34,17 @@ def build(ui_list, start_y, state, engine):
         btn(ui_list, 10+bw+10, ys, bw, 30, "Cube", add_prim, "cube")
         ys += 40
         
+        btn(ui_list, 10, ys, bw, 30, "Cylinder", add_prim, "cylinder")
+        btn(ui_list, 10+bw+10, ys, bw, 30, "Cone", add_prim, "cone")
+        ys += 40
+
+        btn(ui_list, 10, ys, bw, 30, "Pyramid", add_prim, "pyramid")
+        btn(ui_list, 10+bw+10, ys, bw, 30, "Tetrahedron", add_prim, "tetrahedron")
+        ys += 40
+
+        btn(ui_list, 10, ys, bw, 30, "Icosahedron", add_prim, "icosahedron")
+        ys += 40
+        
         btn(ui_list, 10, ys, bw, 30, "Plane (Floor)", add_prim, "quad_floor")
         btn(ui_list, 10+bw+10, ys, bw, 30, "Quad (Wall)", add_prim, "quad_wall")
         ys += 40

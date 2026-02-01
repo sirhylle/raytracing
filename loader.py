@@ -97,6 +97,52 @@ class SceneBuilder:
         }
         return obj_id
 
+    def add_cylinder(self, center, radius, height, mat_type, color, roughness=0.5, metallic=0.0, ir=1.5, transmission=0.0, fuzz=None):
+        if fuzz is not None: roughness = fuzz
+        c_list = list(center) if isinstance(center, (list, tuple, np.ndarray)) else [center.x(), center.y(), center.z()]
+        v_center = cpp_engine.Vec3(float(c_list[0]), float(c_list[1]), float(c_list[2]))
+        
+        obj_id = self.engine.add_cylinder(v_center, float(radius), float(height), mat_type, 
+                                          cpp_engine.Vec3(float(color[0]), float(color[1]), float(color[2])), 
+                                          float(roughness), float(metallic), float(ir), float(transmission))
+        
+        self.registry[obj_id] = {
+            'type': 'cylinder',
+            'pos': c_list,
+            'rot': [0.0, 0.0, 0.0],
+            'scale': [radius, height, radius], # Scale Y is height
+            'mat_type': mat_type,
+            'color': color,
+            'roughness': float(roughness),
+            'metallic': float(metallic),
+            'ir': float(ir),
+            'transmission': float(transmission)
+        }
+        return obj_id
+        
+    def add_cone(self, center, radius, height, mat_type, color, roughness=0.5, metallic=0.0, ir=1.5, transmission=0.0, fuzz=None):
+        if fuzz is not None: roughness = fuzz
+        c_list = list(center) if isinstance(center, (list, tuple, np.ndarray)) else [center.x(), center.y(), center.z()]
+        v_center = cpp_engine.Vec3(float(c_list[0]), float(c_list[1]), float(c_list[2]))
+        
+        obj_id = self.engine.add_cone(v_center, float(radius), float(height), mat_type, 
+                                      cpp_engine.Vec3(float(color[0]), float(color[1]), float(color[2])), 
+                                      float(roughness), float(metallic), float(ir), float(transmission))
+        
+        self.registry[obj_id] = {
+            'type': 'cone',
+            'pos': c_list,
+            'rot': [0.0, 0.0, 0.0],
+            'scale': [radius, height, radius], 
+            'mat_type': mat_type,
+            'color': color,
+            'roughness': float(roughness),
+            'metallic': float(metallic),
+            'ir': float(ir),
+            'transmission': float(transmission)
+        }
+        return obj_id
+
     def add_quad(self, Q, u, v, mat_type, color, roughness=0.5, metallic=0.0, ir=1.5, transmission=0.0, fuzz=None):
         if fuzz is not None: roughness = fuzz
 
