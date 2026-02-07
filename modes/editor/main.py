@@ -499,7 +499,7 @@ def run(engine, config, builder):
                 # Seuils
                 current_dt = last_render_dt
                 FPS_LOW = 0.1  # ~10 FPS -> Downscale
-                FPS_HIGH = 0.025 # ~40 FPS -> Upscale
+                FPS_HIGH = 0.028 # ~35 FPS -> Upscale
                 
                 # --- LOGIQUE DOWNSCALE (Performance) ---
                 if current_dt > FPS_LOW:

@@ -134,6 +134,9 @@ class EditorState:
                 self.sun_radius = info['scale'][0]
                 self.sun_base_color = np.array(info['raw_color'])
                 break
+        
+        # Force Initial Sync of Environment Levels
+        self.update_environment(builder.engine)
 
     # --- LOGIQUE MÉTIER ---
 
@@ -774,6 +777,9 @@ class EditorState:
                 d = np.linalg.norm(p)
                 if d > 0: self.sun_initial_dir = p/d
                 break
+
+        # Force Sync after load
+        self.update_environment(self.builder.engine)
 
         # 5. RESTAURATION OBJETS (inchangé)
         cwd = os.getcwd()

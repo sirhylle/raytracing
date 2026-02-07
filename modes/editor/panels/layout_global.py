@@ -17,7 +17,16 @@ def build_header(ui_list, state):
     mode_w = 55
     start_x = PANEL_W - (3 * mode_w) - 10
     
-    def set_mode(m): state.preview_mode = m; state.dirty = True
+    def set_mode(m):
+        # STABILIZATION: If switching TO Raytracing from other modes, force low resolution (Scale 4)
+        # to prevent "blinking" caused by immediate high-res render -> auto-downscale loop.
+        if m == 2 and state.preview_mode != 2:
+            if state.res_auto:
+                state.res_scale = 4 # Start rough, let auto-scaler improve it
+                
+        state.preview_mode = m
+        state.dirty = True
+
     grp_mode = []
     
     b1 = btn(ui_list, start_x, y, mode_w, 22, "Norm", set_mode, 0, True, grp_mode, state.preview_mode==0)
