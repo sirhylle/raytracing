@@ -58,9 +58,17 @@ public:
   int acc_width = 0;
   int acc_height = 0;
 
+  // BVH Option
+  BVHNode::SplitMethod bvh_method = BVHNode::SplitMethod::Midpoint;
+
   PyScene() {
     std::vector<Real> d = {0, 0, 0};
     background = std::make_shared<EnvironmentMap>(d, 1, 1);
+  }
+
+  void set_build_method(BVHNode::SplitMethod method) {
+    bvh_method = method;
+    world_bvh = nullptr; // Invalidate
   }
 
   int create_and_register_instance(std::shared_ptr<Hittable> geo,
@@ -424,7 +432,8 @@ public:
     if (world.owned_objects.empty())
       world_bvh = std::make_shared<HittableList>();
     else
-      world_bvh = std::make_shared<BVHNode>(world);
+      // Use selected method
+      world_bvh = std::make_shared<BVHNode>(world, bvh_method);
 
     total_scanlines = height;
     completed_scanlines = 0;
@@ -607,7 +616,7 @@ public:
     if (!camera)
       return {-1.0f, 0.0f, 0.0f, 0.0f};
     if (!world_bvh)
-      world_bvh = std::make_shared<BVHNode>(world);
+      world_bvh = std::make_shared<BVHNode>(world, bvh_method);
     auto u = (mouse_x + 0.5f) / width;
     auto v = 1.0f - ((mouse_y + 0.5f) / height);
     Ray r = camera->get_ray(u, v);
@@ -640,6 +649,12 @@ private:
 };
 
 NB_MODULE(cpp_engine, m) {
+
+  nb::enum_<BVHNode::SplitMethod>(m, "SplitMethod")
+      .value("Midpoint", BVHNode::SplitMethod::Midpoint)
+      .value("SAH", BVHNode::SplitMethod::SAH)
+      .export_values();
+
   nb::class_<Vec3>(m, "Vec3")
       .def(nb::init<Real, Real, Real>())
       .def("x", &Vec3::x)
@@ -730,7 +745,8 @@ NB_MODULE(cpp_engine, m) {
       .def("pick_focus_distance", &PyScene::pick_focus_distance)
       .def("get_env_clipping_threshold", &PyScene::get_env_clipping_threshold)
       .def("set_env_clipping_threshold", &PyScene::set_env_clipping_threshold)
-      .def("get_env_sun_info", &PyScene::get_env_sun_info);
+      .def("get_env_sun_info", &PyScene::get_env_sun_info)
+      .def("set_build_method", &PyScene::set_build_method);
 
   m.def("get_epsilon", []() { return EPSILON; });
   m.def("set_epsilon", [](Real val) { EPSILON = val; });

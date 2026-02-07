@@ -49,6 +49,16 @@ def build(ui_list, start_y, state, engine, on_start_render):
         btn(ui_list, 10+2*(bw+3), ys, bw, 20, "1080p", lambda: set_preset(1920, 1080))
         btn(ui_list, 10+3*(bw+3), ys, bw, 20, "4k", lambda: set_preset(3840, 2160))
         ys += 40
+        
+        # --- Output Options (Save Raw / Stamp) ---
+        # Checkboxes
+        is_raw = get_c('save_raw', False)
+        btn(ui_list, 10, ys, 140, 24, "Save Raw", lambda: set_c('save_raw', not is_raw), toggle=True, active=is_raw)
+        
+        is_stamp = get_c('param_stamp', False)
+        btn(ui_list, 160, ys, 140, 24, "Stamp Params", lambda: set_c('param_stamp', not is_stamp), toggle=True, active=is_stamp)
+        
+        ys += 40
 
     # ==================== 2. QUALITY ====================
     if draw_header("QUALITY", "QUALITY"):
@@ -118,7 +128,7 @@ def build(ui_list, start_y, state, engine, on_start_render):
         lbl(ui_list, 10, ys+4, "Ray Epsilon", 12, COL_TEXT_DIM)
         ui_list.append(NumberField(VIEW_W+100, ys, 60, 22, 
                                    lambda: state.epsilon, lambda v: state.update_epsilon(v), fmt="{:.4f}"))
-        lbl(ui_list, 170, ys+4, "(Bias)", 11, (100,100,100))
+        lbl(ui_list, 170, ys+4, "(Bias, decrease if light bleeding)", 11, (100,100,100))
         ys += 30
 
         # Firefly Clamp
@@ -128,14 +138,29 @@ def build(ui_list, start_y, state, engine, on_start_render):
         lbl(ui_list, 170, ys+4, "(Max Intensity)", 11, (100,100,100))
         ys += 40
         
-        # Checkboxes (boutons toggle)
-        # Save Raw
-        is_raw = get_c('save_raw', False)
-        btn(ui_list, 10, ys, 140, 24, "Save Raw", lambda: set_c('save_raw', not is_raw), toggle=True, active=is_raw)
         
-        # Param Stamp
-        is_stamp = get_c('param_stamp', False)
-        btn(ui_list, 160, ys, 140, 24, "Stamp Params", lambda: set_c('param_stamp', not is_stamp), toggle=True, active=is_stamp)
+        # --- BVH Strategy ---
+        # On place ça AVANT les boutons Raw/Stamp
+        import cpp_engine
+        lbl(ui_list, 10, ys+3, "BVH Strategy", 12, COL_TEXT_DIM)
+        
+        # Init state if needed
+        if not hasattr(state, 'bvh_type'): state.bvh_type = "Midpoint"
+        
+        def set_bvh(mode_str):
+            state.bvh_type = mode_str
+            m = cpp_engine.SplitMethod.SAH if mode_str == "SAH" else cpp_engine.SplitMethod.Midpoint
+            engine.set_build_method(m)
+        
+        grp_bvh = []
+        # Buttons: Midpoint | SAH
+        # On utilise toggle=True pour qu'ils restent "enfoncés" (bleus) si actifs
+        btn(ui_list, 100, ys, 80, 22, "Midpoint", lambda: set_bvh("Midpoint"), toggle=True, grp=grp_bvh, active=(state.bvh_type == "Midpoint"))\
+           .corners={'tl':4, 'bl':4}
+        btn(ui_list, 180, ys, 80, 22, "SAH",      lambda: set_bvh("SAH"),      toggle=True, grp=grp_bvh, active=(state.bvh_type == "SAH"))\
+           .corners={'tr':4, 'br':4}
+        ys += 22
+        lbl(ui_list, 10, ys+4, "(Midpoint best for one complex mesh, SAH for many small objects)", 11, (100,100,100))
         
         ys += 40
 
