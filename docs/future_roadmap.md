@@ -23,6 +23,13 @@ La roadmap se divise en deux axes parallèles : **Consolidation Logicielle** (po
 3.  **Advanced Diffuse** : Remplacer `Lambertian` par **Oren-Nayar**.
     *   *Gain* : Aspect plus naturel pour la pierre, le tissu, la peau.
 
+4.  **Caustics & Transparency (Visualisation & Rendu)**
+    *   **Solution : Targeted Photon Mapping**.
+        *   Lancer de photons uniquement vers la Bounding Box des objets transparents (Geometry Cone).
+        *   **Visualisation** : Afficher les points d'impact des photons dans l'Éditeur 3D pour donner un feedback immédiat.
+        *   **Rendu** : Utiliser cette carte pour éclairer les zones d'ombre (Caustiques).
+    *   **Intérêt** : Permet de voir la lumière traverser le verre sans attendre la convergence du Path Tracing.
+
 
 ---
 
@@ -88,3 +95,35 @@ To properly render rough metals/plastics with noise-free NEE, we need a standard
     3.  The `ray_color()` recursive call arguments.
     4.  **AND** the Python Binding `.def(...)`. (We lost time debugging `Main::render` ignoring settings).
 *   **Offline vs Preview**: Always verify that `render()` (Offline) receives the same parameter updates as `render_accumulate()` (Preview).
+
+# Architecture Refactoring: Asset & Scene Graph (Long Term)
+
+The current architecture suffers from fragmentation (Shotgun surgery required for new primitives) and mixing of Assets vs Instances.
+
+## 1. Unified Asset Manager
+Instead of `loader.py` maintaining ad-hoc lists and regeneration logic:
+*   Implement a robust **AssetLibrary** class.
+*   **Responsibility**: Ensure resources exist (Load from disk OR Generate procedurally).
+*   **Key Change**: Scene Loader only asks `AssetLibrary.get_or_create(id, recipe)`. It does NOT contain regeneration code itself.
+
+## 2. Generic GameObjects (Entity-Component)
+Les objets de la scène ne seraient pas typés "Sphere" ou "Cube" dans le code de sérialisation. Ce seraient des **GameObjects** avec des **Composants**.
+
+*   **Structure** : `GameObject { transform: Matrix, component: GeometryComponent }`.
+*   `GeometryComponent` pointe vers un Asset (ID) ou définit une Primitive Analytique.
+    ```json
+    {
+      "id": 1,
+      "transform": [...],
+      "component": {
+        "type": "geometry",
+        "data": { "shape": "cylinder", "radius": 1.0, "height": 2.0 }
+      },
+      // ...
+    }
+    ```
+*   **Gain** : La sauvegarde devient une boucle générique `for obj in objects: json.dump(obj.properties)`. Plus de `if type == 'cylinder' ... elif type == 'cone'`.
+
+## 3. Separation of Concerns
+*   **Registry**: Should be Data-Driven.
+*   **UI**: Should ideally generate itself based on exposed C++ properties, rather than manually coding `btn("Cylinder", ...)` and corresponding `add_cylinder` handlers.
