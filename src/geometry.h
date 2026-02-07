@@ -102,16 +102,14 @@ public:
     return sum;
   }
 
-  virtual Vec3 random(const Vec3 &o) const override {
+  virtual Vec3 random(const Vec3 &o, Sampler &sampler) const override {
     auto list_size = raw_objects.size();
     if (list_size == 0)
       return Vec3(1, 0, 0);
-    std::uniform_int_distribution<size_t> dist(0, list_size - 1);
-    // Astuce : on utilise le générateur aléatoire thread_local défini dans
-    // common.h Note: il faut l'exposer ou le réimplémenter ici. Simplification:
-    // on utilise random_real() pour choisir l'index
-    size_t random_index = static_cast<size_t>(random_real() * (list_size - 1));
-    return raw_objects[random_index]->random(o);
+    // Use sampler for index selection
+    size_t random_index =
+        static_cast<size_t>(sampler.get_1d() * (list_size - 1));
+    return raw_objects[random_index]->random(o, sampler);
   }
 };
 
@@ -212,19 +210,20 @@ public:
   }
 
   // Random : Génère une direction vers la sphère (Cone Sampling)
-  virtual Vec3 random(const Vec3 &o) const override {
+  virtual Vec3 random(const Vec3 &o, Sampler &sampler) const override {
     Vec3 direction = center - o;
     auto distance_squared = direction.length_squared();
     auto uvw =
         Onb(unit_vector(direction)); // Onb (Orthonormal Basis) local inline
-    return uvw.local(random_to_sphere(radius, distance_squared));
+    return uvw.local(random_to_sphere(radius, distance_squared, sampler));
   }
 
 private:
   // Helpers privés pour le sampling sphérique
-  static Vec3 random_to_sphere(Real radius, Real distance_squared) {
-    auto r1 = random_real();
-    auto r2 = random_real();
+  static Vec3 random_to_sphere(Real radius, Real distance_squared,
+                               Sampler &sampler) {
+    auto r1 = sampler.get_1d();
+    auto r2 = sampler.get_1d();
     auto z = 1.0f +
              r2 * (std::sqrt(1.0f - radius * radius / distance_squared) - 1.0f);
     auto phi = 2 * PI * r1;
@@ -343,8 +342,9 @@ public:
     return distance_squared / (cosine * area);
   }
 
-  virtual Vec3 random(const Vec3 &o) const override {
-    auto p = Q + (random_real() * u) + (random_real() * v);
+  virtual Vec3 random(const Vec3 &o, Sampler &sampler) const override {
+    Vec3 uv = sampler.get_2d();
+    auto p = Q + (uv.x() * u) + (uv.y() * v);
     return p - o;
   }
 };

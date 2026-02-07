@@ -216,6 +216,7 @@ def run(engine, config, builder):
         fx, fy, fz = math.sin(app_state.yaw)*math.cos(app_state.pitch), math.sin(app_state.pitch), math.cos(app_state.yaw)*math.cos(app_state.pitch)
         config.lookat = (app_state.cam_pos + np.array([fx, fy, fz])).tolist()
         config.vfov, config.aperture, config.focus_dist = app_state.vfov, app_state.aperture, app_state.focus_dist
+        config.sampler = app_state.render_sampler
         threading.Thread(target=render_thread_task, args=(engine, config, app_state)).start()
 
     # [HELPER] Fonction de reconstruction UI
@@ -533,7 +534,7 @@ def run(engine, config, builder):
 
             if app_state.preview_mode == 2: # RAY
                 batch = app_state.ray_batch_size
-                raw = engine.render_accumulate(rw, rh, batch, render_threads, app_state.preview_depth)
+                raw = engine.render_accumulate(rw, rh, batch, render_threads, app_state.preview_depth, app_state.preview_sampler)
                 app_state.accum_spp += batch
             else: # PREVIEW
                 raw = engine.render_preview(rw, rh, app_state.preview_mode, render_threads)

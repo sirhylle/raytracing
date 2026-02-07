@@ -157,7 +157,7 @@ def run_single_frame(engine, conf, pool_threads):
     result_container = {}
     def render_thread():
         try:
-            result_container['output'] = engine.render(conf.width, conf.height, conf.spp, conf.depth, pool_threads)
+            result_container['output'] = engine.render(conf.width, conf.height, conf.spp, conf.depth, pool_threads, conf.sampler)
         except Exception as e:
             result_container['error'] = e
 
@@ -274,7 +274,7 @@ def run_animation(engine, conf, pool_threads):
                           float(conf.aperture), float(conf.focus_dist))
         
         try:
-            outputs = engine.render(conf.width, conf.height, conf.spp, conf.depth, pool_threads)
+            outputs = engine.render(conf.width, conf.height, conf.spp, conf.depth, pool_threads, conf.sampler)
             raw = outputs['color']
             
             clean = try_denoise(raw, albedo=outputs['albedo'], normal=outputs['normal'])

@@ -274,11 +274,46 @@ class MeshScene2(Scene):
 
         return SceneConfig(lookfrom=[-0.9, 0.7, 3.93], lookat=[-0.73, 0.5, 2.96], vfov=50.0, aperture=0.1, focus_dist=3.72, env_map="env-dock-sun.hdr")
 
+class Basic(Scene):
+    def setup(self, builder, config_overrides: dict = None) -> SceneConfig:
+        def v3(l):
+            return cpp_engine.Vec3(float(l[0]), float(l[1]), float(l[2]))
+
+        # Environment (Solid White)
+        env_img = np.array([[[1.0, 1.0, 1.0]]], dtype=np.float32)
+        builder.set_environment(env_img)
+
+        # Light
+        builder.add_sphere(v3([0, 5, 0]), 1.0, mat_type="light", color=[10, 10, 10])
+        
+        # Test Sphere (Red-ish)
+        builder.add_sphere(v3([0, 0, -1]), 0.5, mat_type="standard", color=[0.8, 0.3, 0.3], 
+                           roughness=0.1, metallic=0.0, ir=1.5, transmission=0.0)
+        
+        # Floor (Large Gray Plane)
+        builder.add_quad(v3([-10, -0.5, -10]), v3([20, 0, 0]), v3([0, 0, 20]), 
+                         mat_type="standard", color=[0.8, 0.8, 0.8], roughness=0.5)
+
+        return SceneConfig(
+            lookfrom=[0, 0, 3],
+            lookat=[0, 0, 0],
+            vup=[0, 1, 0],
+            vfov=40.0,
+            aperture=0.0,
+            focus_dist=3.0,
+            env_map=None,
+            env_exposure=1.0,
+            env_background=1.0, 
+            env_diffuse=0.5,
+            env_specular=0.5
+        )
+
 AVAILABLE_SCENES = {
     "cornell": CornellBox(),
     "random": RandomSpheres(),
     "showcase": MaterialsShowcase(),
     "mesh1": MeshScene1(),
     "mesh2": MeshScene2(),
-    "empty": Empty()
+    "empty": Empty(),
+    "basic": Basic()
 }

@@ -72,6 +72,15 @@ def build(ui_list, start_y, state, engine, on_start_render):
         lbl(ui_list, 10, ys+4, "Max Bounces", 12, COL_TEXT_DIM)
         ui_list.append(NumberField(VIEW_W+100, ys, 60, 22, 
                                    lambda: state.conf.depth, lambda v: set_c('depth', int(v)), fmt="{:.0f}"))
+        ys += 30
+
+        # Offline Sampler
+        lbl(ui_list, 10, ys+3, "Offline Sampler", 12, COL_TEXT_DIM)
+        grp_samp = []
+        def set_render_samp(v): state.render_sampler = v
+        # 0=Random, 1=Sobol
+        btn(ui_list, 100, ys, 80, 22, "Random", set_render_samp, 0, True, grp_samp, (state.render_sampler==0)).corners={'tl':4, 'bl':4}
+        btn(ui_list, 180, ys, 80, 22, "Sobol",  set_render_samp, 1, True, grp_samp, (state.render_sampler==1)).corners={'tr':4, 'br':4}
         ys += 40
 
     # ==================== 3. ANIMATION (Nouveau) ====================
@@ -171,7 +180,7 @@ def build(ui_list, start_y, state, engine, on_start_render):
         grp_res = [] # Not really used for button grouping logic here, custom manual logic below
         
         # Row 1: Auto Only (Full Width)
-        btn(ui_list, 60, ys, 180, 22, "Auto (Dynamic)", set_res, 'AUTO', True, grp_res, state.res_auto).corners={'tl':4, 'bl':4, 'tr':4, 'br':4}
+        btn(ui_list, 100, ys, 180, 22, "Auto (Dynamic)", set_res, 'AUTO', True, grp_res, state.res_auto).corners={'tl':4, 'bl':4, 'tr':4, 'br':4}
         ys += 26
         
         # Row 2: Manual Ratios (1:4, 1:2, 1:1, 2:1)
@@ -179,7 +188,7 @@ def build(ui_list, start_y, state, engine, on_start_render):
         
         # 4 boutons répartis sur 130px de large
         w_btn = 45
-        x = 60
+        x = 100
         btn(ui_list, x,    ys, w_btn, 22, "1:4", set_res, 4,   True, grp_res, (not state.res_auto and state.res_scale==4)).corners={'tl':4, 'bl':4}
         btn(ui_list, x+w_btn, ys, w_btn, 22, "1:2", set_res, 2,   True, grp_res, (not state.res_auto and state.res_scale==2)).corners={}
         btn(ui_list, x+(2*w_btn), ys, w_btn, 22, "1:1", set_res, 1,   True, grp_res, (not state.res_auto and state.res_scale==1)).corners={}
@@ -201,7 +210,21 @@ def build(ui_list, start_y, state, engine, on_start_render):
 
         # Slider 1 a 30 (Log power 1.0 = Linear is fine for small range, or 1.5 for precision at low values)
         # On utilise display "center" pour la valeur
-        ui_list.append(Slider(VIEW_W+80, ys, 160, 22, 1, 30, lambda: state.preview_depth, set_depth, power=1.5))
+        ui_list.append(Slider(VIEW_W+100, ys, 180, 22, 1, 30, lambda: state.preview_depth, set_depth, power=1.5))
+
+        ys += 40
+
+        # Preview Sampler
+        lbl(ui_list, 10, ys+3, "Sampler", 12, COL_TEXT_DIM)
+        grp_psamp = []
+        def set_prev_samp(v): 
+            state.preview_sampler = v
+            state.accum_spp = 0
+            if hasattr(engine, 'reset_accumulation'): engine.reset_accumulation()
+            state.dirty = True
+        
+        btn(ui_list, 100, ys, 90, 22, "Random", set_prev_samp, 0, True, grp_psamp, (state.preview_sampler==0)).corners={'tl':4, 'bl':4}
+        btn(ui_list, 190, ys, 90, 22, "Sobol",  set_prev_samp, 1, True, grp_psamp, (state.preview_sampler==1)).corners={'tr':4, 'br':4}
 
         ys += 40
 

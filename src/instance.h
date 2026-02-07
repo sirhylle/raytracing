@@ -139,12 +139,12 @@ public:
     return object->pdf_value(o_loc, v_loc);
   }
 
-  virtual Vec3 random(const Vec3 &o) const override {
+  virtual Vec3 random(const Vec3 &o, Sampler &sampler) const override {
     // 1. On se place dans l'espace local
     Vec3 o_loc = inv_transform.point(o);
 
     // 2. On demande un point cible sur la géométrie unitaire
-    Vec3 v_loc = object->random(o_loc);
+    Vec3 v_loc = object->random(o_loc, sampler);
 
     // 3. On remet ce vecteur dans le monde (c'est une direction, donc vector())
     // Note: random() renvoie souvent un vecteur direction (point_obj - o).

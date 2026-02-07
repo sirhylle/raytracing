@@ -1,6 +1,6 @@
 # Future Roadmap (Strategic)
 
-La roadmap se divise en deux axes parallèles : **Consolidation Logicielle** (pour la stabilité/maintenabilité) et **Évolution PBR** (pour la qualité visuelle).
+La roadmap se divise en plusieurs axes parallèles : **Consolidation Logicielle**, **Évolution PBR** (pour la qualité visuelle), et les nouvelles extensions créatives et de post-traitement.
 
 ## Axe A : Consolidation Logicielle (Priority: Stability)
 
@@ -12,6 +12,12 @@ La roadmap se divise en deux axes parallèles : **Consolidation Logicielle** (po
     *   **Status**: *Draft*
 4.  **Single Source of Truth** : Faire en sorte que Python interroge le C++ pour l'état des objets (Getters/Setters via Nanobind).
     *   **Status**: *Planned*
+5.  **UX: Decouple Preview from UI State** (Priority: High)
+    *   **Differentiation**: Distinguer "Scene Data Change" (qui requiert un restart rendu) de "UI State Change" (Tabs, Accordions).
+    *   **Objective**: Empêcher le redémarrage du rendu lors de la navigation dans l'interface si la scène n'a pas changé.
+6.  **Shadow Rays "Any Hit"** (Priority: High)
+    *   *Diff*: Medium | *Value*: High (Perf)
+    *   *Desc*: Add `hit_any()` to BVH for shadow rays. Stop traversal at the *first* intersection found instead of searching for the closest one. Expected gain: 20-30% on complex scenes.
 
 ## Axe B : Évolution PBR (Priority: Quality)
 
@@ -30,6 +36,69 @@ La roadmap se divise en deux axes parallèles : **Consolidation Logicielle** (po
         *   **Rendu** : Utiliser cette carte pour éclairer les zones d'ombre (Caustiques).
     *   **Intérêt** : Permet de voir la lumière traverser le verre sans attendre la convergence du Path Tracing.
 
+## Axe C : Extension PBR & Material (Creative)
+
+*   **Textures Support** (Priority: High)
+    *   *Diff*: Medium | *Value*: High (Essential)
+    *   *Desc*: Support for UV mapping and Image Textures (Albedo, Roughness, Normal). Basic feature missing in current engine.
+*   **Procedural Noise (Perlin/Simplex)** (Priority: Medium)
+    *   *Diff*: Low/Medium | *Value*: High (Versatility)
+    *   *Desc*: Native C++ Perlin/Simplex noise generation.
+    *   *Use Cases*: Marble, Clouds, Heterogeneous materials.
+*   **Normal Alteration (Bump/Displacement)** (Priority: Medium)
+    *   *Diff*: Medium | *Value*: High (Detail)
+    *   *Desc*: Using Noise or Textures to perturb normals for high-frequency detail without adding geometry complexity.
+*   **Semi-Random Meshes** (Priority: Low)
+    *   *Diff*: High | *Value*: Fun/Niche
+    *   *Desc*: Procedural mesh generation or modification (e.g. deformed spheres, random blobs) directly in C++.
+
+## Axe D : Visual Polish & Camera (Filmic)
+
+*   **Chromatic Aberration & Grain** (Priority: Medium)
+    *   *Diff*: Medium (Constraint: Post-Denoiser) | *Value*: High (Realism)
+    *   *Desc*: Post-processing effects to simulate real lenses (fringing, film grain).
+    *   **Constraint**: Must be implemented **AFTER** the OIDN Denoiser, otherwise the denoiser will clean up the grain.
+*   **Global Homogeneous Atmosphere (Fog/Aerial Perspective)** (Priority: Medium)
+    *   *Diff*: High | *Value*: HIgh (Depth)
+    *   *Desc*: Uniform participating media (fog). Adds "God Rays" and depth to large scenes. Easier to sample than clouds.
+*   **Volumetrics (Heterogeneous / Clouds)** (Priority: Low - Long Term)
+    *   *Diff*: Very High | *Value*: High (Specific)
+    *   *Desc*: Cloudscape, Smoke, Fire. Requires advanced Delta Tracking. Very noise-prone.
+*   **Subsurface Scattering (SSS)** (Priority: Low)
+    *   *Diff*: High | *Value*: Specific Quality
+    *   *Desc*: For wax/skin/jade. Can be approximated (Random Walk). To be done usually *after* volumetric logic is understood.
+
+### New Ideas (Proposed)
+
+*   **Procedural Sky (Hosek-Wilkie)** (Priority: High)
+    *   *Diff*: Medium | *Value*: High (Atmosphere)
+    *   *Desc*: Parametric Sky based on Sun position and turbidity. Replaces static HDRIs with dynamic day/night cycles. Perfect synergy with Volumetric Fog.
+*   **Scatter System (Instancing Tool)** (Priority: Medium)
+    *   *Diff*: Low (Python UI) | *Value*: High (Creative)
+    *   *Desc*: "Paint" or procedural generation of instances (grass, pebbles) on surfaces. Purely a UI/Python layer over the existing Instance engine.
+*   **Adaptive Sampling** (Priority: High)
+    *   *Diff*: High | *Value*: High (Perf)
+    *   *Desc*: Stop sampling pixels that have converged (low variance). Accelerates simple areas (sky, walls) by 2-4x.
+*   **Advanced Tone Mapping (AgX / Configurable)** (Priority: Medium)
+    *   *Diff*: Low | *Value*: High (Realism)
+    *   *Status*: *Implemented (Fixed ACES)*. The current `renderer.py` hardcodes ACES + Gamma.
+    *   *Goal*: Allow selecting different operators (AgX, Filmic, Linear) via CLI/UI. AgX handles saturated bright colors better than ACES.
+*   **Imperfect Glass (Schlieren / Stress)** (Priority: Medium)
+    *   *Diff*: Medium | *Value*: High (Realism)
+    *   *Desc*: Perturbing IOR or Normal based on 3D World Position Noise to simulate internal stress/density variations. Removes the "perfectly digital" look of glass spheres. Synergies with Procedural Noise.
+*   **Toon/Cel Shading Preview** (Priority: Low)
+    *   *Diff*: Low | *Value*: High (Fun/Preview)
+    *   *Desc*: Non-photorealistic rendering mode for the editor. Quantized lighting bands + Edge detection (Sobel). Makes the editor feel like a stylized game.
+
+
+## Axe E : Debug & Quality of Life
+
+*   **Blue Noise Samplers** (Priority: Low)
+    *   *Diff*: Medium | *Value*: Medium (Visual)
+    *   *Desc*: Better error distribution than White Noise/Sobol for low SPP/dithering patterns.
+*   **Debug Views (Heatmaps)** (Priority: Low)
+    *   *Diff*: Low | *Value*: Medium (Debug)
+    *   *Desc*: Visualize technical metrics: Bounce Count (Heatmap), BVH Depth costs. (Note: Normals preview already exists).
 
 ---
 

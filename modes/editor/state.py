@@ -42,6 +42,8 @@ class EditorState:
         self.res_auto = True
         self.preview_mode = 0 
         self.preview_depth = 6 # Paramètre Profondeur Preview (User Request) 
+        self.preview_sampler = 0 # 0=Random, 1=Sobol
+        self.render_sampler = 1  # 0=Random, 1=Sobol 
 
         # --- VIEWPORT LOGIC ---
         self.target_aspect = conf.width / conf.height
@@ -605,6 +607,8 @@ class EditorState:
                 "height": self.conf.height,
                 "spp": self.conf.spp,
                 "depth": self.conf.depth,
+                "preview_sampler": self.preview_sampler,
+                "render_sampler": self.render_sampler,
                 
                 # System
                 "param_stamp": getattr(self.conf, 'param_stamp', False),
@@ -711,6 +715,12 @@ class EditorState:
             if "frames" in rs: self.conf.frames = rs["frames"]
             if "fps" in rs: self.conf.fps = rs["fps"]
             if "turntable_radius" in rs: self.conf.radius = rs["turntable_radius"]
+            
+            # Samplers
+            self.preview_sampler = rs.get("preview_sampler", self.preview_sampler)
+            self.render_sampler = rs.get("render_sampler", self.render_sampler)
+            # Update RenderConfig for offline
+            self.conf.sampler = self.render_sampler
 
             # System Vars
             if "system" in data:

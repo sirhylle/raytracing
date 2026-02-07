@@ -433,5 +433,22 @@ def initialize_scene_and_engine(args, scene_name=None):
                      auto_sun_radius=config.auto_sun_radius,
                      auto_sun_dist=config.auto_sun_dist,
                      clipping_multiplier=config.clipping_multiplier)
+
+    # 4. Blue Noise Dithering (Optional Asset)
+    bn_path = "blue_noise.png"
+    if os.path.exists(bn_path):
+        try:
+            print(f"[Loader] Loading Blue Noise Dither Tile: {bn_path}")
+            bn_img = iio.imread(bn_path)
+            # Ensure grayscale / single channel
+            if bn_img.ndim == 3:
+                bn_img = bn_img[:, :, 0]
+            bn_data = bn_img.astype(np.float32)
+            if bn_img.dtype == np.uint8:
+                bn_data /= 255.0
+            
+            engine.set_blue_noise_texture(np.ascontiguousarray(bn_data))
+        except Exception as e:
+            print(f"[Loader] Warning: Failed to load blue noise texture: {e}")
                      
     return engine, config, builder

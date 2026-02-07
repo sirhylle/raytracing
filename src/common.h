@@ -8,6 +8,8 @@
 #include <random>
 #include <vector>
 
+class Sampler; // Forward declaration
+
 // ===============================================================================================
 // CONFIGURATION GLOBALE & CONSTANTES
 // ===============================================================================================
@@ -148,7 +150,7 @@ inline Vec3 cross(const Vec3 &u, const Vec3 &v) {
 }
 inline Vec3 unit_vector(const Vec3 &v) { return v / v.length(); }
 
-// Helpers Géométriques
+// Helpers Géométriques (Thread Safe Default)
 inline Vec3 random_vec3() {
   return Vec3(random_real(), random_real(), random_real());
 }
@@ -157,23 +159,6 @@ inline Vec3 random_vec3(Real min, Real max) {
               random_real(min, max));
 }
 
-inline Vec3 random_in_unit_sphere() {
-  while (true) {
-    auto p = random_vec3(-1, 1);
-    if (p.length_squared() < 1)
-      return p;
-  }
-}
-inline Vec3 random_unit_vector() {
-  return unit_vector(random_in_unit_sphere());
-}
-inline Vec3 random_in_unit_disk() {
-  while (true) {
-    auto p = Vec3(random_real(-1, 1), random_real(-1, 1), 0);
-    if (p.length_squared() < 1)
-      return p;
-  }
-}
 inline Vec3 reflect(const Vec3 &v, const Vec3 &n) {
   return v - 2 * dot(v, n) * n;
 }

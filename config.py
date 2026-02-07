@@ -8,6 +8,7 @@ class RenderConfig:
     height: int = 600
     spp: int = 100
     depth: int = 50
+    sampler: int = 1 # 0=Random, 1=Sobol
     
     # --- Camera ---
     lookfrom: List[float] = field(default_factory=lambda: [0, 0, 0])
@@ -18,7 +19,8 @@ class RenderConfig:
     focus_dist: float = 10.0
     
     # --- Environment ---
-    env_map: Optional[str] = "env-dock-sun.hdr"
+    #env_map: Optional[str] = "env-dock-sun.hdr"
+    env_map: Optional[str] = None
     env_exposure: float = 1.0     # Master scale
     env_background: float = 1.0   # Camera visibility
     env_diffuse: float = 1.0      # GI/Lighting

@@ -18,6 +18,7 @@
 
 #include "common.h"
 #include "hittable.h"
+#include "sampler.h"
 
 // Structure pour stocker le résultat du rebond (Scatter)
 struct ScatterRecord {
@@ -88,11 +89,11 @@ inline Real geometry_smith(Real cos_theta_n, Real cos_theta_v, Real roughness) {
   return ggx1 * ggx2;
 }
 
-// Generates a Half-Vector contained in the GGX distribution
-// Returns H in vector space (must be transformed by ONB)
-inline Vec3 sample_ggx_ndf(const Vec3 &n, Real roughness) {
-  Real r1 = random_real();
-  Real r2 = random_real();
+inline Vec3 sample_ggx_ndf(const Vec3 &u,
+                           Real roughness) { // u is Vec3 to match get_2d()
+                                             // return type which is Vec3 (z=0)
+  Real r1 = u.x();
+  Real r2 = u.y();
   Real alpha = roughness * roughness;
 
   Real phi = 2.0f * PI * r1;
@@ -105,9 +106,9 @@ inline Vec3 sample_ggx_ndf(const Vec3 &n, Real roughness) {
 }
 
 // Cosine Weighted Hemisphere Sampling
-inline Vec3 sample_cosine_weighted(const Vec3 &n) {
-  Real r1 = random_real();
-  Real r2 = random_real();
+inline Vec3 sample_cosine_weighted(const Vec3 &n, const Vec3 &u) { // Added u
+  Real r1 = u.x();
+  Real r2 = u.y();
   Real phi = 2.0f * PI * r1;
   Real sqrt_r2 = std::sqrt(r2);
   Vec3 local(std::cos(phi) * sqrt_r2, std::sin(phi) * sqrt_r2,
@@ -204,7 +205,7 @@ inline Vec3 eval_oren_nayar(const Vec3 &n, const Vec3 &v, const Vec3 &l,
 class Material {
 public:
   virtual bool scatter(const Ray &r_in, const HitRecord &rec,
-                       ScatterRecord &srec) const {
+                       ScatterRecord &srec, Sampler &sampler) const {
     return false;
   }
 
@@ -432,12 +433,12 @@ public:
   }
 
   virtual bool scatter(const Ray &r_in, const HitRecord &rec,
-                       ScatterRecord &srec) const override {
+                       ScatterRecord &srec, Sampler &sampler) const override {
 
     // 1. Transmission (Glass)
     Real eff_transmission = transmission * (1.0f - metallic);
 
-    if (eff_transmission > 0.0f && random_real() < eff_transmission) {
+    if (eff_transmission > 0.0f && sampler.get_1d() < eff_transmission) {
       srec.is_specular = true;
       srec.attenuation = albedo;
 
@@ -446,48 +447,49 @@ public:
       Vec3 color_filter(1.0f, 1.0f, 1.0f);
 
       if (dispersion > 0.001f) {
-          // Continuous sampling t in [0, 1]
-          Real t = random_real();
-          
-          // Map t to IOR shift: Linear interpolation
-          // Range: [ior - disp, ior + disp]
-          picked_ior = ior + (t - 0.5f) * 2.0f * dispersion;
+        // Continuous sampling t in [0, 1]
+        Real t = sampler.get_1d();
 
-          // Balanced Spectral Weights
-          // We want Integral(R) = Integral(G) = Integral(B) = 1/3 over [0,1].
-          // Using overlapping triangular distributions:
-          
-          float r_val = 0.0f;
-          float g_val = 0.0f;
-          float b_val = 0.0f;
-          
-          // RED: Starts at 1.0, falls linearly to 0 at t=2/3 = 0.666
-          // Area = 0.5 * height * width = 0.5 * 1.0 * (2/3) = 1/3. Correct.
-          if (t < 0.6666f) {
-              r_val = 1.0f - (t * 1.5f);
-          }
-          
-          // GREEN: Triangle centered at 0.5. Starts at 1/6 (0.166), peaks at 0.5, ends at 5/6 (0.833).
-          // Width = 4/6 = 2/3. Height = 1.0. Area = 0.5 * 1.0 * (2/3) = 1/3. Correct.
-          float g_dist = std::abs(t - 0.5f);
-          if (g_dist < 0.3333f) {
-              g_val = 1.0f - (g_dist * 3.0f);
-          }
-          
-          // BLUE: Starts at 1/3 (0.333), rises linearly to 1.0 at t=1.0.
-          // Area = 0.5 * 1.0 * (2/3) = 1/3. Correct.
-          if (t > 0.3333f) {
-              b_val = (t - 0.3333f) * 1.5f;
-          }
-          
-          color_filter = Vec3(r_val, g_val, b_val);
+        // Map t to IOR shift: Linear interpolation
+        // Range: [ior - disp, ior + disp]
+        picked_ior = ior + (t - 0.5f) * 2.0f * dispersion;
 
-          // Energy Preservation:
-          // The average value of any channel is 1/3.
-          // We want the average to be 1.0 (preserve Albedo brightness).
-          // Scale Factor = 1.0 / (1/3) = 3.0.
-          
-          srec.attenuation = srec.attenuation * color_filter * 3.0f;
+        // Balanced Spectral Weights
+        // We want Integral(R) = Integral(G) = Integral(B) = 1/3 over [0,1].
+        // Using overlapping triangular distributions:
+
+        float r_val = 0.0f;
+        float g_val = 0.0f;
+        float b_val = 0.0f;
+
+        // RED: Starts at 1.0, falls linearly to 0 at t=2/3 = 0.666
+        // Area = 0.5 * height * width = 0.5 * 1.0 * (2/3) = 1/3. Correct.
+        if (t < 0.6666f) {
+          r_val = 1.0f - (t * 1.5f);
+        }
+
+        // GREEN: Triangle centered at 0.5. Starts at 1/6 (0.166), peaks at 0.5,
+        // ends at 5/6 (0.833). Width = 4/6 = 2/3. Height = 1.0. Area = 0.5
+        // * 1.0 * (2/3) = 1/3. Correct.
+        float g_dist = std::abs(t - 0.5f);
+        if (g_dist < 0.3333f) {
+          g_val = 1.0f - (g_dist * 3.0f);
+        }
+
+        // BLUE: Starts at 1/3 (0.333), rises linearly to 1.0 at t=1.0.
+        // Area = 0.5 * 1.0 * (2/3) = 1/3. Correct.
+        if (t > 0.3333f) {
+          b_val = (t - 0.3333f) * 1.5f;
+        }
+
+        color_filter = Vec3(r_val, g_val, b_val);
+
+        // Energy Preservation:
+        // The average value of any channel is 1/3.
+        // We want the average to be 1.0 (preserve Albedo brightness).
+        // Scale Factor = 1.0 / (1/3) = 3.0.
+
+        srec.attenuation = srec.attenuation * color_filter * 3.0f;
       }
 
       Real refraction_ratio = rec.front_face ? (1.0f / picked_ior) : picked_ior;
@@ -505,7 +507,8 @@ public:
         // Sample GGX Normal using ONB
         ONB onb;
         onb.build_from_w(rec.normal);
-        Vec3 local_h = sample_ggx_ndf(rec.normal, roughness);
+        Vec3 local_h =
+            sample_ggx_ndf(sampler.get_2d(), roughness); // Use sampler for 2D
         h = onb.local(local_h);
         srec.roughness = roughness;
       }
@@ -517,7 +520,7 @@ public:
 
       Vec3 direction;
       // Stochastic Fresnel choice
-      if (random_real() < F) {
+      if (sampler.get_1d() < F) {
         // Reflect off microfacet
         direction = reflect(unit_direction, h);
       } else {
@@ -567,7 +570,7 @@ public:
                      metallic; // Metal is 100% specular lobe (colored)
 
     // 3. Stochastic Choice
-    if (random_real() < prob_spec) {
+    if (sampler.get_1d() < prob_spec) {
       // --- SPECULAR PATH (GGX) ---
       ONB onb;
       onb.build_from_w(rec.normal);
@@ -588,7 +591,7 @@ public:
         return true;
       }
 
-      Vec3 local_h = sample_ggx_ndf(rec.normal, roughness);
+      Vec3 local_h = sample_ggx_ndf(sampler.get_2d(), roughness);
       Vec3 h = onb.local(local_h);
       Vec3 l = reflect(-v, h);
 
@@ -632,7 +635,7 @@ public:
       // BSDF_oren = (Albedo/PI) * cos_theta * (A + B...)
       // Weight = Albedo * (A + B...)
 
-      Vec3 diff_dir = sample_cosine_weighted(rec.normal);
+      Vec3 diff_dir = sample_cosine_weighted(rec.normal, sampler.get_2d());
       srec.specular_ray = Ray(rec.p, diff_dir, r_in.tm);
 
       Vec3 l = diff_dir; // Outgoing light direction
@@ -682,7 +685,7 @@ public:
   Vec3 emit_color;
   DiffuseLight(const Vec3 &c) : emit_color(c) {}
   virtual bool scatter(const Ray &r_in, const HitRecord &rec,
-                       ScatterRecord &srec) const override {
+                       ScatterRecord &srec, Sampler &sampler) const override {
     return false;
   }
   virtual Vec3 emit(const Ray &r_in, const HitRecord &rec, Real u, Real v,
@@ -706,7 +709,7 @@ public:
     return Vec3(1.0f, 1.0f, 1.0f);
   }
   virtual bool scatter(const Ray &r_in, const HitRecord &rec,
-                       ScatterRecord &srec) const override {
+                       ScatterRecord &srec, Sampler &sampler) const override {
     if (VISIBLE_IN_REFLECTIONS && !r_in.is_primary && !r_in.is_shadow)
       return false;
     srec.is_specular = true;
@@ -749,11 +752,11 @@ public:
     return isOdd ? albedo2 : albedo1;
   }
   virtual bool scatter(const Ray &r_in, const HitRecord &rec,
-                       ScatterRecord &srec) const override {
+                       ScatterRecord &srec, Sampler &sampler) const override {
     srec.is_specular = false;
     srec.attenuation = get_albedo(rec);
-    srec.specular_ray =
-        Ray(rec.p, unit_vector(rec.normal + random_unit_vector()), r_in.tm);
+    srec.specular_ray = Ray(
+        rec.p, sample_cosine_weighted(rec.normal, sampler.get_2d()), r_in.tm);
     srec.roughness = 1.0f; // Matte
     return true;
   }

@@ -21,6 +21,7 @@ def main():
     group_render.add_argument('--height', type=int, help="Output image height in pixels")
     group_render.add_argument('--spp', type=int, help="Samples per pixel (default: 100, higher = better quality and slower)")
     group_render.add_argument('--depth', type=int, help="Maximum recursion depth for light bounces (default: 50)")
+    group_render.add_argument('--sampler', type=int, choices=[0, 1], help="Sampler Type: 0=Random, 1=Sobol (default: 1)")
     
     # --- Environment ---
     group_env = parser.add_argument_group("Environment")

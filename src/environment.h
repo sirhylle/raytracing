@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common.h"
+#include "sampler.h"
 #include <algorithm>
 #include <cmath>
 #include <utility> // pour std::pair
@@ -143,18 +144,20 @@ struct EnvironmentMap {
   }
 
   // Importance Sampling
-  Vec3 sample_direction(Real &pdf) const {
-    Real r1 = random_real();
+  Vec3 sample_direction(Sampler &sampler, Real &pdf) const {
+    Real r1 = sampler.get_1d();
     auto it_y = std::lower_bound(marginal_CDF.begin(), marginal_CDF.end(), r1);
     int y = std::max(0, (int)(it_y - marginal_CDF.begin()) - 1);
 
-    Real r2 = random_real();
+    Real r2 = sampler.get_1d();
     auto it_x = std::lower_bound(conditional_CDFs[y].begin(),
                                  conditional_CDFs[y].end(), r2);
     int x = std::max(0, (int)(it_x - conditional_CDFs[y].begin()) - 1);
 
-    Real u = (x + random_real()) / width;
-    Real v = (y + random_real()) / height;
+    // Sub-pixel jitter?
+    // The original code used (x + random) / width.
+    Real u = (x + sampler.get_1d()) / width;
+    Real v = (y + sampler.get_1d()) / height;
 
     Real theta = v * PI;
     Real phi_texture = (u * 2 * PI) - PI;

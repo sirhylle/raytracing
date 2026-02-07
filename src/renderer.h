@@ -15,6 +15,7 @@
 #include "geometry.h"
 #include "hittable.h"
 #include "materials.h"
+#include "sampler.h"
 
 // Helper: Power Heuristic
 inline Real power_heuristic(Real pdf_f, Real pdf_g) {
@@ -33,7 +34,8 @@ inline Vec3 sample_direct_light(const Ray &r, const HitRecord &rec,
                                 const ScatterRecord &srec,
                                 const Hittable &world,
                                 const HittableList &lights,
-                                const EnvironmentMap *env_map) {
+                                const EnvironmentMap *env_map,
+                                Sampler &sampler) {
   Vec3 direct_light(0, 0, 0);
 
   // Strategy: 50/50 EnvMap vs Geometric Lights
@@ -50,7 +52,7 @@ inline Vec3 sample_direct_light(const Ray &r, const HitRecord &rec,
   bool lights_are_active = !lights.raw_objects.empty();
 
   if (env_is_active && lights_are_active) {
-    sample_env = random_real() < 0.5f;
+    sample_env = sampler.get_1d() < 0.5f;
   } else if (env_is_active) {
     sample_env = true;
   } else if (lights_are_active) {
@@ -67,7 +69,7 @@ inline Vec3 sample_direct_light(const Ray &r, const HitRecord &rec,
 
   if (sample_env && env_map) {
     // Importance Sampling HDRI
-    Vec3 dir = env_map->sample_direction(light_pdf_val);
+    Vec3 dir = env_map->sample_direction(sampler, light_pdf_val);
     light_ray = Ray(rec.p, dir, r.tm, true);
 
     if (lights_are_active)
@@ -80,7 +82,7 @@ inline Vec3 sample_direct_light(const Ray &r, const HitRecord &rec,
 
   } else if (!lights.raw_objects.empty()) {
     // Sampling Geometric Light
-    auto light_ray_dir = lights.random(rec.p);
+    auto light_ray_dir = lights.random(rec.p, sampler);
     light_ray = Ray(rec.p, light_ray_dir, r.tm, true);
     light_pdf_val = lights.pdf_value(rec.p, light_ray.dir);
 
@@ -208,7 +210,7 @@ inline Vec3 sample_direct_light(const Ray &r, const HitRecord &rec,
 // -----------------------------------------------------------------------------------------------
 inline Vec3 ray_color(const Ray &r, const Hittable &world,
                       const HittableList &lights, const EnvironmentMap *env_map,
-                      int depth,
+                      int depth, Sampler &sampler,
                       Real prev_bsdf_pdf = 1.0f, // PDF of the ray generation
                       Real prev_roughness = 1.0f // Roughness of previous bounce
 ) {
@@ -292,25 +294,26 @@ inline Vec3 ray_color(const Ray &r, const Hittable &world,
 
   // 4. Scattering & BSDF Sampling
   ScatterRecord srec;
-  if (!rec.mat_ptr->scatter(r, rec, srec))
+  if (!rec.mat_ptr->scatter(r, rec, srec, sampler))
     return Vec3(0, 0, 0);
 
   // 5. Specular Optimization
   if (srec.is_specular) {
     return srec.attenuation * ray_color(srec.specular_ray, world, lights,
-                                        env_map, depth - 1, 1.0f,
+                                        env_map, depth - 1, sampler, 1.0f,
                                         srec.roughness);
   }
 
   // 6. Direct Light (Next Event Estimation)
-  Vec3 direct_light = sample_direct_light(r, rec, srec, world, lights, env_map);
+  Vec3 direct_light =
+      sample_direct_light(r, rec, srec, world, lights, env_map, sampler);
 
   // 7. Indirect Light (Recursive Step)
   Real bsdf_pdf = rec.mat_ptr->scattering_pdf(r, rec, srec.specular_ray);
 
-  Vec3 indirect =
-      srec.attenuation * ray_color(srec.specular_ray, world, lights, env_map,
-                                   depth - 1, bsdf_pdf, srec.roughness);
+  Vec3 indirect = srec.attenuation * ray_color(srec.specular_ray, world, lights,
+                                               env_map, depth - 1, sampler,
+                                               bsdf_pdf, srec.roughness);
 
   // 8. Output
   Vec3 total = direct_light + indirect;

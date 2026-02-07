@@ -17,7 +17,7 @@ list(APPEND CMAKE_PREFIX_PATH "${NB_DIR}")
 
 find_package(nanobind CONFIG REQUIRED)
 
-nanobind_add_module(cpp_engine src/main.cpp)
+nanobind_add_module(cpp_engine src/main.cpp src/sobol.cpp)
 
 # Enable OpenMP if available
 find_package(OpenMP)

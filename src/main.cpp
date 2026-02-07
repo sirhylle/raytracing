@@ -314,7 +314,8 @@ public:
       world_bvh = std::make_shared<BVHNode>(world);
     auto u = (mouse_x + 0.5f) / width;
     auto v = 1.0f - ((mouse_y + 0.5f) / height);
-    Ray r = camera->get_ray(u, v);
+    RandomSampler sampler;
+    Ray r = camera->get_ray(u, v, sampler);
     r.is_primary = true;
     HitRecord rec;
     if (world_bvh->hit(r, 0.001f, INFINITY_REAL, rec))
@@ -428,7 +429,8 @@ public:
     return INFINITY_REAL;
   }
 
-  nb::dict render(int width, int height, int spp, int depth, int n_threads) {
+  nb::dict render(int width, int height, int spp, int depth, int n_threads,
+                  int sampler_type = 0) {
     if (world.owned_objects.empty())
       world_bvh = std::make_shared<HittableList>();
     else
@@ -448,17 +450,29 @@ public:
         omp_set_num_threads(n_threads);
 #pragma omp parallel for schedule(dynamic)
       for (int j = 0; j < height; ++j) {
+        // Instantiate Sampler per thread (or pixel)
+        std::unique_ptr<Sampler> sampler;
+        if (sampler_type == 1)
+          sampler = std::make_unique<SobolSampler>();
+        else
+          sampler = std::make_unique<RandomSampler>();
+
         for (int i = 0; i < width; ++i) {
+          sampler->start_pixel(i, j);
+
           Vec3 acc_c(0, 0, 0), acc_a(0, 0, 0), acc_n(0, 0, 0);
           for (int s = 0; s < spp; ++s) {
-            auto u = (i + random_real()) / (width - 1);
-            auto v = (j + random_real()) / (height - 1);
-            Ray r = camera->get_ray(u, v);
+            sampler->start_sample(s);
+
+            auto u = (i + sampler->get_1d()) / (width - 1);
+            auto v = (j + sampler->get_1d()) / (height - 1);
+            Ray r = camera->get_ray(u, v, *sampler);
             r.is_primary = true;
-            acc_c +=
-                ray_color(r, *world_bvh, lights, background.get(), depth, true);
+            acc_c += ray_color(r, *world_bvh, lights, background.get(), depth,
+                               *sampler);
             HitRecord rec;
             if (world_bvh->hit(r, 0.001f, INFINITY_REAL, rec)) {
+              // Note: get_albedo doesn't need sampler usually.
               acc_a += rec.mat_ptr->get_albedo(rec);
               acc_n += 0.5f * (unit_vector(rec.normal) + Vec3(1, 1, 1));
             }
@@ -512,9 +526,10 @@ public:
 #pragma omp parallel for schedule(dynamic)
       for (int j = 0; j < height; ++j) {
         for (int i = 0; i < width; ++i) {
+          RandomSampler sampler; // Local sampler for preview
           auto u = (i + 0.5f) / width;
           auto v = (j + 0.5f) / height;
-          Ray r = camera->get_ray(u, v);
+          Ray r = camera->get_ray(u, v, sampler);
           r.is_primary = true;
           HitRecord rec;
           Vec3 col;
@@ -548,10 +563,9 @@ public:
     return nb::ndarray<nb::numpy, float>(buffer, 3, shape, owner);
   }
 
-  nb::ndarray<nb::numpy, float> render_accumulate(int width, int height,
-                                                  int spp = 1,
-                                                  int n_threads = 0,
-                                                  int depth = 6) {
+  nb::ndarray<nb::numpy, float>
+  render_accumulate(int width, int height, int spp = 1, int n_threads = 0,
+                    int depth = 6, int sampler_type = 0) {
     size_t num_pixels = (size_t)width * height;
     if (width != acc_width || height != acc_height ||
         accumulation_buffer.size() != num_pixels * 3) {
@@ -570,15 +584,28 @@ public:
         omp_set_num_threads(n_threads);
 #pragma omp parallel for schedule(dynamic)
       for (int j = 0; j < height; ++j) {
+        // Instantiate Sampler per thread (or pixel)
+        // Since we are inside parallel for, 'j' is private, but we need scope
+        // for sampler.
+        std::unique_ptr<Sampler> sampler;
+        if (sampler_type == 1)
+          sampler = std::make_unique<SobolSampler>();
+        else
+          sampler = std::make_unique<RandomSampler>();
+
         for (int i = 0; i < width; ++i) {
+          sampler->start_pixel(i, j);
+
           Vec3 batch_color(0, 0, 0);
           for (int s = 0; s < spp; ++s) {
-            auto u = (i + random_real()) / (width - 1);
-            auto v = (j + random_real()) / (height - 1);
-            Ray r = camera->get_ray(u, v);
+            sampler->start_sample(s + accumulated_spp);
+
+            auto u = (i + sampler->get_1d()) / (width - 1);
+            auto v = (j + sampler->get_1d()) / (height - 1);
+            Ray r = camera->get_ray(u, v, *sampler);
             r.is_primary = true;
-            batch_color +=
-                ray_color(r, *world_bvh, lights, background.get(), depth, true);
+            batch_color += ray_color(r, *world_bvh, lights, background.get(),
+                                     depth, *sampler);
           }
           int idx = ((height - 1 - j) * width + i) * 3;
           accumulation_buffer[idx + 0] += batch_color.x();
@@ -619,7 +646,8 @@ public:
       world_bvh = std::make_shared<BVHNode>(world, bvh_method);
     auto u = (mouse_x + 0.5f) / width;
     auto v = 1.0f - ((mouse_y + 0.5f) / height);
-    Ray r = camera->get_ray(u, v);
+    RandomSampler sampler;
+    Ray r = camera->get_ray(u, v, sampler);
     r.is_primary = true;
     HitRecord rec;
     if (world_bvh->hit(r, 0.001f, INFINITY_REAL, rec)) {
@@ -627,6 +655,65 @@ public:
       return {dist, (float)rec.p.x(), (float)rec.p.y(), (float)rec.p.z()};
     }
     return {-1.0f, 0.0f, 0.0f, 0.0f};
+  }
+
+  nb::ndarray<nb::numpy, float> get_sampler_image(int width, int height,
+                                                  int sampler_type, int spp,
+                                                  int dimension_offset) {
+    float *buffer = new float[width * height * 3];
+    try {
+      nb::gil_scoped_release release;
+#pragma omp parallel for schedule(dynamic)
+      for (int j = 0; j < height; ++j) {
+        std::unique_ptr<Sampler> sampler;
+        if (sampler_type == 1)
+          sampler = std::make_unique<SobolSampler>();
+        else
+          sampler = std::make_unique<RandomSampler>();
+
+        for (int i = 0; i < width; ++i) {
+          sampler->start_pixel(i, j);
+
+          Vec3 acc(0, 0, 0);
+          for (int s = 0; s < spp; ++s) {
+            sampler->start_sample(s);
+            // Skip dimensions if requested
+            for (int d = 0; d < dimension_offset; ++d)
+              sampler->get_1d();
+
+            acc +=
+                Vec3(sampler->get_1d(), sampler->get_1d(), sampler->get_1d());
+          }
+          acc /= (float)spp;
+
+          int idx = ((height - 1 - j) * width + i) * 3;
+          buffer[idx + 0] = acc.x();
+          buffer[idx + 1] = acc.y();
+          buffer[idx + 2] = acc.z();
+        }
+      }
+    } catch (...) {
+      delete[] buffer;
+      throw;
+    }
+    nb::capsule owner(buffer, [](void *p) noexcept { delete[] (float *)p; });
+    size_t shape[3] = {(size_t)height, (size_t)width, 3ul};
+    return nb::ndarray<nb::numpy, float>(buffer, 3, shape, owner);
+  }
+
+  void set_blue_noise_texture(
+      nb::ndarray<float, nb::numpy, nb::shape<-1, -1>> texture) {
+    auto view = texture.view();
+    int h = (int)view.shape(0);
+    int w = (int)view.shape(1);
+    global_blue_noise.width = w;
+    global_blue_noise.height = h;
+    global_blue_noise.data.resize(w * h);
+    for (int y = 0; y < h; ++y) {
+      for (int x = 0; x < w; ++x) {
+        global_blue_noise.data[y * w + x] = view(y, x);
+      }
+    }
   }
 
 private:
@@ -738,17 +825,23 @@ NB_MODULE(cpp_engine, m) {
       .def("set_env_rotation", &PyScene::set_env_rotation, nb::arg("degrees"))
       .def("get_progress", &PyScene::get_progress)
       .def("render", &PyScene::render, nb::arg("width"), nb::arg("height"),
-           nb::arg("spp"), nb::arg("depth"), nb::arg("n_threads") = 0)
+           nb::arg("spp"), nb::arg("depth"), nb::arg("n_threads") = 0,
+           nb::arg("sampler_type") = 0)
       .def("render_preview", &PyScene::render_preview)
       .def("render_accumulate", &PyScene::render_accumulate, nb::arg("width"),
            nb::arg("height"), nb::arg("spp") = 1, nb::arg("n_threads") = 0,
-           nb::arg("depth") = 6)
+           nb::arg("depth") = 6, nb::arg("sampler_type") = 0)
       .def("reset_accumulation", &PyScene::reset_accumulation)
       .def("pick_focus_distance", &PyScene::pick_focus_distance)
       .def("get_env_clipping_threshold", &PyScene::get_env_clipping_threshold)
       .def("set_env_clipping_threshold", &PyScene::set_env_clipping_threshold)
       .def("get_env_sun_info", &PyScene::get_env_sun_info)
-      .def("set_build_method", &PyScene::set_build_method);
+      .def("set_build_method", &PyScene::set_build_method)
+      .def("get_sampler_image", &PyScene::get_sampler_image, nb::arg("width"),
+           nb::arg("height"), nb::arg("sampler_type"), nb::arg("spp") = 1,
+           nb::arg("dimension_offset") = 0)
+      .def("set_blue_noise_texture", &PyScene::set_blue_noise_texture,
+           nb::arg("texture"));
 
   m.def("get_epsilon", []() { return EPSILON; });
   m.def("set_epsilon", [](Real val) { EPSILON = val; });

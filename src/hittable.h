@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common.h"
+#include "sampler.h"
 
 // ===============================================================================================
 // FORWARD DECLARATION
@@ -50,7 +51,9 @@ public:
   virtual Real pdf_value(const Vec3 &o, const Vec3 &v) const { return 0.0f; }
 
   // Génère une direction aléatoire vers cet objet (pour viser les lumières)
-  virtual Vec3 random(const Vec3 &o) const { return Vec3(1, 0, 0); }
+  virtual Vec3 random(const Vec3 &o, Sampler &sampler) const {
+    return Vec3(1, 0, 0);
+  }
 
   virtual ~Hittable() = default;
 };

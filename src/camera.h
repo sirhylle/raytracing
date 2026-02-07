@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common.h"
+#include "sampler.h"
 #include <cmath>
 
 class Camera {
@@ -34,14 +35,25 @@ public:
     lens_radius = aperture / 2;
   }
 
-  Ray get_ray(Real s, Real t) const {
-    Vec3 rd = lens_radius * random_in_unit_disk();
+  Ray get_ray(Real s, Real t, Sampler &sampler) const {
+    Vec3 rd = lens_radius * sample_unit_disk(sampler);
     Vec3 offset = u * rd.x() + v * rd.y();
 
     // Rayon partant de la lentille vers le plan focal
     return Ray(origin + offset,
                lower_left_corner + s * horizontal + t * vertical - origin -
                    offset,
-               random_real());
+               sampler.get_1d());
+  }
+
+  // Helper for disk sampling using sampler
+  static Vec3 sample_unit_disk(Sampler &sampler) {
+    for (int i = 0; i < 100; ++i) {
+      auto p = Vec3(sampler.get_1d() * 2.0f - 1.0f,
+                    sampler.get_1d() * 2.0f - 1.0f, 0);
+      if (p.length_squared() < 1)
+        return p;
+    }
+    return Vec3(0, 0, 0);
   }
 };
