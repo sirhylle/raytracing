@@ -118,6 +118,85 @@ inline Vec3 sample_cosine_weighted(const Vec3 &n) {
   return onb.local(local);
 }
 
+// OREN-NAYAR DIFFUSE MODEL (Qualitative Approximation)
+// Description:
+//   Simulates rough diffuse surfaces (clay, skin, fabric) by modeling
+//   microfacets as Lambertian V-cavities. Source: "Generalization of Lambert's
+//   Reflectance Model" (Oren & Nayar, 1994)
+//
+// Parameters:
+//   n: Surface Normal
+//   v: View Vector (from surface to camera) - Normalized
+//   l: Light Vector (from surface to light) - Normalized
+//   roughness: Surface Roughness [0..1]
+//   albedo: Diffuse Color
+inline Vec3 eval_oren_nayar(const Vec3 &n, const Vec3 &v, const Vec3 &l,
+                            Real roughness, const Vec3 &albedo) {
+
+  Real n_dot_l = dot(n, l);
+  Real n_dot_v = dot(n, v);
+
+  if (n_dot_l <= 0.0f || n_dot_v <= 0.0f)
+    return Vec3(0, 0, 0);
+
+  Real sigma2 = roughness * roughness;
+
+  // A and B coefficients (Approximation)
+  Real A = 1.0f - 0.5f * (sigma2 / (sigma2 + 0.33f));
+  Real B = 0.45f * (sigma2 / (sigma2 + 0.09f));
+
+  // Sine and Tangent terms
+  // geometric term = max(0, cos(phi_diff)) * sin(alpha) * tan(beta)
+
+  // We need vectors in the tangent plane to compute cos(phi_diff)
+  // Project V and L onto tangent plane
+  Vec3 v_perp = unit_vector(v - n * n_dot_v);
+  Vec3 l_perp = unit_vector(l - n * n_dot_l);
+
+  // Cosine of difference of azimuthal angles
+  Real cos_phi_diff = dot(v_perp, l_perp);
+  // Clamp to [0, 1] effectively (max(0, cos))
+  if (cos_phi_diff < 0.0f)
+    cos_phi_diff = 0.0f;
+
+  // Alpha and Beta
+  // alpha = max(theta_i, theta_r)
+  // beta = min(theta_i, theta_r)
+  // We have cosines. acos is expensive.
+  // Use identity: sin(acos(x)) = sqrt(1-x^2)
+  // sin(alpha) = sqrt(1 - min_cos^2)
+  // tan(beta) = sin(beta) / cos(beta) = sqrt(1 - max_cos^2) / max_cos
+
+  Real cos_theta_i = n_dot_l;
+  Real cos_theta_r = n_dot_v;
+
+  Real sin_theta_i =
+      std::sqrt(std::max(0.0f, 1.0f - cos_theta_i * cos_theta_i));
+  Real sin_theta_r =
+      std::sqrt(std::max(0.0f, 1.0f - cos_theta_r * cos_theta_r));
+
+  Real sin_alpha, tan_beta;
+
+  if (cos_theta_i < cos_theta_r) {
+    // theta_i > theta_r -> alpha = theta_i, beta = theta_r
+    sin_alpha = sin_theta_i;
+    tan_beta = sin_theta_r / std::max(1e-4f, cos_theta_r);
+  } else {
+    // theta_r > theta_i -> alpha = theta_r, beta = theta_i
+    sin_alpha = sin_theta_r;
+    tan_beta = sin_theta_i / std::max(1e-4f, cos_theta_i);
+  }
+
+  // Final Radiance
+  // L = (rho/pi) * cos_theta_i * (A + B * max(0, cos(phi_diff)) * sin(alpha) *
+  // tan(beta))
+
+  Vec3 result =
+      (albedo / PI) * n_dot_l * (A + (B * cos_phi_diff * sin_alpha * tan_beta));
+
+  return result;
+}
+
 // ===============================================================================================
 // CLASSE DE BASE MATERIAL
 // ===============================================================================================
@@ -266,10 +345,26 @@ public:
     // Cook-Torrance Specular BRDF * cos(theta_l)
     Vec3 specular = (D * G * F) / (4.0f * std::max(n_dot_v, 0.0001f));
 
-    // Diffuse Term (Lambert)
+    // Diffuse Term (Oren-Nayar)
     // Energy conservation: kD = (1-F)(1-Metal).
     Vec3 kD = (Vec3(1.0f, 1.0f, 1.0f) - F) * (1.0f - metallic);
-    Vec3 diffuse = (kD * albedo / PI) * n_dot_l;
+
+    // Original Lambert: Vec3 diffuse = (kD * albedo / PI) * n_dot_l;
+
+    // New Oren-Nayar:
+    // Pass non-cosine-weighted contribution? No, eval_oren_nayar includes
+    // n_dot_l. Yes, eval_oren_nayar(n, v, l, roughness, albedo) returns
+    // Radiance factor (Albedo/Pi * cos * Correction) We just need to multiply
+    // by kD.
+
+    Vec3 diffuse;
+    if (roughness < 0.01f) {
+      // Optimization: Fallback to Lambert for smooth surfaces (Sigma ~ 0 ->
+      // A=1, B=0)
+      diffuse = (kD * albedo / PI) * n_dot_l;
+    } else {
+      diffuse = kD * eval_oren_nayar(n, v, l, roughness, albedo);
+    }
 
     return {diffuse, specular};
   }
@@ -483,27 +578,49 @@ public:
       if (metallic > 0.99f)
         return false;
 
+      // Note on Sampling:
+      // Oren-Nayar strictly should have a specific sampling routine to be
+      // unbiased with simple weights. However, Cosine Weighted Sampling is
+      // extremely close to the PDF of Oren-Nayar (which is mostly Lambertian).
+      // Standard practice: Keep Cosine Weighted Sampling and apply the BRDF
+      // weight correction. Weight = BSDF / PDF. PDF_cosine = cos_theta / PI.
+      // BSDF_oren = (Albedo/PI) * cos_theta * (A + B...)
+      // Weight = Albedo * (A + B...)
+
       Vec3 diff_dir = sample_cosine_weighted(rec.normal);
       srec.specular_ray = Ray(rec.p, diff_dir, r_in.tm);
 
-      // kD = (1-F)(1-M)
-      // F is approximated by F_lum/prob used for splitting?
-      // Standard is to just return Albedo and assume split handles kD/kS
-      // separation approximately Exact PBR: weight = (1-F) * Albedo / (1 -
-      // prob_spec)
+      Vec3 l = diff_dir; // Outgoing light direction
 
-      // If we used F_lum to split, then (1-prob) is approx (1-F).
-      // So Albedo is technically correct.
-      // But we must multiply by (1-Metallic).
+      // Calculate Oren-Nayar Correction (A + B...) term only (since cos/PI
+      // cancels out with PDF) Re-evaluating full BSDF/PDF ratio for correctness
 
-      srec.attenuation = albedo * (1.0f - metallic); // / (1-prob) ?
+      if (roughness < 0.01f) {
+        // Lambert case: Weight = Albedo
+        srec.attenuation = albedo * (1.0f - metallic);
+      } else {
+        // Full Oren-Nayar Weight
+        // We need V (view) and L (light = scattered)
+        Vec3 v_in = unit_vector(-r_in.dir);
+
+        Vec3 on_val = eval_oren_nayar(rec.normal, v_in, l, roughness, albedo);
+
+        Real n_dot_l = dot(rec.normal, l);
+        Real pdf = (n_dot_l < 0) ? 0 : (n_dot_l / PI);
+
+        if (pdf > 1e-6f) {
+          srec.attenuation = (on_val * (1.0f - metallic)) / pdf;
+        } else {
+          srec.attenuation = Vec3(0, 0, 0);
+        }
+      }
+
       // If prob is small, we are here often. weight matches.
       // If prob is large, we are here rarely. weight should be higher?
       // Let's rely on standard Albedo return for now which assumes split
       // variance reduction.
 
-      // Wait, if prob_spec=0.9 and we land here (0.1 chance), we should boost
-      // the signal?
+      // Standard split weight logic
       srec.attenuation = srec.attenuation / (1.0f - prob_spec);
     }
 
