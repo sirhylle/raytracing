@@ -297,7 +297,24 @@ class Slider(UIElement):
         
         # Texte Centré
         # Petite astuce : formatage plus précis si on est en mode "log" fort
-        fmt = "{:.3f}" if self.power > 1.5 and val < 10 else "{:.2f}"
+        #fmt = "{:.3f}" if self.power > 1.5 and val < 10 else "{:.2f}"
+        abs_val = abs(val)
+        if abs_val < 1e-6:
+             fmt = "{:.1f}" # Affiche 0.0 pour zéro
+        elif abs_val < 0.01 or (self.power > 2.0 and abs_val < 0.1):
+             # Très haute précision (4 décimales) pour :
+             # - les valeurs minuscules (< 0.01)
+             # - OU les sliders très sensibles (power > 2) dans les petites valeurs (ex: dispersion à 0.05)
+             fmt = "{:.4f}"
+        elif abs_val < 1.0:
+             # Précision fine (3 décimales) pour les valeurs normalisées (0.0 à 1.0)
+             fmt = "{:.3f}"
+        elif abs_val < 100.0:
+             # Standard (2 décimales)
+             fmt = "{:.2f}"
+        else:
+             # Grandes valeurs (1 décimale suffit souvent au-delà de 100)
+             fmt = "{:.1f}"
         txt_str = fmt.format(val)
         f = fonts.get(12)
         col_main = (COL_TEXT)

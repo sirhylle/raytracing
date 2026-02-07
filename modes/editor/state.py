@@ -249,8 +249,9 @@ class EditorState:
         cmetal = d.get('metallic', 0.0)
         cir    = d.get('ir', 1.5)
         ctrans = d.get('transmission', 0.0)
+        cdisp  = d.get('dispersion', 0.0)
         
-        engine.update_instance_material(self.selected_id, ctype, cpp_engine.Vec3(*ccol), crough, cmetal, cir, ctrans)
+        engine.update_instance_material(self.selected_id, ctype, cpp_engine.Vec3(*ccol), crough, cmetal, cir, ctrans, cdisp)
         self.dirty = True
 
     def load_new_env_map(self, engine):
@@ -380,6 +381,7 @@ class EditorState:
         metal = data.get('metallic', 0.0)
         trans = data.get('transmission', 0.0)
         ir = data.get('ir', 1.5)
+        disp = data.get('dispersion', 0.0)
         if 'fuzz' in data: rough = data['fuzz']
 
         new_id = -1
@@ -389,7 +391,7 @@ class EditorState:
         
         if otype == 'sphere':
             # add_sphere(center, radius, mat_type, color, roughness, metallic, ir, transmission)
-            new_id = self.builder.add_sphere(pos, scale[0], mat, col, roughness=rough, metallic=metal, ir=ir, transmission=trans)
+            new_id = self.builder.add_sphere(pos, scale[0], mat, col, roughness=rough, metallic=metal, ir=ir, transmission=trans, dispersion=disp)
 
         elif otype == 'mesh':
             name = data.get('name', 'Unknown')
@@ -401,6 +403,7 @@ class EditorState:
             self.builder.registry[new_id]['metallic'] = metal
             self.builder.registry[new_id]['ir'] = ir
             self.builder.registry[new_id]['transmission'] = trans
+            self.builder.registry[new_id]['dispersion'] = disp
             self.push_material_update(engine)
             
         elif otype == 'light_sun':
@@ -415,7 +418,7 @@ class EditorState:
         elif otype == 'quad':
             u_vec = data.get('u', [1,0,0])
             v_vec = data.get('v', [0,1,0])
-            new_id = self.builder.add_quad(pos, u_vec, v_vec, mat, col, roughness=rough, metallic=metal, ir=ir, transmission=trans)
+            new_id = self.builder.add_quad(pos, u_vec, v_vec, mat, col, roughness=rough, metallic=metal, ir=ir, transmission=trans, dispersion=disp)
              
         # 4. Finalisation UX
         if new_id != -1:
@@ -798,15 +801,16 @@ class EditorState:
             metal = obj.get("metallic", 0.0)
             ir = obj.get("ir", 1.5)
             trans = obj.get("transmission", 0.0)
+            disp = obj.get("dispersion", 0.0)
 
             new_id = -1
             if otype == "sphere":
-                new_id = self.builder.add_sphere(pos, scale[0], mat, col, roughness=rough, metallic=metal, ir=ir, transmission=trans)
+                new_id = self.builder.add_sphere(pos, scale[0], mat, col, roughness=rough, metallic=metal, ir=ir, transmission=trans, dispersion=disp)
             elif otype == "cylinder":
                 # scale[0]=radius, scale[1]=height
-                new_id = self.builder.add_cylinder(pos, scale[0], scale[1], mat, col, roughness=rough, metallic=metal, ir=ir, transmission=trans)
+                new_id = self.builder.add_cylinder(pos, scale[0], scale[1], mat, col, roughness=rough, metallic=metal, ir=ir, transmission=trans, dispersion=disp)
             elif otype == "cone":
-                new_id = self.builder.add_cone(pos, scale[0], scale[1], mat, col, roughness=rough, metallic=metal, ir=ir, transmission=trans)
+                new_id = self.builder.add_cone(pos, scale[0], scale[1], mat, col, roughness=rough, metallic=metal, ir=ir, transmission=trans, dispersion=disp)
             elif otype == "mesh_prim":
                 asset_name = obj.get("asset_name")
                 
@@ -836,6 +840,7 @@ class EditorState:
                     self.builder.registry[new_id]['metallic'] = metal
                     self.builder.registry[new_id]['ir'] = ir
                     self.builder.registry[new_id]['transmission'] = trans
+                    self.builder.registry[new_id]['dispersion'] = disp
                     self.push_material_update(self.builder.engine)
             
             elif otype == "mesh":
@@ -875,6 +880,7 @@ class EditorState:
                     self.builder.registry[new_id]['metallic'] = metal
                     self.builder.registry[new_id]['ir'] = ir
                     self.builder.registry[new_id]['transmission'] = trans
+                    self.builder.registry[new_id]['dispersion'] = disp
                     self.push_material_update(self.builder.engine)
                 
             elif otype == "checker_sphere":
@@ -884,7 +890,10 @@ class EditorState:
             elif otype == "quad":
                 u = obj.get("u", [1,0,0])
                 v = obj.get("v", [0,1,0])
-                new_id = self.builder.add_quad(pos, u, v, mat, col, roughness=rough, metallic=metal, ir=ir, transmission=trans)
+            elif otype == "quad":
+                u = obj.get("u", [1,0,0])
+                v = obj.get("v", [0,1,0])
+                new_id = self.builder.add_quad(pos, u, v, mat, col, roughness=rough, metallic=metal, ir=ir, transmission=trans, dispersion=disp)
 
 
             if new_id != -1 and name:

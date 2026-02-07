@@ -260,9 +260,12 @@ public:
   Real metallic;     // 0=Dielectric, 1=Metal
   Real ior;          // Index of Refraction (for Dielectric)
   Real transmission; // 0=Opaque, 1=Transmissive
+  Real dispersion;   // 0=No Dispersion, >0=Rainbow Effect
 
-  GgxMaterial(const Vec3 &a, Real r, Real m, Real i = 1.5f, Real t = 0.0f)
-      : albedo(a), roughness(r), metallic(m), ior(i), transmission(t) {}
+  GgxMaterial(const Vec3 &a, Real r, Real m, Real i = 1.5f, Real t = 0.0f,
+              Real d = 0.0f)
+      : albedo(a), roughness(r), metallic(m), ior(i), transmission(t),
+        dispersion(d) {}
 
   virtual Vec3 get_albedo(const HitRecord &rec) const override {
     return albedo;
@@ -438,7 +441,56 @@ public:
       srec.is_specular = true;
       srec.attenuation = albedo;
 
-      Real refraction_ratio = rec.front_face ? (1.0f / ior) : ior;
+      // DISPERSION LOGIC (Continuous Balanced Spectrum)
+      Real picked_ior = ior;
+      Vec3 color_filter(1.0f, 1.0f, 1.0f);
+
+      if (dispersion > 0.001f) {
+          // Continuous sampling t in [0, 1]
+          Real t = random_real();
+          
+          // Map t to IOR shift: Linear interpolation
+          // Range: [ior - disp, ior + disp]
+          picked_ior = ior + (t - 0.5f) * 2.0f * dispersion;
+
+          // Balanced Spectral Weights
+          // We want Integral(R) = Integral(G) = Integral(B) = 1/3 over [0,1].
+          // Using overlapping triangular distributions:
+          
+          float r_val = 0.0f;
+          float g_val = 0.0f;
+          float b_val = 0.0f;
+          
+          // RED: Starts at 1.0, falls linearly to 0 at t=2/3 = 0.666
+          // Area = 0.5 * height * width = 0.5 * 1.0 * (2/3) = 1/3. Correct.
+          if (t < 0.6666f) {
+              r_val = 1.0f - (t * 1.5f);
+          }
+          
+          // GREEN: Triangle centered at 0.5. Starts at 1/6 (0.166), peaks at 0.5, ends at 5/6 (0.833).
+          // Width = 4/6 = 2/3. Height = 1.0. Area = 0.5 * 1.0 * (2/3) = 1/3. Correct.
+          float g_dist = std::abs(t - 0.5f);
+          if (g_dist < 0.3333f) {
+              g_val = 1.0f - (g_dist * 3.0f);
+          }
+          
+          // BLUE: Starts at 1/3 (0.333), rises linearly to 1.0 at t=1.0.
+          // Area = 0.5 * 1.0 * (2/3) = 1/3. Correct.
+          if (t > 0.3333f) {
+              b_val = (t - 0.3333f) * 1.5f;
+          }
+          
+          color_filter = Vec3(r_val, g_val, b_val);
+
+          // Energy Preservation:
+          // The average value of any channel is 1/3.
+          // We want the average to be 1.0 (preserve Albedo brightness).
+          // Scale Factor = 1.0 / (1/3) = 3.0.
+          
+          srec.attenuation = srec.attenuation * color_filter * 3.0f;
+      }
+
+      Real refraction_ratio = rec.front_face ? (1.0f / picked_ior) : picked_ior;
       Vec3 unit_direction = unit_vector(r_in.dir);
 
       // GGX Microfacet Refraction (The Pro Way)
@@ -459,17 +511,11 @@ public:
       }
 
       // Ensure h is in the same hemisphere as proper normal relative to ray (?)
-      // Actually standard GGX sampling gives h in +Z.
-      // If ray is coming from inside, we might need to flip logic?
-      // Standard Refract function handles normal direction usually.
-
       // Calculate Fresnel on Microfacet H
       Real cos_theta = std::fmin(dot(-unit_direction, h), 1.0f);
       Real F = fresnel_dielectric_exact(cos_theta, refraction_ratio);
 
       Vec3 direction;
-      // Note: fresnel_dielectric_exact handles TIR inside (returns 1.0)
-
       // Stochastic Fresnel choice
       if (random_real() < F) {
         // Reflect off microfacet
@@ -477,8 +523,7 @@ public:
       } else {
         // Refract via microfacet
         direction = refract(unit_direction, h, refraction_ratio);
-        // If refract returns (0,0,0) due to TIR (though fresnel should have
-        // caught it), fallback to reflect
+        // If refract returns (0,0,0) due to TIR... fallback to reflect
         if (direction.length_squared() < 1e-6f)
           direction = reflect(unit_direction, h);
       }

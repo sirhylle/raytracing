@@ -703,7 +703,8 @@ NB_MODULE(cpp_engine, m) {
       .def(
           "update_instance_material",
           [](PyScene &self, int id, const std::string &type, const Vec3 &color,
-             Real roughness, Real metallic, Real ir, Real transmission) {
+             Real roughness, Real metallic, Real ir, Real transmission,
+             Real dispersion) {
             // DIRECT UPDATE: We bypass create_material() overrides to respect
             // UI sliders. If user selects "GLASS" but drags Metal to 1.0, they
             // get Metal Glass.
@@ -718,7 +719,7 @@ NB_MODULE(cpp_engine, m) {
               // All standard types (lambertian, metal, dielectric, standard)
               // use explicit params
               new_mat = std::make_shared<GgxMaterial>(
-                  color, roughness, metallic, ir, transmission);
+                  color, roughness, metallic, ir, transmission, dispersion);
             }
 
             self.instances_map[id]->set_material(new_mat);
@@ -726,7 +727,8 @@ NB_MODULE(cpp_engine, m) {
           },
           nb::arg("id"), nb::arg("mat_type"), nb::arg("color"),
           nb::arg("roughness") = 0.5f, nb::arg("metallic") = 0.0f,
-          nb::arg("ir") = 1.5f, nb::arg("transmission") = 0.0f)
+          nb::arg("ir") = 1.5f, nb::arg("transmission") = 0.0f,
+          nb::arg("dispersion") = 0.0f)
       .def("remove_instance", &PyScene::remove_instance, nb::arg("id"))
       .def("set_camera", &PyScene::set_camera)
       .def("set_environment", &PyScene::set_environment, nb::arg("image"),

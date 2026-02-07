@@ -248,3 +248,9 @@ def build(ui_list, start_y, state, engine):
         ui_list.append(Slider(VIEW_W + slider_x_prop, ys, slider_w_prop, 12, 1.0, 3.0, 
                               lambda: get_prop('ir', 1.5), lambda v: set_prop(v, 'ir')))
         ys += 20
+
+        # Dispersion
+        lbl(ui_list, 10, ys, lambda: f"Disp. ({get_prop('dispersion', 0.0):.3f})", 12, COL_TEXT_DIM)
+        ui_list.append(Slider(VIEW_W + slider_x_prop, ys, slider_w_prop, 12, 0.0, 0.1, 
+                              lambda: get_prop('dispersion', 0.00), lambda v: set_prop(v, 'dispersion'), power=3))
+        ys += 20
