@@ -40,7 +40,11 @@ def build(ui_list, start_y, state, engine):
         lbl(ui_list, 10, ys, f"ID {state.selected_id}: {obj_name}", 14, COL_TEXT)
 
         # 2. Axis Selector
-        def set_axis(m): state.axis_mode = m
+        def set_axis(m): 
+             state.axis_mode = m
+             # Changing gizmo axis -> Only visual repaint, no render reset
+             state.needs_repaint = True
+             
         grp_axis = []
         btn_w, btn_h = 35, 20
         start_x = PANEL_W - 10 - (3 * btn_w) # Calé à droite
@@ -66,6 +70,7 @@ def build(ui_list, start_y, state, engine):
         
         def duplicate_obj():
             state.duplicate_selection(engine)
+            # state.duplicate_selection handles flags (render reset + ui rebuild)
             
         # Duplicate Button
         btn(ui_list, 10, ys, 300, 28, "DUPLICATE OBJECT", duplicate_obj)
@@ -79,10 +84,11 @@ def build(ui_list, start_y, state, engine):
             if oid in state.builder.registry: del state.builder.registry[oid]
             state.selected_id = -1
             state.set_active_tab("SCENE") # Return to scene after deletion
+            # set_active_tab sets needs_ui_rebuild
+            # Object removal -> Needs render reset
+            state.needs_render_reset = True
             
         # Button Delete (Red)
-        # Made slightly smaller to leave room for future Duplicate if needed,
-        # or keep full width for now. Keeping 300px (full).
         btn(ui_list, 10, ys, 300, 28, "DELETE OBJECT", delete_obj, col_ov=(160, 50, 50))
         
         ys += 40
@@ -101,7 +107,11 @@ def build(ui_list, start_y, state, engine):
     if draw_section_header("TRANSFORMS", "TRANSFORMS"):
         
         # A. Gizmos
-        def set_gizmo(g): state.gizmo_mode = g
+        def set_gizmo(g): 
+             state.gizmo_mode = g
+             # Gizmo change -> Visual repaint only
+             state.needs_repaint = True
+             
         grp_gizmo = []
         bw, gap = 58, 5
         total_w = (4 * bw) + (3 * gap)
@@ -117,7 +127,10 @@ def build(ui_list, start_y, state, engine):
         def get_v(prop, axis): d=state.get_selected_info(); return d[prop][axis] if d else 0.0
         def set_v(val, prop, axis): 
             d=state.get_selected_info(); 
-            if d: d[prop][axis]=val; state.update_transform(engine)
+            if d: 
+                 d[prop][axis]=val
+                 state.update_transform(engine)
+                 # update_transform sets needs_render_reset + needs_repaint
         
         props = ["pos", "rot", "scale"]
         names = ["Position", "Rotation", "Scale"]

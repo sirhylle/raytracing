@@ -11,6 +11,7 @@ import loader
 import scenes
 from modes import renderer
 from modes import editor as viewer
+import cpp_engine
 from config import RenderConfig
 
 def cmd_render(args):
@@ -55,6 +56,9 @@ def cmd_editor(args):
     del engine
     gc.collect()
 
+import serializer # NEW
+from dataclasses import asdict # NEW
+
 def cmd_init(args):
     """Handler for the 'init' command."""
     filename = args.filename
@@ -79,57 +83,49 @@ def cmd_init(args):
 
     template_name = args.template
     
-    # Basic Template Data
-    data = {
-        "version": "1.0",
-        "render_settings": {
-            "width": 800,
-            "height": 600,
-            "spp": 100,
-            "depth": 10
-        },
-        "camera": {
-            "lookfrom": [0, 1, 3],
-            "lookat": [0, 0, 0],
-            "vfov": 40.0,
-            "aperture": 0.0,
-            "focus_dist": 10.0
-        },
-        "environment": {
-            "background_level": 1.0,
-            "diffuse_level": 1.0,
-            "specular_level": 1.0,
-            "auto_sun": False
-        },
-        "objects": []
-    }
-
-    # Template Customization
-    if template_name == 'cornell':
-        # Just a reference, we won't dump the entire procedural Cornell Box here.
-        # Could pre-fill walls, but keeping it simple for now.
-        print("[Info] Cornell template not fully implemented in JSON init yet. Creating basic scene.")
-    elif template_name == 'outdoor':
-        data["environment"]["auto_sun"] = True
-        data["environment"]["sun_intensity"] = 50.0
-        data["environment"]["sun_radius"] = 10.0
-        data["environment"]["sun_dist"] = 1000.0
-        # Add a floor
-        data["objects"].append({
-            "type": "checker_sphere",
-            "pos": [0, -1000.5, 0],
-            "scale": [1000.0, 1000.0, 1000.0],
-            "color": [0.2, 0.3, 0.1],
-            "color2": [0.9, 0.9, 0.9], 
-            "texture_scale": 10.0
-        })
-
+    # Generate Scene using Builder & Serializer
+    print(f"[Info] Generating scene '{filename}' from template '{template_name}'...")
+    
+    # 1. Init Virtual Engine (No Window needed)
+    # We use a dummy builder to accumulate objects
+    engine = cpp_engine.Engine()
+    builder = loader.SceneBuilder(engine)
+    config = RenderConfig()
+    
+    # 2. Load Template
+    # We use the existing scenes.py module which defines templates
+    scene_cls = scenes.AVAILABLE_SCENES.get(template_name)
+    if not scene_cls:
+        print(f"[Warning] Template '{template_name}' not found. Using 'empty'.")
+        scene_cls = scenes.Empty()
+        
+    # 3. Setup Scene (Populate Builder & Config)
     try:
-        with open(filename, 'w') as f:
-            json.dump(data, f, indent=4)
+        scene_config = scene_cls.setup(builder)
+        if scene_config:
+            # Update RenderConfig from SceneConfig (dataclass)
+            # We use asdict to convert it to a dictionary
+            config.update_from_dict(asdict(scene_config))
+            
+            # Special case: Map scene_config.environment to config.environment (path or color)
+            # update_from_dict handles keys matching RenderConfig.
+            # SceneConfig has 'environment' field which matches RenderConfig 'environment'.
+            pass
+            
+    except Exception as e:
+        print(f"[Error] Failed to generate template: {e}")
+        return
+
+    # 4. Serialize to JSON
+    try:
+        serializer.serialize_scene(config, builder, filename)
         print(f"[Success] Created new scene file: {filename}")
     except Exception as e:
-        print(f"[Error] Failed to write file: {e}")
+        print(f"[Error] Failed to save file: {e}")
+        
+    # Cleanup
+    del engine
+    gc.collect()
 
 def main():
     parser = argparse.ArgumentParser(description="Python Path Tracer CLI (Data-Driven)")

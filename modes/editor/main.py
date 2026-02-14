@@ -38,7 +38,7 @@ def render_thread_task(engine, config, app_state):
     finally:
         print(">>> Render Finished.")
         app_state.is_rendering = False
-        app_state.dirty = True
+        app_state.scene_dirty = True
 
 
 # --- GIZMO MATH UTILS ---
@@ -201,7 +201,7 @@ def run(engine, config, builder):
     app_state.calculate_viewport(ui_core.VIEW_W, ui_core.WIN_H)
     
     # Threading config
-    render_threads = config.threads if config.threads > 0 else max(1, multiprocessing.cpu_count() - 2)
+    render_threads = config.system.threads if config.system.threads > 0 else max(1, multiprocessing.cpu_count() - 2)
 
     ui_list = []
     
@@ -212,11 +212,32 @@ def run(engine, config, builder):
         if app_state.is_rendering: return
         app_state.is_rendering = True
         # Update config object for renderer
-        config.lookfrom = app_state.cam_pos.tolist()
-        fx, fy, fz = math.sin(app_state.yaw)*math.cos(app_state.pitch), math.sin(app_state.pitch), math.cos(app_state.yaw)*math.cos(app_state.pitch)
-        config.lookat = (app_state.cam_pos + np.array([fx, fy, fz])).tolist()
-        config.vfov, config.aperture, config.focus_dist = app_state.vfov, app_state.aperture, app_state.focus_dist
-        config.sampler = app_state.render_sampler
+        fx = math.sin(app_state.yaw)*math.cos(app_state.pitch)
+        fy = math.sin(app_state.pitch)
+        fz = math.cos(app_state.yaw)*math.cos(app_state.pitch)
+        
+        config.camera.lookfrom = app_state.cam_pos.tolist()
+        config.camera.lookat = (app_state.cam_pos + np.array([fx, fy, fz])).tolist()
+        config.camera.vfov = app_state.vfov
+        config.camera.aperture = app_state.aperture
+        config.camera.focus_dist = app_state.focus_dist
+        
+        # Sync Environment
+        config.environment.exposure = app_state.env_exposure
+        config.environment.background = app_state.env_background
+        config.environment.diffuse = app_state.env_diffuse
+        config.environment.specular = app_state.env_specular
+        config.environment.rotation = app_state.env_rotation
+        
+        # Sync Auto Sun
+        config.environment.auto_sun = app_state.sun_enabled
+        config.environment.sun_intensity = app_state.sun_intensity
+        config.environment.sun_radius = app_state.sun_radius
+        config.environment.sun_dist = app_state.sun_dist
+        config.environment.clipping_multiplier = app_state.env_clipping_multiplier
+
+        config.render.sampler = app_state.render_sampler
+        
         threading.Thread(target=render_thread_task, args=(engine, config, app_state)).start()
 
     # [HELPER] Fonction de reconstruction UI
@@ -241,6 +262,10 @@ def run(engine, config, builder):
     running = True
     last_time = time.time()
     last_render_dt = 0.03 # Init var
+    
+    # Surface de rendu Viewport (taille fixe ou dynamique ?)
+    # On utilise les constantes UI pour l'instant
+    view_surf = pygame.Surface((ui_core.VIEW_W, ui_core.VIEW_H))
 
     while running:
         vx, vy, vw, vh = app_state.viewport_rect
@@ -287,13 +312,16 @@ def run(engine, config, builder):
             for widget in ui_list:
                 if widget.handle_event(event, app_state):
                     ui_captured = True
-                    app_state.dirty = True
+                    app_state.needs_repaint = True
+                    # app_state.ui_dirty = True # REMOVED: Breaks drag state on sliders
             
             # B. Viewport Interaction (Seulement si l'UI n'a pas capturé l'event)
             if not ui_captured and not app_state.typing_mode:
+
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                     # 1. Si on est en train de faire un focus -> On annule
                     if app_state.picking_focus:
+
                         app_state.picking_focus = False
                         app_state.needs_ui_rebuild = True
                     
@@ -301,10 +329,8 @@ def run(engine, config, builder):
                     elif app_state.selected_id != -1:
                         app_state.selected_id = -1
                         app_state.set_active_tab("SCENE")
-                        app_state.needs_ui_rebuild = True
-                        app_state.dirty = True
-
-                    # 3. Sinon -> On ne fait rien (pas de quit accidentel)
+                        app_state.ui_dirty = True
+                        app_state.scene_dirty = True
                     # running = False  <-- LIGNE SUPPRIMÉE
                 
                 # Clic Gauche : Sélection ou Gizmo
@@ -317,12 +343,12 @@ def run(engine, config, builder):
                         res = engine.pick_focus_distance(vp_rect.width, vp_rect.height, mouse_x_rel, mouse_y_rel)
                         if res[0] > 0:
                             app_state.focus_dist = res[0]
-                            app_state.dirty = True
+                            app_state.scene_dirty = True
                             
                             # Si c'était le bouton UI qui était actif, on le désactive (coup unique)
                             if app_state.picking_focus:
                                 app_state.picking_focus = False
-                                app_state.needs_ui_rebuild = True
+                                app_state.ui_dirty = True
                     
                     # CAS 2 : SÉLECTION NORMALE (Par défaut)
                     else:
@@ -354,8 +380,8 @@ def run(engine, config, builder):
 
                         if should_switch_selection and app_state.selected_id != pid:
                             app_state.selected_id = pid
-                            app_state.dirty = True
-                            app_state.needs_ui_rebuild = True 
+                            app_state.scene_dirty = True
+                            app_state.ui_dirty = True 
 
                             if pid != -1:
                                 app_state.set_active_tab("OBJECT")
@@ -380,7 +406,7 @@ def run(engine, config, builder):
                         app_state.yaw -= dx * 0.003
                         app_state.pitch -= dy * 0.003
                         app_state.pitch = max(-1.5, min(1.5, app_state.pitch))
-                        app_state.dirty = True
+                        app_state.scene_dirty = True
                     
                     # LIFT (Clic Molette maintenu) - Vertical Pur
                     if mouse_btns[1]:
@@ -393,7 +419,7 @@ def run(engine, config, builder):
                          # Le signe '-' inverse le repère écran (Y vers le bas) pour le repère 3D (Y vers le haut)
                          app_state.cam_pos[1] -= dy * lift_speed
                          
-                         app_state.dirty = True
+                         app_state.scene_dirty = True
 
                     # Gizmo / Interaction Objet (Clic Gauche maintenu)
                     is_focusing = app_state.picking_focus or keys[pygame.K_f]
@@ -436,7 +462,7 @@ def run(engine, config, builder):
                     fz = math.cos(app_state.yaw) * math.cos(app_state.pitch)
                     zoom_step = app_state.move_speed * 0.05
                     app_state.cam_pos += np.array([fx, fy, fz]) * event.y * zoom_step
-                    app_state.dirty = True
+                    app_state.scene_dirty = True
 
         # Clavier (Déplacements ZQSD/Flèches)
         if not app_state.typing_mode: 
@@ -457,126 +483,202 @@ def run(engine, config, builder):
             
             if np.linalg.norm(move) > 0:
                 app_state.cam_pos += move * app_state.move_speed * dt
-                app_state.dirty = True
+                app_state.scene_dirty = True
 
+        # ---------------------------------------------------------
         # 3. ENGINE UPDATE (Camera)
-        scene_changed = app_state.dirty
-        if app_state.dirty:
+        # ---------------------------------------------------------
+        
+        # ---------------------------------------------------------
+        # 4. RENDER LOGIC (Optimized)
+        # ---------------------------------------------------------
+
+        
+        # A. UI Rebuild
+        if app_state.needs_ui_rebuild:
+            rebuild_ui()
+            app_state.needs_ui_rebuild = False
+            # Rebuilding UI might change layout, so we definitely want to repaint
+            app_state.needs_repaint = True 
+            
+        # B. Scene Change (Reset Accumulator)
+        if app_state.needs_render_reset:
+            if hasattr(engine, 'reset_accumulation'): 
+                engine.reset_accumulation()
+            app_state.accum_spp = 0
+            app_state.needs_render_reset = False
+            # Render reset implies we need to generate a new image
+            app_state.needs_repaint = True 
+
+        # C. Render Step (Determine if we need to trace rays)
+        should_render = False
+        
+        if app_state.preview_mode == 2: # RAY
+            # Render if we haven't reached target SPP
+            if app_state.accum_spp < config.render.spp: 
+                should_render = True
+        else: # CLAY / NORMALS
+            # Render only if accumulation reset (spp=0)
+            if app_state.accum_spp == 0:
+                should_render = True
+                
+        # D. Execute Render
+        if should_render:
+            t0 = time.time()
+            
+            # Update Camera/Resolution
             fx = math.sin(app_state.yaw) * math.cos(app_state.pitch)
             fy = math.sin(app_state.pitch)
             fz = math.cos(app_state.yaw) * math.cos(app_state.pitch)
             lookat = app_state.cam_pos + np.array([fx, fy, fz])
-            engine.set_camera(cpp_engine.Vec3(*app_state.cam_pos), cpp_engine.Vec3(*lookat), cpp_engine.Vec3(0,1,0),
-                              app_state.vfov, app_state.target_aspect, app_state.aperture, app_state.focus_dist)
-            if hasattr(engine, 'reset_accumulation'): engine.reset_accumulation()
-            app_state.accum_spp = 0; app_state.dirty = False
-        
-        vx, vy, vw, vh = app_state.viewport_rect
-        vp_rect = pygame.Rect(vx, vy, vw, vh)
-
-        # 4. RENDER & DRAW
-        screen.fill((0,0,0))
-        
-        # A. Render Logic
-        should_render = False
-        if app_state.preview_mode == 2: # RAY
-            # Raytracing: Render if changed OR image not finished (SPP < Max)
-            if scene_changed or app_state.accum_spp < config.spp: 
-                should_render = True
-        else: # CLAY / NORMALS
-            # En Preview : On rend SEULEMENT si ça a bougé (ou si on n'a pas encore d'image du tout)
-            if scene_changed or app_state.current_image is None: 
-                should_render = True
             
-        render_w, render_h = vp_rect.width, vp_rect.height
-        
-        if should_render:
-            t0 = time.time()
+            engine.set_camera(
+                 cpp_engine.Vec3(*app_state.cam_pos), 
+                 cpp_engine.Vec3(*lookat), 
+                 cpp_engine.Vec3(0,1,0),
+                 app_state.vfov, 
+                 app_state.target_aspect, 
+                 app_state.aperture, 
+                 app_state.focus_dist
+            )
             
-            # Hysteresis Scale (Adaptation dynamique qualité)
-            scale = app_state.res_scale
+            # --- Draw / Render ---
+            render_threads = config.system.threads
+            rw = int(app_state.conf.render.width / app_state.res_scale)
+            rh = int(app_state.conf.render.height / app_state.res_scale)
             
-            if app_state.res_auto:
-                # Seuils
-                current_dt = last_render_dt
-                FPS_LOW = 0.1  # ~10 FPS -> Downscale
-                FPS_HIGH = 0.028 # ~35 FPS -> Upscale
-                
-                # --- LOGIQUE DOWNSCALE (Performance) ---
-                if current_dt > FPS_LOW:
-                    if scale == 0.5: scale = 1
-                    elif scale == 1: scale = 2
-                    elif scale == 2: scale = 4
-                    elif scale == 4: pass # Max downscale
-                
-                # --- LOGIQUE UPSCALE (Qualité) ---
-                elif current_dt < FPS_HIGH:
-                    if scale == 4: scale = 2
-                    elif scale == 2: scale = 1
-                    elif scale == 1: 
-                        # On ne passe en SuperSampling (0.5) que si on n'est PAS en Raytracing
-                        # En Raytracing, 0.5 revient à 4 SPP, géré par l'accumulateur.
-                        if app_state.preview_mode != 2: 
-                            scale = 0.5
-                    elif scale == 0.5: pass # Max quality
-                
-                app_state.res_scale = scale # Mémorisation pour stabilité frame suivante
-            
-            # Calcul de la résolution de rendu (rw, rh)
-            # scale 0.5 -> rw = 2 * render_w (SuperSampling)
-            # scale 4.0 -> rw = 0.25 * render_w (Pixelated)
-            rw = int(render_w / scale)
-            rh = int(render_h / scale)
-            
-            # Sécurité min/max
+            # Safety clamp x1
             rw = max(1, min(4096, rw))
             rh = max(1, min(4096, rh))
-
+            
+            raw = None
+            
             if app_state.preview_mode == 2: # RAY
-                batch = app_state.ray_batch_size
-                raw = engine.render_accumulate(rw, rh, batch, render_threads, app_state.preview_depth, app_state.preview_sampler)
-                app_state.accum_spp += batch
-            else: # PREVIEW
+                # SPP BATCHING: Render in small chunks to keep UI responsive.
+                # Clamp the last batch so we hit the target SPP exactly.
+                remaining = app_state.conf.render.spp - app_state.accum_spp
+                batch = min(app_state.ray_batch_size, remaining)
+                
+                if batch > 0:
+                    raw = engine.render_accumulate(rw, rh, batch, render_threads, app_state.conf.render.depth, 1) 
+                    app_state.accum_spp += batch
+            else: # PREVIEW (Normals / Clay)
                 raw = engine.render_preview(rw, rh, app_state.preview_mode, render_threads)
-                app_state.accum_spp = 0 # No accumulation in preview
+                app_state.accum_spp = 1 # Mark as done
+
+            # --- Post Process & Blit ---
+            if raw is not None:
+                # Tone Mapping
+                if app_state.preview_mode == 2:
+                    corrected = renderer.apply_tone_mapping(raw)
+                elif app_state.preview_mode == 1: # Clay
+                    corrected = np.power(np.clip(raw, 0, 1), 1.0/2.2) # Gamma correction
+                else: # Normals
+                    corrected = raw
+
+                # Conversion to Surface
+                img_uint8 = (np.clip(corrected, 0, 1) * 255).astype(np.uint8)
+                img_transposed = np.transpose(img_uint8, (1, 0, 2))
+                surf = pygame.surfarray.make_surface(img_transposed)
+                
+                # Rescaling for viewport
+                target_w = app_state.conf.render.width
+                target_h = app_state.conf.render.height
+                
+                if surf.get_width() != target_w or surf.get_height() != target_h:
+                     surf = pygame.transform.smoothscale(surf, (target_w, target_h))
+                
+                app_state.current_image = surf
+                last_render_dt = time.time() - t0
             
-            # Tone Mapping & Post Process
+            app_state.needs_repaint = True # New frame -> Repaint screen
+            # print("DEBUG: Post Process Done")
+            
+
+        
+        # ---------------------------------------------------------
+        # 4. SCALE & BATCH PERFORMANCE LOGIC (Only runs on active render frames)
+        # ---------------------------------------------------------
+        if should_render and last_render_dt > 0:
+            # A. FPS Smoothing
+            current_instant_fps = 1.0 / max(0.001, last_render_dt)
+            app_state.current_fps = app_state.current_fps * 0.9 + current_instant_fps * 0.1
+            real_fps = app_state.current_fps
+            
+            # B. AUTO SCALER (Legacy Logic + Stability)
+            if app_state.preview_mode == 2 and app_state.res_auto:
+                # LEGACY THRESHOLDS:
+                # 10 FPS (0.1s) -> Downscale
+                # 35 FPS (0.028s) -> Upscale
+                FPS_LOW_DT = 0.100  # 10 FPS
+                FPS_HIGH_DT = 0.028 # ~35 FPS
+                
+                current_dt = last_render_dt
+                old_scale = app_state.res_scale
+                
+                # Discrete steps: [0.5, 1, 2, 4, 8]
+                scales = [0.5, 1.0, 2.0, 4.0, 8.0]
+                try:
+                    idx = scales.index(old_scale)
+                except ValueError:
+                    idx = 1 # Default to 1:1 if weird scale
+                
+                # 1. DOWN-SCALING (Lag)
+                if current_dt > FPS_LOW_DT:
+                    app_state.res_stability -= 1
+                    if app_state.res_stability <= -5: # Stability check
+                        if idx < len(scales) - 1:
+                            app_state.res_scale = scales[idx + 1]
+                        app_state.res_stability = 0
+                
+                # 2. UP-SCALING (Headroom)
+                elif current_dt < FPS_HIGH_DT:
+                    # RESOLUTION LOCK: Freeze quality improvement after 10 SPP
+                    if app_state.accum_spp < 10:
+                        app_state.res_stability += 1
+                        if app_state.res_stability >= 10: # Stability check
+                            if idx > 0:
+                                new_scale = scales[idx - 1]
+                                # Special Rule: 0.5 (SuperSampling) only for PREVIEW modes
+                                if new_scale == 0.5 and app_state.preview_mode == 2:
+                                    pass # Stay at 1.0
+                                else:
+                                    app_state.res_scale = new_scale
+                            app_state.res_stability = 0
+                else:
+                    # Decay
+                    if app_state.res_stability > 0: app_state.res_stability -= 1
+                    elif app_state.res_stability < 0: app_state.res_stability += 1
+
+                # CRITICAL: If scale changed, force a render reset
+                if app_state.res_scale != old_scale:
+                    app_state.needs_render_reset = True
+
+            # C. Batch Size Adjustment
+
             if app_state.preview_mode == 2:
-                corrected = renderer.apply_tone_mapping(raw)
-            elif app_state.preview_mode == 1: # Clay
-                corrected = np.power(np.clip(raw, 0, 1), 1.0/2.2)
-            else: # Normals
-                corrected = raw
-
-            # Conversion Surface Pygame
-            img_uint8 = (np.clip(corrected, 0, 1) * 255).astype(np.uint8)
-            img_transposed = np.transpose(img_uint8, (1, 0, 2))
-            surf = pygame.surfarray.make_surface(img_transposed)
-            
-            # FIX: Ensure final surface matches rendering viewport exactly
-            # This handles Upscaling (Scale > 1) AND Downscaling (Scale < 1 / Supersampling)
-            if surf.get_width() != render_w or surf.get_height() != render_h:
-                 surf = pygame.transform.smoothscale(surf, (render_w, render_h))
-            
-            app_state.current_image = surf
-            last_render_dt = time.time() - t0
-
-            # Update FPS only when computing an image
-            # FPS based on render time (Render FPS) not Loop FPS
-            real_fps = 1.0 / max(0.001, last_render_dt)
-            app_state.current_fps = real_fps
-            #if len(ui_list) > 0 and isinstance(ui_list[0], ui_core.Label):
-            #    ui_list[0].text = f"FPS: {real_fps:.0f}"
-            
-            # Ajustement auto batch size pour le Raytracing
-            if app_state.preview_mode == 2 and last_render_dt > 0.001:
                 ideal = app_state.ray_batch_size * (0.033 / last_render_dt)
                 app_state.ray_batch_size = max(1, min(32, int(ideal)))
+        
+        real_fps = app_state.current_fps
 
-        # B. Blit Image
+
+        # ---------------------------------------------------------
+        # 7. FINAL DRAWING (Consolidated to fix flickering)
+        # ---------------------------------------------------------
+        screen.fill((40,40,40))
+
+        # A. Viewport
         if app_state.current_image:
-            screen.blit(app_state.current_image, (vp_rect.x, vp_rect.y))
+             if app_state.current_image.get_width() != vw or app_state.current_image.get_height() != vh:
+                final_surf = pygame.transform.scale(app_state.current_image, (vw, vh))
+                screen.blit(final_surf, (vx, vy))
+             else:
+                screen.blit(app_state.current_image, (vx, vy))
+        else:
+             pygame.draw.rect(screen, (20,20,20), vp_rect)
 
+        # B. Picking Overlay
         if app_state.picking_focus:
             # Semi-transparent background for text
             msg = "PICK FOCUS POINT (CLICK ON SCENE) OR PRESS ESC"
@@ -587,41 +689,36 @@ def run(engine, config, builder):
             bg_rect = txt_surf.get_rect(center=(ui_core.VIEW_W // 2, 30))
             bg_rect.inflate_ip(20, 10) # Un peu de marge
             
-            # Dessin fond noir semi-transparent (optionnel, ou noir simple)
             pygame.draw.rect(screen, (0, 0, 0), bg_rect, border_radius=4)
             pygame.draw.rect(screen, ui_core.COL_ACCENT, bg_rect, 1, border_radius=4) # Bordure bleue
             
-            # Dessin texte
             txt_rect = txt_surf.get_rect(center=bg_rect.center)
             screen.blit(txt_surf, txt_rect)
 
-        # Draw 3D Gizmo (Overlay)
+        # C. Gizmo (Overlay)
         draw_gizmo(screen, app_state, vp_rect)
 
-        # C. Draw UI Panel
-        # 1. Panel Background (Medium Grey - Full Fill)
+        # D. UI Panels
+        # 1. Panel Background
         pygame.draw.rect(screen, ui_core.COL_PANEL, (ui_core.VIEW_W, 0, ui_core.PANEL_W, ui_core.WIN_H))
 
         # 2. Header (Top)
         header_height = 91
         pygame.draw.rect(screen, ui_core.COL_HEADER, (ui_core.VIEW_W, 0, ui_core.PANEL_W, header_height))
         pygame.draw.line(screen, ui_core.COL_BORDER, (ui_core.VIEW_W, 0), (ui_core.VIEW_W, ui_core.WIN_H))
-        #pygame.draw.line(screen, ui_core.COL_BORDER, (ui_core.VIEW_W, header_height), (ui_core.WIN_W, header_height))
 
-        # 3. Footer (Bas)
-        #footer_h = 50 # Hauteur fixe pour le footer
-        #footer_y = ui_core.WIN_H - footer_h
-        # Fond sombre
-        #pygame.draw.rect(screen, ui_core.COL_HEADER, (ui_core.VIEW_W, footer_y, ui_core.PANEL_W, footer_h))
-        # Ligne de séparation (Bordure du haut du footer)
-        #pygame.draw.line(screen, ui_core.COL_BORDER, (ui_core.VIEW_W, footer_y), (ui_core.WIN_W, footer_y))
-
-        
+        # 3. Widgets
         for w in ui_list: w.draw(screen, fonts)
 
+        # 4. Footer
         panels.layout_global.draw_footer_status(screen, fonts, app_state)
-        
+
+        # E. Final Flip
         pygame.display.flip()
+        
+        # Reset redraw flag and cap frame rate
+        app_state.needs_repaint = False
+        clock.tick(60)
 
     pygame.quit()
     return None

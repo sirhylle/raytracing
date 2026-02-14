@@ -45,7 +45,7 @@ class SceneBuilder:
 
     # --- Primitives PBR ---
 
-    def add_sphere(self, center, radius, mat_type, color, roughness=0.5, metallic=0.0, ir=1.5, transmission=0.0, fuzz=None):
+    def add_sphere(self, center, radius, mat_type, color, roughness=0.5, metallic=0.0, ir=1.5, transmission=0.0, dispersion=0.0, fuzz=None):
         # Compatibility handling
         if fuzz is not None: roughness = fuzz
 
@@ -57,6 +57,11 @@ class SceneBuilder:
                                         cpp_engine.Vec3(float(color[0]), float(color[1]), float(color[2])), 
                                         float(roughness), float(metallic), float(ir), float(transmission))
         
+        # Apply dispersion if needed (since add_sphere might not take it yet)
+        if dispersion > 0.0:
+             self.engine.update_instance_material(obj_id, mat_type, cpp_engine.Vec3(float(color[0]), float(color[1]), float(color[2])),
+                                                  float(roughness), float(metallic), float(ir), float(transmission), float(dispersion))
+
         self.registry[obj_id] = {
             'type': 'sphere',
             'pos': c_list,
@@ -67,7 +72,8 @@ class SceneBuilder:
             'roughness': float(roughness),
             'metallic': float(metallic),
             'ir': float(ir),
-            'transmission': float(transmission)
+            'transmission': float(transmission),
+            'dispersion': float(dispersion)
         }
         return obj_id
 
@@ -145,7 +151,7 @@ class SceneBuilder:
         }
         return obj_id
 
-    def add_quad(self, Q, u, v, mat_type, color, roughness=0.5, metallic=0.0, ir=1.5, transmission=0.0, fuzz=None):
+    def add_quad(self, Q, u, v, mat_type, color, roughness=0.5, metallic=0.0, ir=1.5, transmission=0.0, dispersion=0.0, fuzz=None):
         if fuzz is not None: roughness = fuzz
 
         def to_v3(val):
@@ -160,6 +166,10 @@ class SceneBuilder:
         origin = cpp_engine.Vec3(0.0, 0.0, 0.0)
         obj_id = self.engine.add_quad(origin, v_u, v_v, mat_type, v_color, float(roughness), float(metallic), float(ir), float(transmission))
         
+        if dispersion > 0.0:
+             self.engine.update_instance_material(obj_id, mat_type, v_color,
+                                                  float(roughness), float(metallic), float(ir), float(transmission), float(dispersion))
+
         self.registry[obj_id] = {
             'type': 'quad',
             'pos': q_list,
@@ -172,7 +182,8 @@ class SceneBuilder:
             'roughness': float(roughness),
             'metallic': float(metallic),
             'ir': float(ir),
-            'transmission': float(transmission)
+            'transmission': float(transmission),
+            'dispersion': float(dispersion)
         }
         
         M = tf.translate(q_list[0], q_list[1], q_list[2])
@@ -321,14 +332,21 @@ def create_auto_sun(builder, intensity, radius, distance):
     
     return oid, dir_arr, raw_col_arr
 
-def load_environment(builder, environment, 
-    env_exposure=1.0, env_background=1.0, env_diffuse=1.0, env_specular=1.0, 
-    auto_sun=False, auto_sun_intensity=None, auto_sun_radius=None,
-    auto_sun_dist=None, clipping_multiplier=None):
+def load_environment(builder, env_settings):
     """Charge HDRI or solid color and configure auto-sun via Builder."""
+    from config import EnvironmentSettings
+    if env_settings is None:
+        return 1.0
+        
+    # Duck typing or type check
+    # If passed as string/list directly (legacy internal calls?), wrap it?
+    # No, we updated call site to pass EnvironmentSettings.
+    
+    environment = env_settings.source
 
     # 1. Cas : Rien défini
     if environment is None:
+        # Default white? Or keep previous?
         return 1.0
 
     env_img = None
@@ -370,7 +388,7 @@ def load_environment(builder, environment,
 
             # Calcul du seuil de clipping (MIS) pour les Maps seulement
             # On calcule la médiane de la luminance pour identifier le "fond" du ciel
-            if auto_sun or (clipping_multiplier is not None and clipping_multiplier > 0):
+            if env_settings.auto_sun or (env_settings.clipping_multiplier is not None and env_settings.clipping_multiplier > 0):
                 lum = 0.2126 * env_data[:,:,0] + 0.7152 * env_data[:,:,1] + 0.0722 * env_data[:,:,2]
                 median_val = np.median(lum)
 
@@ -380,9 +398,9 @@ def load_environment(builder, environment,
              
              # Dynamic clipping only makes sense for HDRIs (high dynamic range)
              # For a solid color (LDR or low HDR), clipping is useless or even detrimental.
-             if isinstance(environment, str) and (auto_sun or (clipping_multiplier and clipping_multiplier > 0)):
-                 if clipping_multiplier is not None and clipping_multiplier > 0:
-                     clipping_threshold = median_val * clipping_multiplier
+             if isinstance(environment, str) and (env_settings.auto_sun or (env_settings.clipping_multiplier and env_settings.clipping_multiplier > 0)):
+                 if env_settings.clipping_multiplier is not None and env_settings.clipping_multiplier > 0:
+                     clipping_threshold = median_val * env_settings.clipping_multiplier
                  else:
                      clipping_threshold = median_val * 20.0
 
@@ -390,17 +408,25 @@ def load_environment(builder, environment,
 
         # Environment Levels (Pro Split)
         # Passed directly to engine
-        builder.set_env_levels(env_exposure, env_background, env_diffuse, env_specular)
+        builder.set_env_levels(
+            env_settings.exposure, 
+            env_settings.background, 
+            env_settings.diffuse, 
+            env_settings.specular
+        )
+        
+        # Rotation
+        builder.engine.set_env_rotation(env_settings.rotation)
 
-        if auto_sun:
+        if env_settings.auto_sun:
             print("[Loader] Auto-Sun: Analyzing Environment...")
 
             # Appel de la logique partagée
             create_auto_sun(
                 builder, 
-                auto_sun_intensity, 
-                auto_sun_radius, 
-                auto_sun_dist
+                env_settings.sun_intensity, 
+                env_settings.sun_radius, 
+                env_settings.sun_dist
             )
             print("[Loader] Auto-Sun added via Builder. Registry Updated.")
             
@@ -408,6 +434,8 @@ def load_environment(builder, environment,
 
     except Exception as e:
         print(f"[Loader] Failed to load environment map: {e}")
+        import traceback
+        traceback.print_exc()
         return 1.0
 
 def load_scene_from_json(builder, filepath, config):
@@ -428,79 +456,24 @@ def load_scene_from_json(builder, filepath, config):
 
     print(f"[Loader] Parsing scene: {filepath}...")
 
-    # 1. CLEANUP
-    # We assume the engine is empty or we want to clear it.
-    # Note: If merging, this logic would need to change. For init, engine is empty.
-    # builder.registry assumes empty at init.
-    
-    # 2. CONFIGURATION (Override Config Object)
-    if "render_settings" in data:
-        rs = data["render_settings"]
-        config.width = rs.get("width", config.width)
-        config.height = rs.get("height", config.height)
-        config.spp = rs.get("spp", config.spp)
-        config.depth = rs.get("depth", config.depth)
-        config.sampler = rs.get("render_sampler", config.sampler) # Default to render sampler
-        
-        # System
-        config.param_stamp = rs.get("param_stamp", config.param_stamp)
-        config.keep_raw = rs.get("save_raw", False) # Legacy mapping
-        # Try new flags if present? JSON might not have them yet.
+    # 1. CONFIGURATION
+    # The config class now handles the robust nested update.
+    config.update_from_dict(data)
 
-        # Animation
-        config.animate = rs.get("animate", config.animate)
-        config.frames = rs.get("frames", config.frames)
-        config.fps = rs.get("fps", config.fps)
-        config.radius = rs.get("turntable_radius", config.radius)
-
+    # 1b. ENGINE GLOBALS (System Extras)
+    # Some params are not in RenderConfig structure but engine globals
     if "system" in data:
          sys_conf = data["system"]
-         # Epsilon/Firefly are engine globals, not in Config usually? 
-         # But we might want to set them in Engine here.
          if "epsilon" in sys_conf: cpp_engine.set_epsilon(float(sys_conf["epsilon"]))
          if "firefly_clamp" in sys_conf: cpp_engine.set_firefly_clamp(float(sys_conf["firefly_clamp"]))
 
-    if "camera" in data:
-        cam = data["camera"]
-        config.lookfrom = cam.get("lookfrom", config.lookfrom)
-        config.lookat = cam.get("lookat", config.lookat)
-        config.vfov = cam.get("vfov", config.vfov)
-        config.aperture = cam.get("aperture", config.aperture)
-        config.focus_dist = cam.get("focus_dist", config.focus_dist)
-
-    # 3. ENVIRONMENT & SUN
-    if "environment" in data:
-        env = data["environment"]
-        config.env_exposure = env.get("exposure", config.env_exposure)
-        config.env_background = env.get("background_level", env.get("light_level", 1.0))
-        config.env_diffuse = env.get("diffuse_level", env.get("direct_level", 1.0))
-        config.env_specular = env.get("specular_level", env.get("indirect_level", 1.0))
-        
-        # Environnement Rotation (Not in Config yet? Engine only?)
-        # On l'applique directement au moteur
-        rot = env.get("rotation", 0.0)
-        builder.engine.set_env_rotation(rot)
-        
-        config.auto_sun = env.get("auto_sun", config.auto_sun)
-        config.auto_sun_intensity = env.get("sun_intensity", config.auto_sun_intensity)
-        config.auto_sun_radius = env.get("sun_radius", config.auto_sun_radius)
-        config.auto_sun_dist = env.get("sun_dist", config.auto_sun_dist)
-
-        env_map_path = env.get("map_path")
-        env_bg_color = env.get("background_color")
-        
-        if env_map_path:
-             if not os.path.isabs(env_map_path):
-                 # Relative to the SCENE file ideally, or CWD? 
-                 # Current implementation assumes CWD or compatible relative path.
-                 # Let's try to resolve relative to scene file if possible, or CWD.
-                 # For now, stick to CWD logic to match legacy.
-                 env_map_path = os.path.abspath(env_map_path)
-             config.environment = env_map_path
-        elif env_bg_color:
-             config.environment = env_bg_color
+    # 1c. ENVIRONMENT ROTATION (Engine-side)
+    # Config has it, but we need to push it to engine? 
+    # initialize_scene_and_engine calls load_environment later which uses config.environment.rotation.
+    # So we don't need to do it here if load_scene_from_json is followed by setup.
+    # However, load_scene_from_json modifies the config object in place.
     
-    # 4. OBJECTS
+    # 2. OBJECTS
     if "objects" in data:
         for obj in data["objects"]:
             otype = obj.get("type", "unknown")
@@ -515,6 +488,7 @@ def load_scene_from_json(builder, filepath, config):
             metal = obj.get("metallic", 0.0)
             trans = obj.get("transmission", 0.0)
             ior = obj.get("ir", 1.5)
+            
             # Re-construction
             if otype == 'sphere':
                 builder.add_sphere(pos, scale[0], mat, col, roughness=rough, metallic=metal, ir=ior, transmission=trans)
@@ -543,7 +517,6 @@ def load_scene_from_json(builder, filepath, config):
                     builder.registry[oid]['roughness'] = rough
                     builder.registry[oid]['metallic'] = metal
                     builder.registry[oid]['ir'] = ior
-                    builder.registry[oid]['transmission'] = trans
                     builder.registry[oid]['transmission'] = trans
                     # Push material to engine
                     v_col = cpp_engine.Vec3(float(col[0]), float(col[1]), float(col[2]))
@@ -636,38 +609,34 @@ def initialize_scene_and_engine(scene_source=None, args_overrides=None):
         # Setup procédural
         partial = scene_obj.setup(builder)
         # Apply partial to base
+        # SceneConfig is flat, but flat_update in config.update_from_dict handles it!
         if partial:
-            data = {k: v for k, v in asdict(partial).items() if v is not None}
-            for k, v in data.items():
-                if hasattr(base_config, k): setattr(base_config, k, v)
+            base_config.update_from_dict(asdict(partial))
 
     # 3. Apply CLI Overrides (Last interaction)
     # On utilise build_configuration pour merger args_overrides sur base_config
     if args_overrides:
-        # build_configuration attend (args, scene_config)
-        # Ici scene_config est notre base_config déjà remplie
         config = build_configuration(args_overrides, base_config)
     else:
         config = base_config
 
     # 4. Engine Camera Setup
     def v3(l): return cpp_engine.Vec3(float(l[0]), float(l[1]), float(l[2]))
-    aspect = config.width / config.height
-    engine.set_camera(v3(config.lookfrom), v3(config.lookat), v3(config.vup),
-                      float(config.vfov), float(aspect), float(config.aperture), float(config.focus_dist))
+    
+    # Access nested camera settings
+    cam = config.camera
+    rend = config.render
+    
+    # Use safer defaults if scene forgot them
+    aspect = rend.width / rend.height
+    engine.set_camera(v3(cam.lookfrom), v3(cam.lookat), v3(cam.vup),
+                      float(cam.vfov), float(aspect), float(cam.aperture), float(cam.focus_dist))
 
     # 5. Environment Load
-    # Note: Si JSON, load_environment est appelé ici avec les params du config (qui viennent du JSON)
-    load_environment(builder, config.environment, 
-                     env_exposure=config.env_exposure,
-                     env_background=config.env_background, 
-                     env_diffuse=config.env_diffuse, 
-                     env_specular=config.env_specular,
-                     auto_sun=config.auto_sun,
-                     auto_sun_intensity=config.auto_sun_intensity,
-                     auto_sun_radius=config.auto_sun_radius,
-                     auto_sun_dist=config.auto_sun_dist,
-                     clipping_multiplier=config.clipping_multiplier)
+    # Pass the EnvironmentSettings object to load_environment (which needs update)
+    # OR pass fields. 
+    # Let's update load_environment to take the object.
+    load_environment(builder, config.environment)
 
     # 6. Blue Noise
     bn_path = "blue_noise.png"
@@ -681,5 +650,8 @@ def initialize_scene_and_engine(scene_source=None, args_overrides=None):
             engine.set_blue_noise_texture(np.ascontiguousarray(bn_data))
         except Exception as e:
             print(f"[Loader] Warning: Failed to load blue noise texture: {e}")
-                     
+            
+    # Apply global render settings that might affect engine state?
+    # e.g. Sampler type
+    
     return engine, config, builder

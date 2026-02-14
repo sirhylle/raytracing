@@ -152,12 +152,18 @@ def run_single_frame(engine, conf, pool_threads):
     - Polls progress periodically.
     - Saves Raw (Linear) and Processed (PNG) outputs.
     """
-    print(f"[Renderer] Rendering Single Frame {conf.width}x{conf.height} ({conf.spp} spp)...")
+    width = conf.render.width
+    height = conf.render.height
+    spp = conf.render.spp
+    depth = conf.render.depth
+    sampler = conf.render.sampler
+    
+    print(f"[Renderer] Rendering Single Frame {width}x{height} ({spp} spp)...")
     
     result_container = {}
     def render_thread():
         try:
-            result_container['output'] = engine.render(conf.width, conf.height, conf.spp, conf.depth, pool_threads, conf.sampler)
+            result_container['output'] = engine.render(width, height, spp, depth, pool_threads, sampler)
         except Exception as e:
             result_container['error'] = e
 
@@ -192,11 +198,11 @@ def run_single_frame(engine, conf, pool_threads):
     timestamp = datetime.datetime.now().strftime("_%Y%m%d_%H%M%S")
     overlay_txt = None
 
-    if conf.param_stamp:
-        ren_txt = f"Size: {conf.width}x{conf.height} | SPP: {conf.spp} | Depth: {conf.depth} | Time: {duration:.2f}s"
-        sun_txt = f"Sun-Int: {conf.auto_sun_intensity:.2f} | Sun-Rad: {conf.auto_sun_radius:.2f} | Sun-Dist: {conf.auto_sun_dist:.2f} | Clipping: {conf.clipping_multiplier:.2f}" if conf.auto_sun else "Sun: Off"
-        env_txt = f"Env-Exp: {conf.env_exposure:.2f} |  Env-Bck: {conf.env_background:.2f} | Env-Diff: {conf.env_diffuse:.2f} | Env-Spec: {conf.env_specular:.2f}"
-        cam_txt = f"Camera: {[f'{x:.2f}' for x in conf.lookfrom]} -> {[f'{x:.2f}' for x in conf.lookat]} | Aperture: {conf.aperture:.2f} | Focus: {conf.focus_dist:.2f} | VFOV: {conf.vfov:.2f}"
+    if conf.system.param_stamp:
+        ren_txt = f"Size: {width}x{height} | SPP: {spp} | Depth: {depth} | Time: {duration:.2f}s"
+        sun_txt = f"Sun-Int: {conf.environment.sun_intensity:.2f} | Sun-Rad: {conf.environment.sun_radius:.2f} | Sun-Dist: {conf.environment.sun_dist:.2f} | Clipping: {conf.environment.clipping_multiplier:.2f}" if conf.environment.auto_sun else "Sun: Off"
+        env_txt = f"Env-Exp: {conf.environment.exposure:.2f} |  Env-Bck: {conf.environment.background:.2f} | Env-Diff: {conf.environment.diffuse:.2f} | Env-Spec: {conf.environment.specular:.2f}"
+        cam_txt = f"Camera: {[f'{x:.2f}' for x in conf.camera.lookfrom]} -> {[f'{x:.2f}' for x in conf.camera.lookat]} | Aperture: {conf.camera.aperture:.2f} | Focus: {conf.camera.focus_dist:.2f} | VFOV: {conf.camera.vfov:.2f}"
         
         overlay_txt = f"{ren_txt}\n{sun_txt}\n{env_txt}\n{cam_txt}"
     
@@ -204,10 +210,10 @@ def run_single_frame(engine, conf, pool_threads):
     ensure_dir(IMG_DIR)
     
     # Determine what to save based on flags
-    do_save_denoised = conf.keep_denoised
-    do_save_raw = conf.keep_raw
-    do_save_albedo = conf.keep_albedo
-    do_save_normal = conf.keep_normal
+    do_save_denoised = conf.system.keep_denoised
+    do_save_raw = conf.system.keep_raw
+    do_save_albedo = conf.system.keep_albedo
+    do_save_normal = conf.system.keep_normal
 
     # Default behavior: If no flags are provided, save denoised only
     if not (do_save_denoised or do_save_raw or do_save_albedo or do_save_normal):
@@ -249,13 +255,15 @@ def run_animation(engine, conf, pool_threads):
     
     frames_data = [] 
     start_frame = 0
+    total_frames = conf.system.frames
+    fps = conf.system.fps
 
     existing_files = sorted(glob.glob(os.path.join(output_dir, "frame_*.png")))
     num_existing = len(existing_files)
 
     if num_existing > 0:
         print(f"\n[Info] Found {num_existing} existing frames.")
-        if num_existing < conf.frames:
+        if num_existing < total_frames:
             # Assuming resume for now, not asking for interactive input to simplify.
             # Or force recompile if necessary.
             # In doubt, resume.
@@ -265,14 +273,14 @@ def run_animation(engine, conf, pool_threads):
                     frames_data.append(np.array(Image.open(fpath).convert('RGB')))
         else:
             print("All frames exist. Compiling only.")
-            for fpath in existing_files[:conf.frames]:
+            for fpath in existing_files[:total_frames]:
                     frames_data.append(np.array(Image.open(fpath).convert('RGB')))
-            start_frame = conf.frames
+            start_frame = total_frames
 
-    print(f"Animation loop: {start_frame} -> {conf.frames}")
+    print(f"Animation loop: {start_frame} -> {total_frames}")
 
-    center_pos = np.array(conf.lookfrom)
-    target_pos = np.array(conf.lookat)
+    center_pos = np.array(conf.camera.lookfrom)
+    target_pos = np.array(conf.camera.lookat)
     forward = target_pos - center_pos
     forward /= np.linalg.norm(forward)
     world_up = np.array([0, 1, 0])
@@ -280,24 +288,26 @@ def run_animation(engine, conf, pool_threads):
     right /= np.linalg.norm(right)
     up = np.cross(right, forward)
     def v3(v): return cpp_engine.Vec3(float(v[0]), float(v[1]), float(v[2]))
+    
+    turntable_radius = conf.system.turntable_radius
 
-    for i in range(start_frame, conf.frames):
-        print(f"--- Frame {i+1}/{conf.frames} ---")
+    for i in range(start_frame, total_frames):
+        print(f"--- Frame {i+1}/{total_frames} ---")
         
-        t = (i / conf.frames) * 2 * math.pi
-        offset = conf.radius * (math.cos(t) * right + math.sin(t) * up)
-        engine.set_camera(v3(center_pos + offset), v3(target_pos), v3(conf.vup), 
-                          float(conf.vfov), float(conf.width/conf.height), 
-                          float(conf.aperture), float(conf.focus_dist))
+        t = (i / total_frames) * 2 * math.pi
+        offset = turntable_radius * (math.cos(t) * right + math.sin(t) * up)
+        engine.set_camera(v3(center_pos + offset), v3(target_pos), v3(conf.camera.vup), 
+                          float(conf.camera.vfov), float(conf.render.width/conf.render.height), 
+                          float(conf.camera.aperture), float(conf.camera.focus_dist))
         
         try:
             # Determine saving preference
-            do_save_denoised = conf.keep_denoised
-            do_save_raw = conf.keep_raw
+            do_save_denoised = conf.system.keep_denoised
+            do_save_raw = conf.system.keep_raw
             if not (do_save_denoised or do_save_raw):
                 do_save_denoised = True
 
-            outputs = engine.render(conf.width, conf.height, conf.spp, conf.depth, pool_threads, conf.sampler)
+            outputs = engine.render(conf.render.width, conf.render.height, conf.render.spp, conf.render.depth, pool_threads, conf.render.sampler)
             raw = outputs['color']
             
             clean = None
@@ -333,17 +343,17 @@ def run_animation(engine, conf, pool_threads):
         print("Compiling video...")
         timestamp = datetime.datetime.now().strftime("_%Y%m%d_%H%M%S")
         vid_path = os.path.join(VIDEO_DIR, f'animation{timestamp}.mp4')
-        imageio.mimsave(vid_path, frames_data, fps=conf.fps, ffmpeg_params=['-crf', '18'])
+        imageio.mimsave(vid_path, frames_data, fps=fps, ffmpeg_params=['-crf', '18'])
         print(f"Done: {vid_path}")
 
 def run(engine, config):
     # Setup Threads
-    pool_threads = config.threads
-    if pool_threads == 0 and config.leave_cores > 0:
-        pool_threads = max(1, multiprocessing.cpu_count() - config.leave_cores)
+    pool_threads = config.system.threads
+    if pool_threads == 0 and config.system.leave_cores > 0:
+        pool_threads = max(1, multiprocessing.cpu_count() - config.system.leave_cores)
     print(f"[Renderer] Using {pool_threads} threads.")
 
-    if config.animate:
+    if config.system.animate:
         run_animation(engine, config, pool_threads)
     else:
         run_single_frame(engine, config, pool_threads)

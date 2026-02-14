@@ -26,6 +26,12 @@ class SceneConfig:
     env_background: float = 1.0     
     env_diffuse: float = 0.5    
     env_specular: float = 0.5    
+    
+    # Auto Sun
+    auto_sun: bool = False
+    auto_sun_intensity: float = 50.0
+    auto_sun_radius: float = 50.0
+    auto_sun_dist: float = 1000.0
 
     
 # Helper to unpack preset
@@ -218,6 +224,24 @@ class Empty(Scene):
             environment="env-dock-sun.hdr", env_exposure=1.0, env_background=1.0, env_diffuse=0.6, env_specular=2.0
         )
 
+class Outdoor(Scene):
+    def setup(self, builder, config_overrides: dict = None) -> SceneConfig:
+        def v3(x, y, z): return cpp_engine.Vec3(float(x), float(y), float(z))
+        
+        # Floor
+        builder.add_checker_sphere(v3(0, -1000.5, 0), 1000.0, [0.2, 0.3, 0.1], [0.9, 0.9, 0.9], 10.0)
+        
+        return SceneConfig(
+            lookfrom=[0, 1, 3], lookat=[0, 0, 0], vfov=40.0,
+            # Auto Sun Environment
+            environment=None, # No map
+            env_background=1.0, env_diffuse=1.0, env_specular=1.0,
+            auto_sun=True,
+            auto_sun_intensity=50.0,
+            auto_sun_radius=10.0,
+            auto_sun_dist=1000.0
+        )
+
 class MeshScene1(Scene):
     def setup(self, builder, config_overrides: dict = None) -> SceneConfig:
         builder.add_checker_sphere(cpp_engine.Vec3(0.0, -100, -1.0), 100.0, [0.2, 0.3, 0.1], [0.9, 0.9, 0.9], 10.0)
@@ -307,6 +331,7 @@ class Basic(Scene):
 
 AVAILABLE_SCENES = {
     "cornell": CornellBox(),
+    "outdoor": Outdoor(),
     "random": RandomSpheres(),
     "showcase": MaterialsShowcase(),
     "mesh1": MeshScene1(),

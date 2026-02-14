@@ -23,7 +23,11 @@ def build(ui_list, start_y, state, engine, on_start_render):
 
     # Config access helpers (with getattr/setattr to handle optional params)
     def get_c(k, default): return getattr(state.conf, k, default)
-    def set_c(k, v): setattr(state.conf, k, v); state.dirty = True ; state.needs_ui_rebuild = True
+    def set_c(k, v): 
+        setattr(state.conf, k, v)
+        # Changing generic config usually requires generic reset
+        state.needs_render_reset = True 
+        state.needs_ui_rebuild = True
 
     # ==================== 1. OUTPUT (Résolution) ====================
     if draw_header("OUTPUT", "OUTPUT"):
@@ -32,13 +36,13 @@ def build(ui_list, start_y, state, engine, on_start_render):
         
         # W
         ui_list.append(NumberField(VIEW_W+80, ys, 40, 22, 
-                                   lambda: state.conf.width, 
-                                   lambda v: state.update_resolution(v, state.conf.height), fmt="{:.0f}"))
+                                   lambda: state.conf.render.width, 
+                                   lambda v: state.update_resolution(v, state.conf.render.height), fmt="{:.0f}"))
         lbl(ui_list, 125, ys+4, "x", 12)
         # H
         ui_list.append(NumberField(VIEW_W+135, ys, 40, 22, 
-                                   lambda: state.conf.height, 
-                                   lambda v: state.update_resolution(state.conf.width, v), fmt="{:.0f}"))
+                                   lambda: state.conf.render.height, 
+                                   lambda v: state.update_resolution(state.conf.render.width, v), fmt="{:.0f}"))
         ys += 30
         
         # Presets
@@ -51,12 +55,12 @@ def build(ui_list, start_y, state, engine, on_start_render):
         ys += 40
         
         # --- Output Options (Save Raw / Stamp) ---
-        # Checkboxes
-        is_raw = get_c('save_raw', False)
-        btn(ui_list, 10, ys, 140, 24, "Save Raw", lambda: set_c('save_raw', not is_raw), toggle=True, active=is_raw)
+        # These affect file saving only, NO render reset needed
+        is_raw = state.conf.system.keep_raw
+        btn(ui_list, 10, ys, 140, 24, "Save Raw", lambda: setattr(state.conf.system, 'keep_raw', not is_raw), toggle=True, active=is_raw)
         
-        is_stamp = get_c('param_stamp', False)
-        btn(ui_list, 160, ys, 140, 24, "Stamp Params", lambda: set_c('param_stamp', not is_stamp), toggle=True, active=is_stamp)
+        is_stamp = state.conf.system.param_stamp
+        btn(ui_list, 160, ys, 140, 24, "Stamp Params", lambda: setattr(state.conf.system, 'param_stamp', not is_stamp), toggle=True, active=is_stamp)
         
         ys += 40
 
@@ -64,20 +68,40 @@ def build(ui_list, start_y, state, engine, on_start_render):
     if draw_header("QUALITY", "QUALITY"):
         # SPP
         lbl(ui_list, 10, ys+4, "Max Samples", 12, COL_TEXT_DIM)
+        # Changing SPP -> Needs Render Reset if we are already above new SPP? 
+        # Actually SPP limit change doesn't invalidate current image, just stops/starts accumulation.
+        # But let's be safe/consistent: usually user wants to restart if they change quality settings.
+        # Or better: changing SPP target just allows accumulation to continue or stop. No reset needed.
+        # But `set_c` does reset. Let's use custom lambda for SPP.
+        def set_spp(v):
+             state.conf.render.spp = int(v)
+             # No render reset needed, just logic check in main loop
+             
         ui_list.append(NumberField(VIEW_W+100, ys, 60, 22, 
-                                   lambda: state.conf.spp, lambda v: set_c('spp', int(v)), fmt="{:.0f}"))
+                                   lambda: state.conf.render.spp, lambda v: set_spp(v), fmt="{:.0f}"))
         ys += 30
         
         # Depth
         lbl(ui_list, 10, ys+4, "Max Bounces", 12, COL_TEXT_DIM)
+        # Changing Depth -> NEEDS Reset
+        def set_depth(v):
+             state.conf.render.depth = int(v)
+             state.needs_render_reset = True
+             
         ui_list.append(NumberField(VIEW_W+100, ys, 60, 22, 
-                                   lambda: state.conf.depth, lambda v: set_c('depth', int(v)), fmt="{:.0f}"))
+                                   lambda: state.conf.render.depth, lambda v: set_depth(v), fmt="{:.0f}"))
         ys += 30
 
         # Offline Sampler
         lbl(ui_list, 10, ys+3, "Offline Sampler", 12, COL_TEXT_DIM)
         grp_samp = []
-        def set_render_samp(v): state.render_sampler = v
+        def set_render_samp(v): 
+             state.render_sampler = v
+             # Changing sampler (if used for offline) -> Does it affect preview? 
+             # `state.render_sampler` is for Offline render. 
+             # `preview_sampler` is for Preview.
+             # So NO reset for preview.
+        
         # 0=Random, 1=Sobol
         btn(ui_list, 100, ys, 80, 22, "Random", set_render_samp, 0, True, grp_samp, (state.render_sampler==0)).corners={'tl':4, 'bl':4}
         btn(ui_list, 180, ys, 80, 22, "Sobol",  set_render_samp, 1, True, grp_samp, (state.render_sampler==1)).corners={'tr':4, 'br':4}
@@ -86,28 +110,30 @@ def build(ui_list, start_y, state, engine, on_start_render):
     # ==================== 3. ANIMATION (New) ====================
     # Use a switch in the header to toggle animation
     def toggle_anim(): 
-        current = get_c('animate', False)
-        set_c('animate', not current)
+        current = state.conf.system.animate
+        state.conf.system.animate = not current
+        state.needs_ui_rebuild = True
+        # Animation settings don't change current image -> No Render Reset
 
-    is_anim = get_c('animate', False)
+    is_anim = state.conf.system.animate
     if draw_header("ANIMATION", "ANIMATION", ("ON" if is_anim else "OFF", toggle_anim, is_anim)):
         if is_anim:
-            # Frames
+            # Frames (No reset)
             lbl(ui_list, 10, ys+4, "Total Frames", 12, COL_TEXT_DIM)
             ui_list.append(NumberField(VIEW_W+100, ys, 60, 22, 
-                                       lambda: get_c('frames', 120), lambda v: set_c('frames', int(v)), fmt="{:.0f}"))
+                                       lambda: state.conf.system.frames, lambda v: setattr(state.conf.system, 'frames', int(v)), fmt="{:.0f}"))
             ys += 30
 
-            # FPS
+            # FPS (No reset)
             lbl(ui_list, 10, ys+4, "Framerate", 12, COL_TEXT_DIM)
             ui_list.append(NumberField(VIEW_W+100, ys, 60, 22, 
-                                       lambda: get_c('fps', 24), lambda v: set_c('fps', int(v)), fmt="{:.0f}"))
+                                       lambda: state.conf.system.fps, lambda v: setattr(state.conf.system, 'fps', int(v)), fmt="{:.0f}"))
             ys += 30
             
             # Turntable Radius (Distance caméra pour le tour)
             lbl(ui_list, 10, ys+4, "Turntable Dist", 12, COL_TEXT_DIM)
             ui_list.append(NumberField(VIEW_W+100, ys, 60, 22, 
-                                       lambda: get_c('radius', 0.0), lambda v: set_c('radius', v), fmt="{:.2f}"))
+                                       lambda: state.conf.system.turntable_radius, lambda v: setattr(state.conf.system, 'turntable_radius', v), fmt="{:.2f}"))
             ys += 30
             
             lbl(ui_list, 10, ys, "Note: Rotating Camera around (0,0,0)", 11, (100,100,100))
@@ -122,31 +148,30 @@ def build(ui_list, start_y, state, engine, on_start_render):
         lbl(ui_list, 10, ys+4, "CPU Threads", 12, COL_TEXT_DIM)
         # 0 = Auto
         ui_list.append(NumberField(VIEW_W+100, ys, 60, 22, 
-                                   lambda: get_c('threads', 0), lambda v: set_c('threads', int(v)), fmt="{:.0f}"))
+                                   lambda: state.conf.system.threads, lambda v: setattr(state.conf.system, 'threads', int(v)), fmt="{:.0f}"))
         lbl(ui_list, 170, ys+4, "(0=Auto)", 11, (100,100,100))
         ys += 30
 
         # Leave Cores
         lbl(ui_list, 10, ys+4, "Leave Cores", 12, COL_TEXT_DIM)
         ui_list.append(NumberField(VIEW_W+100, ys, 60, 22, 
-                                   lambda: get_c('leave_cores', 0), lambda v: set_c('leave_cores', int(v)), fmt="{:.0f}"))
+                                   lambda: state.conf.system.leave_cores, lambda v: setattr(state.conf.system, 'leave_cores', int(v)), fmt="{:.0f}"))
         lbl(ui_list, 170, ys+4, "(Keep n cores free)", 11, (100,100,100))
         ys += 30
 
         # Epsilon
         lbl(ui_list, 10, ys+4, "Ray Epsilon", 12, COL_TEXT_DIM)
         ui_list.append(NumberField(VIEW_W+100, ys, 60, 22, 
-                                   lambda: state.epsilon, lambda v: state.update_epsilon(v), fmt="{:.4f}"))
+                                   lambda: state.conf.system.epsilon, lambda v: state.update_epsilon(v), fmt="{:.4f}"))
         lbl(ui_list, 170, ys+4, "(Bias, decrease if light bleeding)", 11, (100,100,100))
         ys += 30
 
         # Firefly Clamp
         lbl(ui_list, 10, ys+4, "Firefly Clamp", 12, COL_TEXT_DIM)
         ui_list.append(NumberField(VIEW_W+100, ys, 60, 22, 
-                                   lambda: state.firefly_clamp, lambda v: state.update_firefly_clamp(v), fmt="{:.1f}"))
+                                   lambda: state.conf.system.firefly_clamp, lambda v: state.update_firefly_clamp(v), fmt="{:.1f}"))
         lbl(ui_list, 170, ys+4, "(Max Intensity)", 11, (100,100,100))
         ys += 40
-        
         
         # --- BVH Strategy ---
         # Place this BEFORE Raw/Stamp buttons
@@ -160,6 +185,10 @@ def build(ui_list, start_y, state, engine, on_start_render):
             state.bvh_type = mode_str
             m = cpp_engine.SplitMethod.SAH if mode_str == "SAH" else cpp_engine.SplitMethod.Midpoint
             engine.set_build_method(m)
+            # BVH Rebuild -> Needs Render Reset (and potentially scene reload which is hard... 
+            # actually set_build_method just sets a flag for NEXT build)
+            # Let's just repaint UI.
+            state.needs_repaint = True
         
         grp_bvh = []
         # Buttons: Midpoint | SAH

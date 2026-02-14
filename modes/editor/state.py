@@ -28,6 +28,7 @@ import tkinter as tk
 from tkinter import filedialog
 import loader
 import meshloader
+import serializer
 import os
 import json
 import copy
@@ -39,6 +40,7 @@ class EditorState:
         self.builder = builder 
         self.res_scale = 1
         self.current_fps = 0.0
+        self.res_stability = 0 # Counter for auto-scaling hysteresis (jitter filter)
         self.res_auto = True
         self.preview_mode = 0 
         self.preview_depth = 6
@@ -46,12 +48,12 @@ class EditorState:
         self.render_sampler = 1  # 0=Random, 1=Sobol 
 
         # --- VIEWPORT LOGIC ---
-        self.target_aspect = conf.width / conf.height
+        self.target_aspect = conf.render.width / conf.render.height
         self.viewport_rect = None
         
         # Camera
-        self.cam_pos = np.array(conf.lookfrom, dtype=np.float32)
-        target = np.array(conf.lookat, dtype=np.float32)
+        self.cam_pos = np.array(conf.camera.lookfrom, dtype=np.float32)
+        target = np.array(conf.camera.lookat, dtype=np.float32)
         direction = target - self.cam_pos
         length = np.linalg.norm(direction)
         # --- ADAPTIVE MOVE SPEED ---
@@ -61,9 +63,9 @@ class EditorState:
         direction = direction / length if length > 0 else np.array([0, 0, -1])
         self.pitch = math.asin(np.clip(direction[1], -0.99, 0.99))
         self.yaw = math.atan2(direction[0], direction[2])
-        self.vfov = conf.vfov
-        self.aperture = conf.aperture
-        self.focus_dist = conf.focus_dist
+        self.vfov = conf.camera.vfov
+        self.aperture = conf.camera.aperture
+        self.focus_dist = conf.camera.focus_dist
         
         # UI State
         self.picking_focus = False
@@ -71,7 +73,11 @@ class EditorState:
         self.gizmo_mode = "MOVE"
         self.active_tab = "SCENE"
         self.typing_mode = False 
+        # Reset State
+        self.needs_render_reset = True
         self.needs_ui_rebuild = True
+        self.needs_repaint = True
+        self.accum_spp = 0
         self.axis_mode = "LOCAL" # "NONE", "LOCAL", "GLOBAL"
         
         # --- EXCLUSIVE ACCORDION MANAGEMENT ---
@@ -83,8 +89,15 @@ class EditorState:
             "RENDER": "OUTPUT" # On ouvre "Output" par défaut
         }
 
-        # Rendering State
-        self.dirty = True
+        # Rendering & IO State
+        # GRANULAR DIRTY FLAGS (UI Refactor)
+        self.needs_ui_rebuild = True   # Layout changed -> Rebuild UI list
+        self.needs_repaint = True      # Visual change -> Redraw screen
+
+
+
+
+        
         self.accum_spp = 0
         self.is_rendering = False
         self.ray_batch_size = 2 
@@ -92,17 +105,17 @@ class EditorState:
 
         # --- ENVIRONMENT & SUN ---
         self.env_rotation = 0.0
-        self.env_exposure = conf.env_exposure
-        self.env_background = conf.env_background
-        self.env_diffuse = conf.env_diffuse
-        self.env_specular = conf.env_specular
+        self.env_exposure = conf.environment.exposure
+        self.env_background = conf.environment.background
+        self.env_diffuse = conf.environment.diffuse
+        self.env_specular = conf.environment.specular
         
         self.sun_id = -1
-        self.sun_enabled = conf.auto_sun
-        self.sun_intensity = conf.auto_sun_intensity
-        self.sun_radius = conf.auto_sun_radius
-        self.sun_dist = conf.auto_sun_dist
-        self.env_clipping_multiplier = conf.clipping_multiplier if hasattr(conf, 'clipping_multiplier') else 20.0
+        self.sun_enabled = conf.environment.auto_sun
+        self.sun_intensity = conf.environment.sun_intensity
+        self.sun_radius = conf.environment.sun_radius
+        self.sun_dist = conf.environment.sun_dist
+        self.env_clipping_multiplier = conf.environment.clipping_multiplier if hasattr(conf.environment, 'clipping_multiplier') and conf.environment.clipping_multiplier is not None else 20.0
         self.env_clipping_enabled = True # Remplacé par True par défaut pour l'instant
         self.env_median_luminance = 0.0 
 
@@ -147,6 +160,7 @@ class EditorState:
         if self.active_tab != tab_name:
             self.active_tab = tab_name
             self.needs_ui_rebuild = True
+            self.needs_repaint = True
 
     def toggle_accordion(self, tab, section_name):
         """Opens 'section_name' in 'tab' and closes others. If already open, closes it."""
@@ -155,6 +169,7 @@ class EditorState:
         else:
             self.accordions[tab] = section_name
         self.needs_ui_rebuild = True
+        self.needs_repaint = True
 
     def is_accordion_open(self, tab, section_name):
         return self.accordions.get(tab) == section_name
@@ -190,16 +205,16 @@ class EditorState:
 
     def update_resolution(self, w, h):
         """Change la résolution et recalcule le viewport dynamique."""
-        self.conf.width = int(w)
-        self.conf.height = int(h)
-        self.target_aspect = self.conf.width / self.conf.height
+        self.conf.render.width = int(w)
+        self.conf.render.height = int(h)
+        self.target_aspect = self.conf.render.width / self.conf.render.height
 
         # On recalcule le rectangle d'affichage (Letterboxing)
         # Note: On a besoin de VIEW_W/H. Ils sont importés depuis ui_core.
         self.calculate_viewport(VIEW_W, VIEW_H)
         
         # On force la mise à jour caméra (pour le nouvel aspect ratio)
-        self.dirty = True
+        self.needs_render_reset = True
         self.accum_spp = 0
         if hasattr(self.builder.engine, 'reset_accumulation'): 
             self.builder.engine.reset_accumulation()
@@ -215,14 +230,16 @@ class EditorState:
         engine.update_instance_transform(self.selected_id, 
                                          np.ascontiguousarray(M, dtype=np.float32), 
                                          np.ascontiguousarray(InvM, dtype=np.float32))
-        self.dirty = True
+        self.needs_render_reset = True
+        self.needs_repaint = True
 
     def update_epsilon(self, val):
         try:
             val = float(val)
             self.epsilon = val
             cpp_engine.set_epsilon(val)
-            self.dirty = True
+            self.needs_render_reset = True
+            self.needs_repaint = True
             # Might need accumulation reset? Generally yes for geometry intersections issues
             if hasattr(self.builder.engine, 'reset_accumulation'): self.builder.engine.reset_accumulation()
         except Exception as e:
@@ -233,7 +250,8 @@ class EditorState:
             val = float(val)
             self.firefly_clamp = val
             cpp_engine.set_firefly_clamp(val)
-            self.dirty = True
+            self.needs_render_reset = True
+            self.needs_repaint = True
             if hasattr(self.builder.engine, 'reset_accumulation'): self.builder.engine.reset_accumulation()
         except Exception as e:
             print(f"Error setting firefly clamp: {e}")
@@ -254,7 +272,8 @@ class EditorState:
         cdisp  = d.get('dispersion', 0.0)
         
         engine.update_instance_material(self.selected_id, ctype, cpp_engine.Vec3(*ccol), crough, cmetal, cir, ctrans, cdisp)
-        self.dirty = True
+        self.needs_render_reset = True
+        self.needs_repaint = True
 
     def load_new_env_map(self, engine):
         root = tk.Tk(); root.withdraw(); root.attributes('-topmost', True)
@@ -263,7 +282,7 @@ class EditorState:
         if not file_path: return
         
         # Update Config for persistence
-        self.conf.environment = file_path
+        self.conf.environment.source = file_path
 
         # Nettoyage ancien soleil
         if self.sun_id != -1:
@@ -274,11 +293,7 @@ class EditorState:
 
         # Chargement via Loader
         median = loader.load_environment(
-            self.builder, file_path,
-            env_diffuse=self.env_diffuse, env_background=self.env_background, env_specular=self.env_specular,
-            auto_sun=self.sun_enabled, auto_sun_intensity=self.sun_intensity, auto_sun_radius=self.sun_radius,
-            auto_sun_dist=self.sun_dist,
-            clipping_multiplier=self.env_clipping_multiplier
+            self.builder, self.conf.environment  # Pass the object!
         )
         self.env_median_luminance = median
         
@@ -291,12 +306,17 @@ class EditorState:
                 if dist > 0: self.sun_initial_dir = pos / dist
                 self.sun_base_color = info['raw_color']
                 break
-        
-        self.sun_enabled = (self.sun_id != -1)
-        self.env_rotation = 0.0
-        self.update_environment(engine)
+        # Reset State
+        self.selected_id = -1
+        self.gizmo_mode = "MOVE"
+        self.needs_render_reset = True
+        self.needs_ui_rebuild = True
+        self.needs_repaint = True
+        self.accum_spp = 0
         if hasattr(engine, 'reset_accumulation'): engine.reset_accumulation()
         self.accum_spp = 0
+        self.needs_render_reset = True
+        self.needs_ui_rebuild = True # To refresh sun params if needed
 
     def update_environment(self, engine):
         # NEW: Direct Pass-Through (No Swapping)
@@ -357,7 +377,8 @@ class EditorState:
             r, g, b = self.sun_base_color[0] * scale, self.sun_base_color[1] * scale, self.sun_base_color[2] * scale
             engine.update_instance_material(self.sun_id, "invisible_light", cpp_engine.Vec3(r, g, b), 0.0, 1.0)
             
-        self.dirty = True
+        self.needs_render_reset = True
+        self.needs_repaint = True
 
     def duplicate_selection(self, engine):
         """Duplicates the selected object via the Builder."""
@@ -432,10 +453,12 @@ class EditorState:
             self.selected_id = new_id
             self.gizmo_mode = "MOVE"
             
-            # On force une mise à jour visuelle
-            self.needs_ui_rebuild = True
-            self.dirty = True
-            print(f"Duplicate: ID {self.selected_id} created.")
+            # 5. Sélection du nouvel objet
+            self.selected_id = new_id
+            self.needs_render_reset = True
+            self.needs_ui_rebuild = True # New selection -> UI Update
+            self.needs_repaint = True
+            print(f"[Editor] Duplicated object {self.selected_id} -> {new_id}")
 
     def load_mesh_dialog(self, engine):
         """Ouvre un dialogue pour charger un mesh .obj/.glb etc."""
@@ -469,8 +492,10 @@ class EditorState:
                 self.selected_id = new_id
                 self.gizmo_mode = "MOVE"
                 self.set_active_tab("OBJECT")
-                self.dirty = True
-                self.needs_ui_rebuild = True
+                self.gizmo_mode = "MOVE"
+                self.set_active_tab("OBJECT")
+                self.scene_dirty = True
+                self.ui_dirty = True
 
     def add_primitive(self, type_key):
         """Crée un objet devant la caméra."""
@@ -582,117 +607,54 @@ class EditorState:
             self.selected_id = new_id
             self.gizmo_mode = "MOVE"
             self.set_active_tab("OBJECT") # On switch sur l'onglet objet pour l'éditer direct
-            self.dirty = True
-            self.needs_ui_rebuild = True
+            self.set_active_tab("OBJECT") # On switch sur l'onglet objet pour l'éditer direct
+            self.scene_dirty = True
+            self.ui_dirty = True
             
     # --- SAVE / LOAD SYSTEM ---
 
     def save_scene(self, filepath):
-        """Sérialise la scène complète en JSON, incluant la config de rendu."""
+        """Sérialise la scène complète en JSON via le Serializer."""
         
-        # 1. Calcul du LookAt actuel (depuis yaw/pitch)
+        # 1. Sync State -> Config
+        # Camera
         fx = math.sin(self.yaw) * math.cos(self.pitch)
         fy = math.sin(self.pitch)
         fz = math.cos(self.yaw) * math.cos(self.pitch)
         target = self.cam_pos + np.array([fx, fy, fz])
+        
+        self.conf.camera.lookfrom = self.cam_pos.tolist()
+        self.conf.camera.lookat = target.tolist()
+        self.conf.camera.vfov = self.vfov
+        self.conf.camera.aperture = self.aperture
+        self.conf.camera.focus_dist = self.focus_dist
+        
+        # Environment (State overrides Config)
+        self.conf.environment.exposure = self.env_exposure
+        self.conf.environment.background = self.env_background
+        self.conf.environment.diffuse = self.env_diffuse
+        self.conf.environment.specular = self.env_specular
+        self.conf.environment.rotation = self.env_rotation
+        
+        self.conf.environment.auto_sun = self.sun_enabled
+        self.conf.environment.sun_intensity = self.sun_intensity
+        self.conf.environment.sun_radius = self.sun_radius
+        self.conf.environment.sun_dist = self.sun_dist
+        self.conf.environment.clipping_multiplier = self.env_clipping_multiplier
 
-        # Pre-process environment for JSON compliance
-        env_val = self.conf.environment
-        if isinstance(env_val, np.ndarray):
-            env_val = env_val.tolist()
-        elif isinstance(env_val, tuple):
-            env_val = list(env_val)
+        # System
+        self.conf.system.epsilon = self.epsilon
+        self.conf.system.firefly_clamp = self.firefly_clamp
 
-        # 2. Dictionary Construction
-        data = {
-            "version": "1.2", # PBR Update
-            
-            # A. Global Parameters (Render, System, Animation)
-            "render_settings": {
-                # Render
-                "width": self.conf.width,
-                "height": self.conf.height,
-                "spp": self.conf.spp,
-                "depth": self.conf.depth,
-                "preview_sampler": self.preview_sampler,
-                "render_sampler": self.render_sampler,
-                
-                # System
-                "param_stamp": getattr(self.conf, 'param_stamp', False),
-                "save_raw": getattr(self.conf, 'save_raw', False),
-                
-                # Animation
-                "animate": getattr(self.conf, 'animate', False),
-                "frames": getattr(self.conf, 'frames', 0),
-                "fps": getattr(self.conf, 'fps', 24),
-                "turntable_radius": getattr(self.conf, 'radius', 0.0) # Renommé pour clarté
-            },
-            
-            # A2. System Vars
-            "system": {
-                "epsilon": self.epsilon,
-                "firefly_clamp": self.firefly_clamp
-            },
-
-            # B. Caméra
-            "camera": {
-                "lookfrom": self.cam_pos.tolist(),
-                "lookat": target.tolist(),
-                "vfov": self.vfov,
-                "aperture": self.aperture,
-                "focus_dist": self.focus_dist
-            },
-
-            # C. Environnement
-            "environment": {
-                "map_path": os.path.relpath(env_val, os.getcwd()) if (isinstance(env_val, str) and os.path.exists(env_val)) else (env_val if isinstance(env_val, str) else None),
-                "background_color": env_val if isinstance(env_val, list) else None,
-                "exposure": self.env_exposure,
-                "background_level": self.env_background,
-                "diffuse_level": self.env_diffuse,
-                "specular_level": self.env_specular,
-                "rotation": self.env_rotation,
-                "auto_sun": self.sun_enabled,
-                "sun_intensity": self.sun_intensity,
-                "sun_radius": self.sun_radius,
-                "sun_dist": self.sun_dist
-            },
-
-            # D. Liste des Objets (inchangé)
-            "objects": []
-        }
-
-        # 3. Remplissage des objets
-        cwd = os.getcwd()
-        for oid, info in self.builder.registry.items():
-            if info['type'] == 'light_sun': continue # Géré par Environment
-
-            obj_data = copy.deepcopy(info)
-            # Chemins relatifs pour les assets
-            if 'asset_name' in obj_data:
-                if os.path.exists(obj_data['asset_name']):
-                    obj_data['asset_name'] = os.path.relpath(obj_data['asset_name'], cwd)
-            
-            data["objects"].append(obj_data)
-
-        # 4. Écriture
+        # 2. Serialize
         try:
-            with open(filepath, 'w') as f:
-                json.dump(data, f, indent=4)
-            print(f"[System] Scene saved to {filepath}")
+             serializer.serialize_scene(self.conf, self.builder, filepath)
         except Exception as e:
-            print(f"[System] Save Failed: {e}")
+             print(f"[System] Save Failed: {e}")
     
     def load_scene(self, filepath):
-        """Charge une scène JSON et restaure la config complète."""
+        """Charge une scène JSON via Loader et sync le State."""
         if not os.path.exists(filepath): return
-
-        try:
-            with open(filepath, 'r') as f:
-                data = json.load(f)
-        except Exception as e:
-            print(f"[System] Load Failed: {e}")
-            return
 
         print(f"[System] Loading scene: {filepath}...")
 
@@ -704,99 +666,68 @@ class EditorState:
         self.selected_id = -1
         self.sun_id = -1
 
-        # 2. RESTAURATION SETTINGS [MIS A JOUR]
-        if "render_settings" in data:
-            rs = data["render_settings"]
-            
-            # Render
-            self.conf.width = rs.get("width", self.conf.width)
-            self.conf.height = rs.get("height", self.conf.height)
-            self.conf.spp = rs.get("spp", self.conf.spp)
-            self.conf.depth = rs.get("depth", self.conf.depth)
-            
-            # System
-            if "param_stamp" in rs: self.conf.param_stamp = rs["param_stamp"]
-            if "save_raw" in rs: self.conf.save_raw = rs["save_raw"]
-            
-            # Animation
-            if "animate" in rs: self.conf.animate = rs["animate"]
-            if "frames" in rs: self.conf.frames = rs["frames"]
-            if "fps" in rs: self.conf.fps = rs["fps"]
-            if "turntable_radius" in rs: self.conf.radius = rs["turntable_radius"]
-            
-            # Samplers
-            self.preview_sampler = rs.get("preview_sampler", self.preview_sampler)
-            self.render_sampler = rs.get("render_sampler", self.render_sampler)
-            # Update RenderConfig for offline
-            self.conf.sampler = self.render_sampler
+        # 2. Utilisation du Loader standard (qui met à jour self.conf et builder)
+        # Note: loader.load_scene_from_json ne gère pas le nettoyage instance C++ (fait au dessus)
+        # Mais il peuple le registre et la config.
+        try:
+             # On réutilise le code de Loader
+             import json
+             with open(filepath, 'r') as f:
+                  data = json.load(f)
+        except Exception as e:
+             print(f"Load failed: {e}")
+             return
 
-            # System Vars
-            if "system" in data:
-                 sys_conf = data["system"]
-                 if "epsilon" in sys_conf: self.update_epsilon(sys_conf["epsilon"])
-                 if "firefly_clamp" in sys_conf: self.update_firefly_clamp(sys_conf["firefly_clamp"])
+        # Mise à jour Config
+        loader.load_scene_from_json(self.builder, filepath, self.conf)
 
-            # Mise à jour Aspect Ratio Viewport
-            if self.conf.height > 0:
-                self.target_aspect = self.conf.width / self.conf.height
-
-        # 3. RESTAURATION CAMÉRA (inchangé)
-        cam = data["camera"]
-        self.cam_pos = np.array(cam["lookfrom"], dtype=np.float32)
-        target = np.array(cam["lookat"], dtype=np.float32)
+        # 3. SYNC STATE FROM CONFIG
+        
+        # Caméra
+        self.cam_pos = np.array(self.conf.camera.lookfrom, dtype=np.float32)
+        target = np.array(self.conf.camera.lookat, dtype=np.float32)
         direction = target - self.cam_pos
         length = np.linalg.norm(direction)
         direction = direction / length if length > 0 else np.array([0, 0, -1])
         self.pitch = math.asin(np.clip(direction[1], -0.99, 0.99))
         self.yaw = math.atan2(direction[0], direction[2])
-        
-        self.vfov = cam.get("vfov", 40)
-        self.aperture = cam.get("aperture", 0.0)
-        self.focus_dist = cam.get("focus_dist", 10.0)
+        self.vfov = self.conf.camera.vfov
+        self.aperture = self.conf.camera.aperture
+        self.focus_dist = self.conf.camera.focus_dist
         self.move_speed = max(1.0, length * 0.8)
 
-        # 4. RESTAURATION ENVIRONNEMENT
-        env = data["environment"]
-        self.env_exposure = env.get("exposure", 1.0)
-        self.env_background = env.get("background_level", env.get("light_level", 1.0)) # Legacy mapping: light_level -> background
-        self.env_diffuse = env.get("diffuse_level", env.get("direct_level", 1.0)) # Legacy mapping: direct_level -> diffuse
-        self.env_specular = env.get("specular_level", env.get("indirect_level", 1.0)) # Legacy mapping: indirect_level -> specular
+        # Environment
+        self.env_exposure = self.conf.environment.exposure
+        self.env_background = self.conf.environment.background
+        self.env_diffuse = self.conf.environment.diffuse
+        self.env_specular = self.conf.environment.specular
+        self.env_rotation = self.conf.environment.rotation
+        self.sun_enabled = self.conf.environment.auto_sun
+        self.sun_intensity = self.conf.environment.sun_intensity
+        self.sun_radius = self.conf.environment.sun_radius
+        self.sun_dist = self.conf.environment.sun_dist
         
-        self.env_rotation = env.get("rotation", 0.0)
-        self.sun_enabled = env.get("auto_sun", False)
-        self.sun_intensity = env.get("sun_intensity", 50.0)
-        self.sun_radius = env.get("sun_radius", 10.0)
-        self.sun_dist = env.get("sun_dist", 1000.0)
-        # auto_sun_env_level deprecated
+        # Samplers (Special case: JSON might have 'render_sampler' which loader mapped to config.sampler)
+        # But Editor has split render/preview samplers.
+        # We try to read them from JSON specifically if possible, else default.
+        if "render_settings" in data:
+             rs = data["render_settings"]
+             self.preview_sampler = rs.get("preview_sampler", 0)
+             self.render_sampler = rs.get("render_sampler", self.conf.render.sampler)
         
-        env_map_path = env.get("map_path")
-        env_bg_color = env.get("background_color")
-        
-        env_source = None
-        
-        if env_map_path:
-             if not os.path.isabs(env_map_path):
-                 env_map_path = os.path.abspath(os.path.join(os.getcwd(), env_map_path))
-             env_source = env_map_path
-        elif env_bg_color:
-             env_source = env_bg_color
+        # System Vars
+        self.update_epsilon(self.conf.system.epsilon)
+        self.update_firefly_clamp(self.conf.system.firefly_clamp)
 
-        self.conf.environment = env_source # Persistence Update
-             
-        # On charge (Map ou Couleur)
-        self.env_median_luminance = loader.load_environment(
-             self.builder, env_source,
-             env_background=self.env_background,
-             env_diffuse=self.env_diffuse,
-             env_specular=self.env_specular,
-             auto_sun=self.sun_enabled,
-             auto_sun_intensity=self.sun_intensity,
-             auto_sun_radius=self.sun_radius,
-             auto_sun_dist=self.sun_dist,
-             clipping_multiplier=self.env_clipping_multiplier
-        )
+        # Enforce Env Update
+        self.update_environment(self.builder.engine)
         
-        self.builder.engine.set_env_rotation(self.env_rotation)
+        # Update Viewport
+        self.target_aspect = self.conf.render.width / self.conf.render.height if self.conf.render.height > 0 else 1.33
+
+        self.scene_dirty = True
+        self.ui_dirty = True
+
         
         # Récup ID Soleil
         for oid, info in self.builder.registry.items():
@@ -942,3 +873,34 @@ class EditorState:
         f = filedialog.askopenfilename(filetypes=[("JSON Scene", "*.json")], initialdir="./scenes")
         root.destroy()
         if f: self.load_scene(f)
+
+    # =================================================================================================
+    # COMPATIBILITY PROPERTIES
+    # =================================================================================================
+    @property
+    def scene_dirty(self):
+        return self.needs_render_reset
+
+    @scene_dirty.setter
+    def scene_dirty(self, value):
+        if value:
+            self.needs_render_reset = True
+            self.needs_repaint = True
+
+    @property
+    def ui_dirty(self):
+        return self.needs_ui_rebuild
+
+    @ui_dirty.setter
+    def ui_dirty(self, value):
+        if value:
+            self.needs_ui_rebuild = True
+            self.needs_repaint = True
+
+    @property
+    def dirty(self):
+        return self.scene_dirty
+
+    @dirty.setter
+    def dirty(self, value):
+        self.scene_dirty = value

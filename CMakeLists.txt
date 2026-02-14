@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.15)
 project(raytracing_cpp)
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(Python 3.8 REQUIRED COMPONENTS Interpreter Development.Module)
@@ -31,7 +31,9 @@ if(MSVC)
 else()
     # Linux/Mac : -march=native optimise pour le CPU local (Intel ou Apple Silicon)
     # -Ofast active les optimisations agressives (fast-math)
-    target_compile_options(cpp_engine PRIVATE -Ofast -march=native)
+    # target_compile_options(cpp_engine PRIVATE -Ofast -march=native)
+    #target_compile_options(cpp_engine PRIVATE /O2 /fp:fast /arch:AVX2 /std:c++latest)
+    target_compile_options(cpp_engine PRIVATE -Ofast -march=native -std=c++2b)
     
     # On ajoute -mfma uniquement sur x86_64 pour être explicite (souvent inclus dans native)
     # Sur ARM64 (Apple Silicon), FMA est standard et -mfma peut ne pas exister ou être un no-op

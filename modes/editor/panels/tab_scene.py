@@ -29,11 +29,19 @@ def build(ui_list, start_y, state, engine):
     def set_env(attr, val):
         setattr(state, attr, val)
         state.update_environment(engine)
+        # Environment change -> Always reset render
+        state.needs_render_reset = True
 
     # --- 1. CAMERA ---
     if draw_header("CAMERA", "CAMERA"):
-        def adj(attr, d): setattr(state, attr, getattr(state, attr)+d); state.dirty=True
-        def set_v(attr, v): setattr(state, attr, v); state.dirty=True
+        def adj(attr, d): 
+             setattr(state, attr, getattr(state, attr)+d)
+             # Camera move -> Reset render
+             state.needs_render_reset = True
+             
+        def set_v(attr, v): 
+             setattr(state, attr, v)
+             state.needs_render_reset = True
         
         # FOV
         lbl(ui_list, 10, ys+2, "FOV", 14)
@@ -48,6 +56,9 @@ def build(ui_list, start_y, state, engine):
         btn(ui_list, 160, ys, 30, 22, "+", lambda: adj('focus_dist', 0.5))
         def toggle_pick(): 
             state.picking_focus = not state.picking_focus
+            # Toggling pick mode -> Changes UI state (button color) -> UI Rebuild
+            # Visual change -> Repaint
+            state.needs_ui_rebuild = True
         btn_pick = Button(VIEW_W+195, ys, 45, 22, "Pick", toggle_pick)
         btn_pick.active = state.picking_focus # Lights up if in picking mode
         ui_list.append(btn_pick)
@@ -112,6 +123,7 @@ def build(ui_list, start_y, state, engine):
         state.sun_enabled = not state.sun_enabled
         state.update_environment(engine)
         state.needs_ui_rebuild = True
+        state.needs_render_reset = True
     
     sw_params = ("ON" if state.sun_enabled else "OFF", toggle_sun, state.sun_enabled)
     if draw_header("AUTO SUN", "SUN", sw_params):

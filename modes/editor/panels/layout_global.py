@@ -18,11 +18,9 @@ def build_header(ui_list, state):
     start_x = PANEL_W - (3 * mode_w) - 10
     
     def set_mode(m):
-        # STABILIZATION: If switching TO Raytracing from other modes, force low resolution (Scale 4)
-        # to prevent "blinking" caused by immediate high-res render -> auto-downscale loop.
         if m == 2 and state.preview_mode != 2:
-            if state.res_auto:
-                state.res_scale = 4 # Start rough, let auto-scaler improve it
+            # Mode switch -> Reset performance stability metrics
+            state.res_stability = 0
                 
         state.preview_mode = m
         state.dirty = True
@@ -63,6 +61,19 @@ def build_header(ui_list, state):
 
     return y + 35 
 
+def draw_header(screen, fonts, state):
+    """Draws the main panel background and static header elements."""
+    # 1. Panel Background
+    pygame.draw.rect(screen, COL_PANEL, (VIEW_W, 0, PANEL_W, WIN_H))
+    
+    # 2. Separator Line
+    pygame.draw.line(screen, (30, 30, 30), (VIEW_W, 0), (VIEW_W, WIN_H))
+    
+    # 3. Branding / Title
+    # f = fonts.get(20)
+    # title = f.render("PyRefly", True, (200, 200, 200))
+    # screen.blit(title, (VIEW_W + 15, 12)) 
+
 def draw_footer_status(screen, fonts, state):
     """Technical Footer: FPS | SPP | Resolution"""
     h = 24 
@@ -87,7 +98,7 @@ def draw_footer_status(screen, fonts, state):
     screen.blit(f.render(label_left, True, col), (VIEW_W + 10, y + 5))
     
     # 2. Render Info (Right)
-    info_str = f"SPP: {state.accum_spp}   |   {state.conf.width}x{state.conf.height}"
+    info_str = f"SPP: {state.accum_spp}   |   {state.conf.render.width}x{state.conf.render.height}"
     i_surf = f.render(info_str, True, col)
     i_rect = i_surf.get_rect(topright=(WIN_W - 10, y + 5))
     screen.blit(i_surf, i_rect)
