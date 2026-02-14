@@ -17,7 +17,10 @@ class SceneConfig:
     vfov: Optional[float] = None
     aperture: Optional[float] = None
     focus_dist: Optional[float] = None
-    env_map: Optional[str] = None
+    # Environment (Union[str, List[float]])
+    # str -> Path to HDR/Image
+    # List[float] -> RGB Color [r, g, b]
+    environment: Optional[object] = None 
     # Lighting
     env_exposure: float = 1.0
     env_background: float = 1.0     
@@ -79,7 +82,7 @@ class CornellBox(Scene):
             vfov=40.0,
             aperture=0.0,
             focus_dist=10.0, # Scaled reasonable dist
-            env_map=None,
+            environment=None,
             env_exposure=1.0,
             env_background=0.0, # Box is closed, no background needed usually (or black)
             env_diffuse=0.5,
@@ -132,7 +135,7 @@ class RandomSpheres(Scene):
             lookat=[0, 0, 0],
             vup=[0, 1, 0],
             vfov=40.0, aperture=0.05, focus_dist=10.0,
-            env_map=None, 
+            environment=None, 
             env_exposure=1.0,
             env_background=1.0,
             env_diffuse=0.5,
@@ -200,7 +203,7 @@ class MaterialsShowcase(Scene):
 
         return SceneConfig(
             lookfrom=[0, 3, 8], lookat=[0, 1, 0], vup=[0, 1, 0], vfov=50.0, aperture=0.1, focus_dist=8.0,
-            env_map="env-dock-sun.hdr", env_exposure=1.0, env_background=1.0, env_diffuse=0.6, env_specular=2.0
+            environment="env-dock-sun.hdr", env_exposure=1.0, env_background=1.0, env_diffuse=0.6, env_specular=2.0
         )
 
 class Empty(Scene):
@@ -212,7 +215,7 @@ class Empty(Scene):
         
         return SceneConfig(
             lookfrom=[0, 3, 8], lookat=[0, 1, 0], vup=[0, 1, 0], vfov=50.0, aperture=0.0, focus_dist=8.0,
-            env_map="env-dock-sun.hdr", env_exposure=1.0, env_background=1.0, env_diffuse=0.6, env_specular=2.0
+            environment="env-dock-sun.hdr", env_exposure=1.0, env_background=1.0, env_diffuse=0.6, env_specular=2.0
         )
 
 class MeshScene1(Scene):
@@ -236,7 +239,7 @@ class MeshScene1(Scene):
 
         builder.add_mesh_instance("my_bunny_asset", pos=[0, 0, 0], rot=[0, 0, 0], scale=[1.0, 1.0, 1.0])
 
-        return SceneConfig(lookfrom=[0, 2, 5], lookat=[0, 0, 0], vfov=40.0, env_map="env-dock-sun.hdr")
+        return SceneConfig(lookfrom=[0, 2, 5], lookat=[0, 0, 0], vfov=40.0, environment="env-dock-sun.hdr")
 
 class MeshScene2(Scene):
     def setup(self, builder):
@@ -272,16 +275,12 @@ class MeshScene2(Scene):
             z = radius * math.sin(math.radians(angle))
             builder.add_mesh_instance("obj_metal", pos=[x, y_pos_guard, z], rot=[0, -angle - 90, 0], scale=[scale_guard]*3)
 
-        return SceneConfig(lookfrom=[-0.9, 0.7, 3.93], lookat=[-0.73, 0.5, 2.96], vfov=50.0, aperture=0.1, focus_dist=3.72, env_map="env-dock-sun.hdr")
+        return SceneConfig(lookfrom=[-0.9, 0.7, 3.93], lookat=[-0.73, 0.5, 2.96], vfov=50.0, aperture=0.1, focus_dist=3.72, environment="env-dock-sun.hdr")
 
 class Basic(Scene):
     def setup(self, builder, config_overrides: dict = None) -> SceneConfig:
         def v3(l):
             return cpp_engine.Vec3(float(l[0]), float(l[1]), float(l[2]))
-
-        # Environment (Solid White)
-        env_img = np.array([[[1.0, 1.0, 1.0]]], dtype=np.float32)
-        builder.set_environment(env_img)
 
         # Light
         builder.add_sphere(v3([0, 5, 0]), 1.0, mat_type="light", color=[10, 10, 10])
@@ -301,7 +300,7 @@ class Basic(Scene):
             vfov=40.0,
             aperture=0.0,
             focus_dist=3.0,
-            env_map=None,
+            environment=[1.0, 1.0, 1.0],
             env_exposure=1.0,
             env_background=1.0, 
             env_diffuse=0.5,

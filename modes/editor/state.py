@@ -263,7 +263,7 @@ class EditorState:
         if not file_path: return
         
         # Update Config for persistence
-        self.conf.env_map = file_path
+        self.conf.environment = file_path
 
         # Nettoyage ancien soleil
         if self.sun_id != -1:
@@ -596,6 +596,13 @@ class EditorState:
         fz = math.cos(self.yaw) * math.cos(self.pitch)
         target = self.cam_pos + np.array([fx, fy, fz])
 
+        # Pre-process environment for JSON compliance
+        env_val = self.conf.environment
+        if isinstance(env_val, np.ndarray):
+            env_val = env_val.tolist()
+        elif isinstance(env_val, tuple):
+            env_val = list(env_val)
+
         # 2. Construction du Dictionnaire
         data = {
             "version": "1.2", # PBR Update
@@ -636,9 +643,10 @@ class EditorState:
                 "focus_dist": self.focus_dist
             },
 
-            # C. Environnement (inchangé)
+            # C. Environnement
             "environment": {
-                "map_path": os.path.relpath(self.conf.env_map, os.getcwd()) if (self.conf.env_map and os.path.exists(self.conf.env_map)) else self.conf.env_map,
+                "map_path": os.path.relpath(env_val, os.getcwd()) if (isinstance(env_val, str) and os.path.exists(env_val)) else (env_val if isinstance(env_val, str) else None),
+                "background_color": env_val if isinstance(env_val, list) else None,
                 "exposure": self.env_exposure,
                 "background_level": self.env_background,
                 "diffuse_level": self.env_diffuse,
@@ -762,23 +770,31 @@ class EditorState:
         # auto_sun_env_level deprecated
         
         env_map_path = env.get("map_path")
+        env_bg_color = env.get("background_color")
+        
+        env_source = None
+        
         if env_map_path:
-             self.conf.env_map = env_map_path # Persistence Update
-             
              if not os.path.isabs(env_map_path):
                  env_map_path = os.path.abspath(os.path.join(os.getcwd(), env_map_path))
+             env_source = env_map_path
+        elif env_bg_color:
+             env_source = env_bg_color
+
+        self.conf.environment = env_source # Persistence Update
              
-             self.env_median_luminance = loader.load_environment(
-                 self.builder, env_map_path,
-                 env_background=self.env_background,
-                 env_diffuse=self.env_diffuse,
-                 env_specular=self.env_specular,
-                 auto_sun=self.sun_enabled,
-                 auto_sun_intensity=self.sun_intensity,
-                 auto_sun_radius=self.sun_radius,
-                 auto_sun_dist=self.sun_dist,
-                 clipping_multiplier=self.env_clipping_multiplier
-             )
+        # On charge (Map ou Couleur)
+        self.env_median_luminance = loader.load_environment(
+             self.builder, env_source,
+             env_background=self.env_background,
+             env_diffuse=self.env_diffuse,
+             env_specular=self.env_specular,
+             auto_sun=self.sun_enabled,
+             auto_sun_intensity=self.sun_intensity,
+             auto_sun_radius=self.sun_radius,
+             auto_sun_dist=self.sun_dist,
+             clipping_multiplier=self.env_clipping_multiplier
+        )
         
         self.builder.engine.set_env_rotation(self.env_rotation)
         

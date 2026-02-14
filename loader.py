@@ -319,56 +319,73 @@ def create_auto_sun(builder, intensity, radius, distance):
     
     return oid, dir_arr, raw_col_arr
 
-def load_environment(builder, env_path, 
+def load_environment(builder, environment, 
     env_exposure=1.0, env_background=1.0, env_diffuse=1.0, env_specular=1.0, 
     auto_sun=False, auto_sun_intensity=None, auto_sun_radius=None,
     auto_sun_dist=None, clipping_multiplier=None):
-    """Charge la HDRI et configure le soleil physique automatique via le Builder."""
+    """Charge la HDRI ou une couleur unie et configure le soleil physique automatique via le Builder."""
 
-    if not env_path or not os.path.exists(env_path):
-        print(f"[Loader] No environment map found or path invalid: {env_path}")
-        return
+    # 1. Cas : Rien défini
+    if environment is None:
+        return 1.0
+
+    env_img = None
+    median_val = 1.0
 
     try:
-        print(f"[Loader] Loading environment map: {env_path}")
-        img = iio.imread(env_path)
-        
-        if img.ndim == 2: img = np.stack((img,)*3, axis=-1)
-        if img.ndim == 3 and img.shape[2] > 3: img = img[:, :, :3]
-        
-        env_data = img.astype(np.float32)
-        if img.dtype == np.uint8: env_data /= 255.0
-        if img.dtype != np.float32:
-            img = img.astype(np.float32)
+        # 2. Cas : Couleur unie (List/Tuple/Array)
+        if isinstance(environment, (list, tuple, np.ndarray)):
+             print(f"[Loader] Loading uniform environment color: {environment}")
+             # Conversion en Numpy (1x1x3)
+             arr = np.array(environment, dtype=np.float32)
+             # Si c'est juste [R, G, B], on reshape
+             if arr.ndim == 1 and arr.shape[0] >= 3:
+                 env_img = arr[:3].reshape((1, 1, 3))
+             else:
+                 env_img = arr # Supposons que l'user sait ce qu'il fait (ou array déjà formaté)
+             
+             # Pas de calcul de médiane nécessaire pour une couleur unie
+             median_val = np.mean(env_img) # Simple moyenne
 
-        # Calcul du seuil de clipping (MIS)
-        # On calcule la médiane de la luminance pour identifier le "fond" du ciel
-        # et on clippe ce qui dépasse largement (le soleil) si l'Auto-Sun est activé.
-        clipping_threshold = float('inf')
-        
-        if auto_sun or (clipping_multiplier is not None and clipping_multiplier > 0):
-            # 1. Calcul de la luminance (rapide) sur les données NORMALISÉES (env_data)
-            # Y = 0.2126 R + 0.7152 G + 0.0722 B
-            lum = 0.2126 * env_data[:,:,0] + 0.7152 * env_data[:,:,1] + 0.0722 * env_data[:,:,2]
+        # 3. Cas : Fichier (String)
+        elif isinstance(environment, str):
+            if not os.path.exists(environment):
+                print(f"[Loader] No environment map found or path invalid: {environment}")
+                return 1.0
             
-            # 2. Calcul de la médiane
-            median_val = np.median(lum)
-            mean_val = np.mean(lum)
-            max_val = np.max(lum)
+            print(f"[Loader] Loading environment map: {environment}")
+            img = iio.imread(environment)
             
-            # 3. Détermination du multiplicateur
-            # Si pas spécifié mais auto-sun actif, on met une valeur par défaut (ex: 20.0)
-            mult = clipping_multiplier if clipping_multiplier is not None else 20.0
+            if img.ndim == 2: img = np.stack((img,)*3, axis=-1)
+            if img.ndim == 3 and img.shape[2] > 3: img = img[:, :, :3]
             
-            # 4. Calcul du seuil
-            if mult > 0:
-                clipping_threshold = median_val * mult
-            else:
-                print(f"[Loader] Dynamic Clipping: DISABLED (Multiplier=0)")
+            env_data = img.astype(np.float32)
+            if img.dtype == np.uint8: env_data /= 255.0
+            if img.dtype != np.float32:
+                img = img.astype(np.float32)
+            
+            env_img = img
 
-        # Envoi au moteur (Données + Seuil)
-        builder.set_environment(img, clipping_threshold)
-        
+            # Calcul du seuil de clipping (MIS) pour les Maps seulement
+            # On calcule la médiane de la luminance pour identifier le "fond" du ciel
+            if auto_sun or (clipping_multiplier is not None and clipping_multiplier > 0):
+                lum = 0.2126 * env_data[:,:,0] + 0.7152 * env_data[:,:,1] + 0.0722 * env_data[:,:,2]
+                median_val = np.median(lum)
+
+        # 4. Envoi au moteur (Commun)
+        if env_img is not None:
+             clipping_threshold = float('inf')
+             
+             # Le clipping dynamique n'a de sens que pour les HDRIs (hautes dynamiques)
+             # Pour une couleur unie (LDR ou HDR basse), le clipping est inutile voire contre-productif.
+             if isinstance(environment, str) and (auto_sun or (clipping_multiplier and clipping_multiplier > 0)):
+                 if clipping_multiplier is not None and clipping_multiplier > 0:
+                     clipping_threshold = median_val * clipping_multiplier
+                 else:
+                     clipping_threshold = median_val * 20.0
+
+             builder.set_environment(env_img, clipping_threshold)
+
         # Environment Levels (Pro Split)
         # Passed directly to engine
         builder.set_env_levels(env_exposure, env_background, env_diffuse, env_specular)
@@ -423,7 +440,7 @@ def initialize_scene_and_engine(args, scene_name=None):
                       float(config.vfov), float(aspect), float(config.aperture), float(config.focus_dist))
 
     # Environment (Passe le builder)
-    load_environment(builder, config.env_map, 
+    load_environment(builder, config.environment, 
                      env_exposure=config.env_exposure,
                      env_background=config.env_background, 
                      env_diffuse=config.env_diffuse, 

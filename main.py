@@ -25,7 +25,7 @@ def main():
     
     # --- Environment ---
     group_env = parser.add_argument_group("Environment")
-    group_env.add_argument('--env', type=str, dest='env_map', help="Path to HDR environment map file")
+    group_env.add_argument('--env', type=str, dest='environment', help="Path to HDR environment map file")
     group_env.add_argument('--env-exposure', type=float, help="Master environment exposure scale (default: 1.0)")
     group_env.add_argument('--env-background', type=float, help="Background visibility intensity (Primary Rays)")
     group_env.add_argument('--env-diffuse', type=float, help="Diffuse environment lighting intensity (GI)")

@@ -19,8 +19,8 @@ class RenderConfig:
     focus_dist: float = 10.0
     
     # --- Environment ---
-    #env_map: Optional[str] = "env-dock-sun.hdr"
-    env_map: Optional[str] = None
+    # Environment (Union[str, List[float]])
+    environment: Optional[object] = None
     env_exposure: float = 1.0     # Master scale
     env_background: float = 1.0   # Camera visibility
     env_diffuse: float = 1.0      # GI/Lighting
