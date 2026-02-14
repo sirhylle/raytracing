@@ -566,7 +566,7 @@ def run(engine, config, builder):
                 batch = min(app_state.ray_batch_size, remaining)
                 
                 if batch > 0:
-                    raw = engine.render_accumulate(rw, rh, batch, render_threads, app_state.conf.render.depth, 1) 
+                    raw = engine.render_accumulate(rw, rh, batch, render_threads, app_state.conf.render.depth, app_state.preview_sampler) 
                     app_state.accum_spp += batch
             else: # PREVIEW (Normals / Clay)
                 raw = engine.render_preview(rw, rh, app_state.preview_mode, render_threads)
