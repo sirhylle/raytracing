@@ -154,56 +154,58 @@ def build(ui_list, start_y, state, engine):
     # ==================== BLOCK 3 : MATERIAL ====================
     if draw_section_header("MATERIAL", "MATERIAL"):
         
-        # --- PRESETS ---
-        import materials
+        # Detect if this is a light object (no PBR presets/sliders needed)
+        is_light = sel_data.get('mat_type', '') in ('light', 'invisible_light')
         
-        def apply_preset(name):
-            p = materials.PRESETS.get(name)
-            if not p: return
-            d = state.get_selected_info()
-            if not d: return
+        # --- PRESETS (Hidden for lights) ---
+        if not is_light:
+            import materials
             
-            d['mat_type'] = "standard" # Force standard PBR
-            d['roughness'] = p.roughness
-            d['metallic'] = p.metallic
-            d['ir'] = p.ior
-            d['transmission'] = p.transmission
-            
-            # Apply color if defined in preset (e.g. Gold)
-            if p.albedo:
-                d['color'] = list(p.albedo)
+            def apply_preset(name):
+                p = materials.PRESETS.get(name)
+                if not p: return
+                d = state.get_selected_info()
+                if not d: return
                 
-            state.push_material_update(engine)
-        
-        lbl(ui_list, 10, ys, "Presets:", 12, COL_TEXT_DIM)
-        ys += 20
-        
-        preset_names = list(materials.PRESETS.keys())
-        # Sort favorites first?
-        favorites = ["CHROME", "GOLD", "GLASS", "HARD_PLASTIC"]
-        others = [k for k in preset_names if k not in favorites]
-        sorted_keys = favorites + others
-        
-        x_st = 10
-        y_st = ys
-        bw, bh = 95, 24
-        col_count = 3
-        gap = 5
-        
-        for i, key in enumerate(sorted_keys):
-            row = i // col_count
-            col = i % col_count
-            px = x_st + col * (bw + gap)
-            py = y_st + row * (bh + gap)
+                d['mat_type'] = "standard" # Force standard PBR
+                d['roughness'] = p.roughness
+                d['metallic'] = p.metallic
+                d['ir'] = p.ior
+                d['transmission'] = p.transmission
+                
+                # Apply color if defined in preset (e.g. Gold)
+                if p.albedo:
+                    d['color'] = list(p.albedo)
+                    
+                state.push_material_update(engine)
             
-            # Highlight if matches current params? Hard to check fully.
-            # Just standard buttons.
-            btn(ui_list, px, py, bw, bh, materials.PRESETS[key].name, apply_preset, key)
+            lbl(ui_list, 10, ys, "Presets:", 12, COL_TEXT_DIM)
+            ys += 20
             
-        ys += ((len(sorted_keys) - 1) // col_count + 1) * (bh + gap) + 10
+            preset_names = list(materials.PRESETS.keys())
+            # Sort favorites first?
+            favorites = ["CHROME", "GOLD", "GLASS", "HARD_PLASTIC"]
+            others = [k for k in preset_names if k not in favorites]
+            sorted_keys = favorites + others
+            
+            x_st = 10
+            y_st = ys
+            bw, bh = 95, 24
+            col_count = 3
+            gap = 5
+            
+            for i, key in enumerate(sorted_keys):
+                row = i // col_count
+                col = i % col_count
+                px = x_st + col * (bw + gap)
+                py = y_st + row * (bh + gap)
+                
+                btn(ui_list, px, py, bw, bh, materials.PRESETS[key].name, apply_preset, key)
+                
+            ys += ((len(sorted_keys) - 1) // col_count + 1) * (bh + gap) + 10
 
-        # --- SLIDERS (Manual Override) ---
-        lbl(ui_list, 10, ys, "Parameters:", 12, COL_TEXT_DIM)
+        # --- SLIDERS ---
+        lbl(ui_list, 10, ys, "Light:" if is_light else "Parameters:", 12, COL_TEXT_DIM)
         ys += 20
 
         # Sliders...
@@ -232,38 +234,57 @@ def build(ui_list, start_y, state, engine):
                                   power=1.0, color_track=cols[i])) # Integration power/color
             ys += 20
         ys += 10
-        
-        slider_x_prop = 90
-        slider_w_prop = PANEL_W - slider_x_prop - 10
-        
-        # PBR SLIDERS
-        
-        # Roughness (Legacy Fuzz)
-        lbl(ui_list, 10, ys, lambda: f"Rough ({get_prop('roughness', 0.5):.2f})", 12, COL_TEXT_DIM)
-        ui_list.append(Slider(VIEW_W + slider_x_prop, ys, slider_w_prop, 12, 0.0, 1.0, 
-                              lambda: get_prop('roughness', 0.5), lambda v: set_prop(v, 'roughness'), power=1.5))
-        ys += 20
 
-        # Metallic
-        lbl(ui_list, 10, ys, lambda: f"Metal ({get_prop('metallic', 0.0):.2f})", 12, COL_TEXT_DIM)
-        ui_list.append(Slider(VIEW_W + slider_x_prop, ys, slider_w_prop, 12, 0.0, 1.0, 
-                              lambda: get_prop('metallic', 0.0), lambda v: set_prop(v, 'metallic')))
-        ys += 20
+        # --- LIGHT INTENSITY SLIDER (Only for emissive materials) ---
         
-        # Transmission
-        lbl(ui_list, 10, ys, lambda: f"Trans ({get_prop('transmission', 0.0):.2f})", 12, COL_TEXT_DIM)
-        ui_list.append(Slider(VIEW_W + slider_x_prop, ys, slider_w_prop, 12, 0.0, 1.0, 
-                              lambda: get_prop('transmission', 0.0), lambda v: set_prop(v, 'transmission')))
-        ys += 20
-        
-        # IOR
-        lbl(ui_list, 10, ys, lambda: f"IoR ({get_prop('ir', 1.5):.2f})", 12, COL_TEXT_DIM)
-        ui_list.append(Slider(VIEW_W + slider_x_prop, ys, slider_w_prop, 12, 1.0, 3.0, 
-                              lambda: get_prop('ir', 1.5), lambda v: set_prop(v, 'ir')))
-        ys += 20
+        if is_light:
+            def get_intensity():
+                d = state.get_selected_info()
+                return d.get('intensity', 10.0) if d else 10.0
+            def set_intensity(v):
+                d = state.get_selected_info()
+                if d:
+                    d['intensity'] = v
+                    state.push_material_update(engine)
+            
+            slider_x_int = 90
+            slider_w_int = PANEL_W - slider_x_int - 10
+            lbl(ui_list, 10, ys, lambda: f"Intens. ({get_intensity():.1f})", 12, (220, 180, 50))
+            ui_list.append(Slider(VIEW_W + slider_x_int, ys, slider_w_int, 12, 0.0, 1000.0, 
+                                  get_intensity, set_intensity, power=2.0, color_track=(220, 180, 50)))
+            ys += 30
 
-        # Dispersion
-        lbl(ui_list, 10, ys, lambda: f"Disp. ({get_prop('dispersion', 0.0):.3f})", 12, COL_TEXT_DIM)
-        ui_list.append(Slider(VIEW_W + slider_x_prop, ys, slider_w_prop, 12, 0.0, 0.1, 
-                              lambda: get_prop('dispersion', 0.00), lambda v: set_prop(v, 'dispersion'), power=3))
-        ys += 20
+        # --- PBR SLIDERS (Hidden for lights) ---
+        if not is_light:
+            slider_x_prop = 90
+            slider_w_prop = PANEL_W - slider_x_prop - 10
+            
+            # Roughness (Legacy Fuzz)
+            lbl(ui_list, 10, ys, lambda: f"Rough ({get_prop('roughness', 0.5):.2f})", 12, COL_TEXT_DIM)
+            ui_list.append(Slider(VIEW_W + slider_x_prop, ys, slider_w_prop, 12, 0.0, 1.0, 
+                                  lambda: get_prop('roughness', 0.5), lambda v: set_prop(v, 'roughness'), power=1.5))
+            ys += 20
+
+            # Metallic
+            lbl(ui_list, 10, ys, lambda: f"Metal ({get_prop('metallic', 0.0):.2f})", 12, COL_TEXT_DIM)
+            ui_list.append(Slider(VIEW_W + slider_x_prop, ys, slider_w_prop, 12, 0.0, 1.0, 
+                                  lambda: get_prop('metallic', 0.0), lambda v: set_prop(v, 'metallic')))
+            ys += 20
+            
+            # Transmission
+            lbl(ui_list, 10, ys, lambda: f"Trans ({get_prop('transmission', 0.0):.2f})", 12, COL_TEXT_DIM)
+            ui_list.append(Slider(VIEW_W + slider_x_prop, ys, slider_w_prop, 12, 0.0, 1.0, 
+                                  lambda: get_prop('transmission', 0.0), lambda v: set_prop(v, 'transmission')))
+            ys += 20
+            
+            # IOR
+            lbl(ui_list, 10, ys, lambda: f"IoR ({get_prop('ir', 1.5):.2f})", 12, COL_TEXT_DIM)
+            ui_list.append(Slider(VIEW_W + slider_x_prop, ys, slider_w_prop, 12, 1.0, 3.0, 
+                                  lambda: get_prop('ir', 1.5), lambda v: set_prop(v, 'ir')))
+            ys += 20
+
+            # Dispersion
+            lbl(ui_list, 10, ys, lambda: f"Disp. ({get_prop('dispersion', 0.0):.3f})", 12, COL_TEXT_DIM)
+            ui_list.append(Slider(VIEW_W + slider_x_prop, ys, slider_w_prop, 12, 0.0, 0.1, 
+                                  lambda: get_prop('dispersion', 0.00), lambda v: set_prop(v, 'dispersion'), power=3))
+            ys += 20

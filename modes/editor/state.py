@@ -262,16 +262,26 @@ class EditorState:
         ctype = d.get('mat_type', 'lambertian')
         ccol  = d.get('color', [0.8, 0.8, 0.8])
         
-        # PBR Fields
-        crough = d.get('roughness', 0.5)
-        if 'fuzz' in d: crough = d['fuzz'] # Legacy mapping
+        # For light materials, recompose emission = color * intensity for the C++ engine
+        if ctype in ('light', 'invisible_light'):
+            intensity = d.get('intensity', 10.0)
+            emission = [ccol[0] * intensity, ccol[1] * intensity, ccol[2] * intensity]
+            engine.update_instance_material(self.selected_id, ctype, cpp_engine.Vec3(*emission), 0.0, 1.0)
+            # Sync back to state if editing the sun via OBJECT tab
+            if self.selected_id == self.sun_id:
+                self.sun_intensity = intensity
+                self.sun_base_color = np.array([ccol[0], ccol[1], ccol[2]])
+        else:
+            # PBR Fields
+            crough = d.get('roughness', 0.5)
+            if 'fuzz' in d: crough = d['fuzz'] # Legacy mapping
 
-        cmetal = d.get('metallic', 0.0)
-        cir    = d.get('ir', 1.5)
-        ctrans = d.get('transmission', 0.0)
-        cdisp  = d.get('dispersion', 0.0)
-        
-        engine.update_instance_material(self.selected_id, ctype, cpp_engine.Vec3(*ccol), crough, cmetal, cir, ctrans, cdisp)
+            cmetal = d.get('metallic', 0.0)
+            cir    = d.get('ir', 1.5)
+            ctrans = d.get('transmission', 0.0)
+            cdisp  = d.get('dispersion', 0.0)
+            
+            engine.update_instance_material(self.selected_id, ctype, cpp_engine.Vec3(*ccol), crough, cmetal, cir, ctrans, cdisp)
         self.needs_render_reset = True
         self.needs_repaint = True
 
@@ -377,6 +387,13 @@ class EditorState:
             r, g, b = self.sun_base_color[0] * scale, self.sun_base_color[1] * scale, self.sun_base_color[2] * scale
             engine.update_instance_material(self.sun_id, "invisible_light", cpp_engine.Vec3(r, g, b), 0.0, 1.0)
             
+            # Sync registry with current emission (so OBJECT tab shows correct values)
+            if self.sun_id in self.builder.registry:
+                emission_max = max(r, g, b)
+                if emission_max <= 0: emission_max = 1.0
+                self.builder.registry[self.sun_id]['color'] = [r/emission_max, g/emission_max, b/emission_max]
+                self.builder.registry[self.sun_id]['intensity'] = float(emission_max)
+            
         self.needs_render_reset = True
         self.needs_repaint = True
 
@@ -431,7 +448,10 @@ class EditorState:
             
         elif otype == 'light_sun':
              raw = data.get('raw_color', col)
-             new_id = self.builder.add_invisible_sphere_light(pos, scale[0], col, raw)
+             # Recompose full emission from normalized color * intensity
+             intensity = data.get('intensity', 10.0)
+             emission_col = [col[0] * intensity, col[1] * intensity, col[2] * intensity]
+             new_id = self.builder.add_invisible_sphere_light(pos, scale[0], emission_col, raw)
 
         elif otype == 'checker_sphere':
             c2 = data.get('color2', [0.0, 0.0, 0.0])
@@ -556,6 +576,7 @@ class EditorState:
 
         elif type_key == "light_sphere":
             new_id = self.builder.add_invisible_sphere_light(spawn_pos_list, 1.0, [10,10,10], [10,10,10])
+            # Registry already has decomposed color=[1,1,1] + intensity=10 from builder
         
         elif type_key == "light_quad":
              # Ceiling Light : Quad au dessus, émissif
@@ -569,7 +590,7 @@ class EditorState:
              # Cross(u, v) -> Down (-Y) ? 
              # (2,0,0) x (0,0,2) = (0, -4, 0). YES.
              
-             # High emission color
+             # High emission color (builder will decompose into color=[1,1,1] + intensity=15)
              new_id = self.builder.add_quad(Q, u, v, "light", [15.0, 15.0, 15.0])
             
         elif type_key == "quad_floor":

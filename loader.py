@@ -75,6 +75,12 @@ class SceneBuilder:
             'transmission': float(transmission),
             'dispersion': float(dispersion)
         }
+        # For light materials, decompose emission into normalized color + intensity
+        if mat_type in ('light', 'invisible_light'):
+            intensity = max(color[0], color[1], color[2])
+            if intensity <= 0: intensity = 1.0
+            self.registry[obj_id]['color'] = [color[0]/intensity, color[1]/intensity, color[2]/intensity]
+            self.registry[obj_id]['intensity'] = float(intensity)
         return obj_id
 
     def add_checker_sphere(self, center, radius, c1, c2, scale):
@@ -185,6 +191,12 @@ class SceneBuilder:
             'transmission': float(transmission),
             'dispersion': float(dispersion)
         }
+        # For light materials, decompose emission into normalized color + intensity
+        if mat_type in ('light', 'invisible_light'):
+            intensity = max(col_list[0], col_list[1], col_list[2])
+            if intensity <= 0: intensity = 1.0
+            self.registry[obj_id]['color'] = [col_list[0]/intensity, col_list[1]/intensity, col_list[2]/intensity]
+            self.registry[obj_id]['intensity'] = float(intensity)
         
         M = tf.translate(q_list[0], q_list[1], q_list[2])
         InvM = np.linalg.inv(M)
@@ -205,13 +217,17 @@ class SceneBuilder:
 
         obj_id = self.engine.add_invisible_sphere_light(v_center, float(radius), cpp_engine.Vec3(r,g,b))
         
+        # Decompose emission into normalized color + intensity
+        intensity = max(r, g, b)
+        if intensity <= 0: intensity = 1.0
         self.registry[obj_id] = {
             'type': 'light_sun',
             'pos': c_list,
             'rot': [0.0, 0.0, 0.0],
             'scale': [radius, radius, radius],
             'mat_type': 'invisible_light',
-            'color': [r, g, b],
+            'color': [r/intensity, g/intensity, b/intensity],
+            'intensity': float(intensity),
             'raw_color': raw_color,
             'roughness': 1.0,
             'metallic': 0.0,
