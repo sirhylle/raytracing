@@ -20,8 +20,19 @@
 #include "hittable.h"
 #include "sampler.h"
 
+// ===============================================================================================
+// CONSTANTS: VISUAL TWEAKS
+// ===============================================================================================
+
+// For Transparent Shadow Attenuation (Softer Shadows)
+// Power: Controls the gradient curve. Lower = wider/softer.
+// Max Opacity: Clamps the maximum darkness of the shadow edge.
+const Real SHADOW_FRESNEL_POWER = 1.1f;
+const Real SHADOW_FRESNEL_MAX_OPACITY = 0.15f;
+
 // Structure pour stocker le résultat du rebond (Scatter)
 struct ScatterRecord {
+
   Ray specular_ray; // Le rayon rebondissant
   bool is_specular; // Si Vrai, on ignore le NEE (Miroir parfait). Si Faux, on
                     // peut sampler (Rough).
@@ -285,9 +296,16 @@ public:
     Real R = fresnel_dielectric_exact(cos_theta, refraction_ratio);
 
     // 2. Base Throughput
-    // Transmission factor reduced by reflection (1-R) and metal opacity (1-M)
-    Vec3 throughput =
-        Vec3(1.0f, 1.0f, 1.0f) * transmission * (1.0f - R) * (1.0f - metallic);
+    // Tweaking Fresnel for softer shadows (User Request):
+    // 1. Power SHADOW_FRESNEL_POWER -> Gradient curve.
+    // 2. Min SHADOW_FRESNEL_MAX_OPACITY -> Max opacity reduced for softer look.
+    Real R_shadow =
+        std::min(std::pow(R, SHADOW_FRESNEL_POWER), SHADOW_FRESNEL_MAX_OPACITY);
+
+    // Transmission factor reduced by modified reflection (1-R_shadow) and metal
+    // opacity (1-M)
+    Vec3 throughput = Vec3(1.0f, 1.0f, 1.0f) * transmission *
+                      (1.0f - R_shadow) * (1.0f - metallic);
 
     // 3. Volumetric Absorption (Beer's Law)
     // Only applied when EXITING the medium (Back Face), as 'rec.t' represents
