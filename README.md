@@ -55,11 +55,13 @@ These scripts will:
 
 ## 🎮 Interactive Editor
 
-Launch the editor via `uv` (or reopen the terminal if `uv` was just installed):
+Launch the editor via `uv` using the `editor` command:
 
 ```bash
-uv run main.py --editor --scene showcase
+uv run main.py editor showcase
 ```
+*   **`showcase`**: Can be a procedural scene name OR a JSON file path (e.g., `scenes/myscene.json`).
+*   **Default**: If no scene is specified, the default `cornell` scene is loaded.
 
 ![Editor Interface](./docs/illustrations/Screenshot%20Editor%20Cornell%20Ray.jpg)
 *Main editor interface with "Live Raw Raytracing" preview mode*
@@ -72,12 +74,12 @@ uv run main.py --editor --scene showcase
 
 | Context | Input | Action |
 | :--- | :--- | :--- |
-| **Movement** | `Arrows` | Move Camera (Forward/Left/Back/Right) |
+| **Movement** | `Q/D/Z/S` or `Arrows` | Move Camera (Left/Right/Forward/Back) |
 | | `PageUp`, `PageDn` | Move Up / Down |
-| | `Mouse Middle` (Hold) | Drag Up / Down (Elevation) |
 | | `Mouse Right` (Hold) | Look Around (Pan/Tilt) |
+| | `Mouse Middle` (Hold) | Pan / Lift |
 | | `Mouse Wheel` | Zoom (Move Forward/Back) |
-| **Focus** | `F` (Hold) or `Click Focus` UI | **Pick Focus Point**: Click anywhere in the 3D view to auto-set focus distance |
+| **Focus** | `F` (Hold) + `Click Left` | **Pick Focus Point**: Click anywhere in the 3D view to auto-set focus distance |
 | **Objects** | `Click Left` | Select instance (Gizmo appears) |
 | **System** | `ESC` | Cancel selection / Exit |
 
@@ -86,23 +88,35 @@ uv run main.py --editor --scene showcase
 
 ## 📸 Rendering & Usage
 
-All orchestration is done via `main.py`.
+All orchestration is done via `main.py` using **verbs**.
 
-### 1. High-Quality Render
-Once you have your camera coordinates (from the editor's console output) or using default scene cameras:
-
+### 1. Initialize a New Scene
+Create a new JSON scene file based on a template.
 ```bash
-uv run main.py --scene showcase --width 1280 --height 720 --spp 200 --depth 50
+uv run main.py init my_new_scene --template outdoor
 ```
-*   `--spp`: Samples Per Pixel. Higher is cleaner but slower.
-*   `--depth`: Max light bounces.
-*   `--auto-sun`: Enables a procedural sun light.
+*   Creates `scenes/my_new_scene.json` (defaults to `scenes/` folder if no path provided).
 
-### 2. Animation (Turntable)
-Generate a 360° video around the scene center.
-
+### 2. High-Quality Render
+Render a scene headless (no UI).
 ```bash
-uv run main.py --scene random --animate --frames 120 --fps 30
+uv run main.py render scenes/my_new_scene.json --width 1280 --height 720 --spp 200
+```
+*   **Output Control**:
+    *   By default, saves the **denoised** image (OIDN).
+    *   `--keep-raw`: Save the raw (noisy) output.
+    *   `--keep-albedo` / `--keep-normal`: Save auxiliary passes.
+
+### 3. Procedural Scenes
+You can still render built-in procedural scenes directly:
+```bash
+uv run main.py render cornell --spp 50
+```
+
+### 4. Animation (Turntable)
+Generate a 360° video around the scene center.
+```bash
+uv run main.py render random --animate --frames 120 --fps 30
 ```
 The script renders all frames to `outputs/frames/` and uses FFMPEG (via imageio) to compile `outputs/videos/animation.mp4`.
 

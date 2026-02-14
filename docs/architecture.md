@@ -4,19 +4,18 @@ Ce document décrit la structure globale, le flux de données et l'organisation 
 
 ## 1. Point d'Entrée & Modes
 
-Le fichier **`main.py`** est le chef d'orchestre. Il ne contient pas de logique métier lourde mais gère :
-1.  Le parsing des arguments (CLI).
-2.  L'initialisation du moteur et le chargement de la scène via `loader.py`.
-3.  Le choix du mode d'exécution :
-    *   **Mode Éditeur (Défaut si `--editor`)** : Lance l'interface graphique interactive via `modes/editor/main.py`.
-    *   **Mode Rendu (Défaut sinon)** : Lance le rendu offline (CLI) via `modes/renderer.py`.
+Le fichier **`main.py`** est le chef d'orchestre. Il utilise désormais une architecture basée sur des **verbes** (subcommands) via `argparse` :
+
+1.  **`editor`** : Lance l'interface graphique interactive via `modes/editor/main.py`.
+2.  **`render`** : Lance le rendu offline (production) via `modes/renderer.py`.
+3.  **`init`** : Crée une nouvelle scène JSON à partir d'un template.
 
 ## 2. Structure des Dossiers
 
 ### Racine
 | Fichier | Rôle |
 | :--- | :--- |
-| `main.py` | Point d'entrée unique. |
+| `main.py` | Point d'entrée unique (CLI Dispatcher). |
 | `config.py` | Classes et constantes pour la configuration (Config, RenderConfig). |
 | `scenes.py` | Définition déclarative de scènes (objets, positions, matériaux) pouvant être chargées. |
 | `loader.py` | Orchestre la création des objets C++ à partir des définitions Python (Scènes -> Moteur). |
@@ -28,17 +27,17 @@ Contient le code natif (C++20) pour le Raytracing haute performance.
 *   **Responsabilité** : BVH, Intersection Rayon/Triangle, Shading, Sampling.
 
 ### `modes/` (Logique Applicative)
-Contient les deux "cerveaux" de l'application selon le mode choisi. Pour voir toutes les options :
+Contient les deux "cerveaux" de l'application selon la commande choisie. Pour voir toutes les options :
 ```bash
 uv run main.py --help
 ```
 
-#### A. `modes/renderer.py` (Mode Rendu Offline)
+#### A. `modes/renderer.py` (Commande `render`)
 Gère le pipeline de production d'images finales.
 *   **Pipeline** : Rendu par tranches (tiles) ou progressif -> Post-Process (Tone Mapping, Denoising OIDN) -> Sauvegarde Disque.
 *   **Multithreading** : Utilise `threading` pour ne pas bloquer l'UI (tqdm) pendant le calcul intensif C++.
 
-#### B. `modes/editor/` (Mode Interactif V3)
+#### B. `modes/editor/` (Commande `editor`)
 Interface graphique basée sur **PyGame**.
 
 **Les Modes de Rendu (Visualisation)** :
