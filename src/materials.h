@@ -356,10 +356,9 @@ public:
     // Original Lambert: Vec3 diffuse = (kD * albedo / PI) * n_dot_l;
 
     // New Oren-Nayar:
-    // Pass non-cosine-weighted contribution? No, eval_oren_nayar includes
-    // n_dot_l. Yes, eval_oren_nayar(n, v, l, roughness, albedo) returns
-    // Radiance factor (Albedo/Pi * cos * Correction) We just need to multiply
-    // by kD.
+    // eval_oren_nayar() returns the radiance factor (Albedo/Pi * cos *
+    // Correction). We multiply by kD to ensure energy conservation with the
+    // specular layer.
 
     Vec3 diffuse;
     if (roughness < 0.01f) {
@@ -495,7 +494,7 @@ public:
       Real refraction_ratio = rec.front_face ? (1.0f / picked_ior) : picked_ior;
       Vec3 unit_direction = unit_vector(r_in.dir);
 
-      // GGX Microfacet Refraction (The Pro Way)
+      // GGX Microfacet Refraction
       // Instead of refracting via the geometric normal 'rec.normal',
       // we sample a microfacet normal 'h' based on roughness.
 
@@ -513,7 +512,7 @@ public:
         srec.roughness = roughness;
       }
 
-      // Ensure h is in the same hemisphere as proper normal relative to ray (?)
+      // Ensure h is in the same hemisphere as proper normal relative to ray
       // Calculate Fresnel on Microfacet H
       Real cos_theta = std::fmin(dot(-unit_direction, h), 1.0f);
       Real F = fresnel_dielectric_exact(cos_theta, refraction_ratio);
@@ -663,10 +662,8 @@ public:
         }
       }
 
-      // If prob is small, we are here often. weight matches.
-      // If prob is large, we are here rarely. weight should be higher?
-      // Let's rely on standard Albedo return for now which assumes split
-      // variance reduction.
+      // Weights are handled by the standard albedo return for split variance
+      // reduction.
 
       // Standard split weight logic
       srec.attenuation = srec.attenuation / (1.0f - prob_spec);

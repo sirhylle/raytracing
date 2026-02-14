@@ -9,7 +9,7 @@ def build(ui_list, start_y, state, engine):
         def toggle():
             state.toggle_accordion("SCENE", section_name)
 
-        # Vérifie si CETTE section est celle active dans l'onglet SCENE
+        # Check if THIS section is the active one in the SCENE tab
         is_open = state.is_accordion_open("SCENE", section_name)
 
         ui_list.append(HeaderBar(VIEW_W + 5, ys - 4, PANEL_W - 10, 26, COL_HEADER, callback=toggle))
@@ -19,7 +19,7 @@ def build(ui_list, start_y, state, engine):
         
         if toggle_switch:
             sw_txt, sw_cb, sw_active = toggle_switch
-            # Si actif -> Bleu, sinon -> Gris standard (None)
+            # If active -> Blue, else -> Standard Grey (None)
             col = COL_BTN_ACT if sw_active else None
             btn(ui_list, PANEL_W - 85, ys-2, 40, 20, sw_txt, sw_cb, col_ov=col)
 
@@ -49,7 +49,7 @@ def build(ui_list, start_y, state, engine):
         def toggle_pick(): 
             state.picking_focus = not state.picking_focus
         btn_pick = Button(VIEW_W+195, ys, 45, 22, "Pick", toggle_pick)
-        btn_pick.active = state.picking_focus # S'allume si on est en mode picking
+        btn_pick.active = state.picking_focus # Lights up if in picking mode
         ui_list.append(btn_pick)
         ys += 38
         # Aperture
@@ -133,7 +133,7 @@ def build(ui_list, start_y, state, engine):
             ui_list.append(Slider(VIEW_W+80, ys, 210, 14, 10.0, 5000.0, lambda: state.sun_dist, lambda v: set_env('sun_dist', v)))
             ys += 20
 
-            # Ligne de séparation explicite
+            # Explicit separator line
             ys += 15
             ui_list.append(Separator(ys, "Envt Light Clipping"))
             #lbl(ui_list, 10, ys, "-"*22 + " Enviro Clipping " + "-"*22, 12, (80, 80, 80))
@@ -141,12 +141,12 @@ def build(ui_list, start_y, state, engine):
             
             def toggle_clip():
                 set_env('env_clipping_enabled', not state.env_clipping_enabled)
-                state.needs_ui_rebuild = True # FORCE le rafraîchissement immédiat de l'UI
+                state.needs_ui_rebuild = True # FORCE immediate UI refresh
                 
             is_on = state.env_clipping_enabled
             col_btn = (58, 110, 165) if is_on else None 
             
-            # Layout compact : "Dynamic Clipping : [ ON ]"
+            # Compact Layout : "Dynamic Clipping : [ ON ]"
             lbl(ui_list, 10, ys, "Dynamic Clipping", 12, COL_TEXT)
             ui_list.append(Button(VIEW_W+240, ys, 50, 16, "ON" if is_on else "OFF", 
                                   callback=toggle_clip, color_override=col_btn))

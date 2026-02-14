@@ -1,7 +1,7 @@
 from ..ui_core import *
 
 def build(ui_list, start_y, state, engine):
-    # --- 1. GESTION DE LA SÉLECTION VIDE ---
+    # --- 1. EMPTY SELECTION MANAGEMENT ---
     if state.selected_id == -1:
         lbl(ui_list, 10, start_y, "No Selection, Left Click on an object", 14, COL_TEXT_DIM)
         return
@@ -10,36 +10,36 @@ def build(ui_list, start_y, state, engine):
     sel_data = state.get_selected_info()
     obj_name = sel_data.get('name', sel_data.get('type', 'Unknown'))
 
-    # --- HELPER DE SECTION (Déplacé au début pour être utilisé tout de suite) ---
+    # --- SECTION HELPER (Moved to beginning for immediate use) ---
     def draw_section_header(title, accord_key):
-        """Dessine une barre de titre avec le toggle inclus."""
+        """Draws a title bar with included toggle."""
         nonlocal ys
         is_open = state.is_accordion_open("OBJECT", accord_key)
         
         def toggle():
             state.toggle_accordion("OBJECT", accord_key)
 
-        # 1. Fond Sombre
+        # 1. Dark Background
         ui_list.append(HeaderBar(VIEW_W + 5, ys-4, PANEL_W - 10, 26, COL_HEADER, callback=toggle))
         
-        # 2. Titre
+        # 2. Title
         lbl(ui_list, 15, ys, title, 14, COL_ACCENT)
         
-        # 3. Bouton Toggle (dans la barre)        
+        # 3. Toggle Button (in the bar)        
         lbl(ui_list, PANEL_W - 25, ys-2, "-", 16, COL_TEXT_DIM) if is_open else lbl(ui_list, PANEL_W - 26, ys-1, "+", 16, COL_TEXT_DIM)
         
         ys += 30 
         return is_open
 
-    # ==================== BLOC 1 : SELECTION (Info, Axes, Actions) ====================
+    # ==================== BLOCK 1 : SELECTION (Info, Axes, Actions) ====================
     if draw_section_header("SELECTION", "SELECTION"):
         
-        # A. Ligne 1 : Nom de l'objet (Gauche) & Axes (Droite)
+        # A. Line 1 : Object Name (Left) & Axes (Right)
         
-        # 1. Nom
+        # 1. Name
         lbl(ui_list, 10, ys, f"ID {state.selected_id}: {obj_name}", 14, COL_TEXT)
 
-        # 2. Sélecteur d'Axes
+        # 2. Axis Selector
         def set_axis(m): state.axis_mode = m
         grp_axis = []
         btn_w, btn_h = 35, 20
@@ -60,14 +60,14 @@ def build(ui_list, start_y, state, engine):
         # Label "Axes"
         lbl(ui_list, start_x - 35, ys+2, "Axes", 12, COL_TEXT_DIM)
         
-        ys += 30 # Saut de ligne après Identity/Axes
+        ys += 30 # Line jump after Axes
 
-        # B. Ligne 2 : Actions (Delete, et futur Duplicate)
+        # B. Line 2 : Actions (Delete, Duplicate)
         
         def duplicate_obj():
             state.duplicate_selection(engine)
             
-        # Bouton Duplicate
+        # Duplicate Button
         btn(ui_list, 10, ys, 300, 28, "DUPLICATE OBJECT", duplicate_obj)
 
         ys += 30
@@ -78,11 +78,11 @@ def build(ui_list, start_y, state, engine):
             engine.remove_instance(oid)
             if oid in state.builder.registry: del state.builder.registry[oid]
             state.selected_id = -1
-            state.set_active_tab("SCENE") # Retour scène après suppression
+            state.set_active_tab("SCENE") # Return to scene after deletion
             
-        # Bouton Delete (Rouge)
-        # On le fait un peu moins large pour laisser de la place au futur Duplicate si besoin,
-        # ou on garde pleine largeur pour l'instant. Gardons 300px (full).
+        # Button Delete (Red)
+        # Made slightly smaller to leave room for future Duplicate if needed,
+        # or keep full width for now. Keeping 300px (full).
         btn(ui_list, 10, ys, 300, 28, "DELETE OBJECT", delete_obj, col_ov=(160, 50, 50))
         
         ys += 40
@@ -97,7 +97,7 @@ def build(ui_list, start_y, state, engine):
 
         ys += 30
 
-    # ==================== BLOC 2 : TRANSFORMS ====================
+    # ==================== BLOCK 2 : TRANSFORMS ====================
     if draw_section_header("TRANSFORMS", "TRANSFORMS"):
         
         # A. Gizmos
@@ -113,7 +113,7 @@ def build(ui_list, start_y, state, engine):
             x += bw + gap
         ys += 35
 
-        # B. Champs Numériques
+        # B. Numeric Fields
         def get_v(prop, axis): d=state.get_selected_info(); return d[prop][axis] if d else 0.0
         def set_v(val, prop, axis): 
             d=state.get_selected_info(); 
@@ -138,7 +138,7 @@ def build(ui_list, start_y, state, engine):
             ys += 28
         ys += 10
 
-    # ==================== BLOC 3 : MATERIAL ====================
+    # ==================== BLOCK 3 : MATERIAL ====================
     if draw_section_header("MATERIAL", "MATERIAL"):
         
         # --- PRESETS ---

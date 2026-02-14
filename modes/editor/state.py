@@ -41,7 +41,7 @@ class EditorState:
         self.current_fps = 0.0
         self.res_auto = True
         self.preview_mode = 0 
-        self.preview_depth = 6 # Paramètre Profondeur Preview (User Request) 
+        self.preview_depth = 6
         self.preview_sampler = 0 # 0=Random, 1=Sobol
         self.render_sampler = 1  # 0=Random, 1=Sobol 
 
@@ -55,7 +55,7 @@ class EditorState:
         direction = target - self.cam_pos
         length = np.linalg.norm(direction)
         # --- ADAPTIVE MOVE SPEED ---
-        # Règle du pouce : traverser la distance initiale en ~1 à 2 secondes.
+        # Rule of thumb: traverse initial distance in ~1 to 2 seconds.
         self.move_speed = max(1.0, length * 0.8)
         #self.move_speed = 5.0 
         direction = direction / length if length > 0 else np.array([0, 0, -1])
@@ -74,8 +74,8 @@ class EditorState:
         self.needs_ui_rebuild = True
         self.axis_mode = "LOCAL" # "NONE", "LOCAL", "GLOBAL"
         
-        # --- GESTION ACCORDÉONS EXCLUSIFS ---
-        # Stocke le nom de la section ouverte pour chaque onglet. None si tout est fermé.
+        # --- EXCLUSIVE ACCORDION MANAGEMENT ---
+        # Stores the name of the open section for each tab. None if all closed.
         self.accordions = {
             "SCENE": "CAMERA", # Par défaut : Camera ouvert
             "OBJECT": None,     # Par défaut : Tout fermé
@@ -140,16 +140,16 @@ class EditorState:
         # Force Initial Sync of Environment Levels
         self.update_environment(builder.engine)
 
-    # --- LOGIQUE MÉTIER ---
+    # --- BUSINESS LOGIC ---
 
     def set_active_tab(self, tab_name):
-        """Change l'onglet et demande une reconstruction UI"""
+        """Changes the tab and requests UI rebuild."""
         if self.active_tab != tab_name:
             self.active_tab = tab_name
             self.needs_ui_rebuild = True
 
     def toggle_accordion(self, tab, section_name):
-        """Ouvre 'section_name' dans l'onglet 'tab' et ferme les autres. Si déjà ouvert, le ferme."""
+        """Opens 'section_name' in 'tab' and closes others. If already open, closes it."""
         if self.accordions[tab] == section_name:
             self.accordions[tab] = None
         else:
@@ -303,20 +303,20 @@ class EditorState:
         engine.set_env_rotation(self.env_rotation)
         engine.set_env_levels(self.env_exposure, self.env_background, self.env_diffuse, self.env_specular)
         
-        # Mise à jour directe du clipping (via API Engine)
+        # Direct Clipping Update (via Engine API)
         if hasattr(engine, 'get_env_clipping_threshold'): # Safety check
             thresh = float('inf')
             
-            # Application si activé explicitement
+            # Apply if explicitly enabled
             if self.env_clipping_enabled:
-                 # Si le soleil est actif OU qu'on a un multiplicateur explicite (même 0)
+                 # If Sun is active OR we have an explicit multiplier (even 0)
                  if self.sun_enabled:
                       thresh = self.env_median_luminance * self.env_clipping_multiplier
             
-            # Optimisation: On ne set que si ça change vraiment pour éviter le rebuild_cdf coûteux
+            # Optimization: Set only if really changed to avoid costly rebuild_cdf
             current_thresh = engine.get_env_clipping_threshold()
-            # Si thresh est infini et current aussi, pas de chgt
-            # Si diff > epsilon, on change
+            # If thresh is inf and current too, no change
+            # If diff > epsilon, change
             if abs(current_thresh - thresh) > 1e-3:
                  engine.set_env_clipping_threshold(thresh)
 
@@ -360,7 +360,7 @@ class EditorState:
         self.dirty = True
 
     def duplicate_selection(self, engine):
-        """Duplique l'objet sélectionné en passant par le Builder."""
+        """Duplicates the selected object via the Builder."""
         if self.selected_id == -1: return
 
         # 1. Copie des données sources
@@ -585,7 +585,7 @@ class EditorState:
             self.dirty = True
             self.needs_ui_rebuild = True
             
-    # --- SYSTÈME DE SAUVEGARDE / CHARGEMENT ---
+    # --- SAVE / LOAD SYSTEM ---
 
     def save_scene(self, filepath):
         """Sérialise la scène complète en JSON, incluant la config de rendu."""
@@ -603,11 +603,11 @@ class EditorState:
         elif isinstance(env_val, tuple):
             env_val = list(env_val)
 
-        # 2. Construction du Dictionnaire
+        # 2. Dictionary Construction
         data = {
             "version": "1.2", # PBR Update
             
-            # A. Paramètres Globaux (Render, System, Animation) [MIS A JOUR]
+            # A. Global Parameters (Render, System, Animation)
             "render_settings": {
                 # Render
                 "width": self.conf.width,

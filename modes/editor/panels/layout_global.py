@@ -4,16 +4,16 @@ from ..ui_core import *
 def build_header(ui_list, state):
     y = 5 
     
-    # --- LIGNE 1 : FICHIER (Gauche) + MODES DE VUE (Droite) ---
+    # --- LINE 1 : FILE (Left) + VIEW MODES (Right) ---
     
-    # 1. Fichier
+    # 1. File
     b_save = btn(ui_list, 10, y, 50, 22, "SAVE", state.save_scene_dialog, col_ov=(45, 45, 45))
     b_save.corners = {'tl': 4, 'bl': 4, 'tr': 0, 'br': 0}
     b_load = btn(ui_list, 60, y, 50, 22, "LOAD", state.load_scene_dialog, col_ov=(45, 45, 45))
     b_load.corners = {'tl': 0, 'bl': 0, 'tr': 4, 'br': 4}
     
-    # 2. Modes de Vue (Alignés à droite)
-    # On calcule pour coller au bord droit : (Largeur Panel) - (3 boutons de 55px) - Marge
+    # 2. View Modes (Right Aligned)
+    # Calculate to stick to right edge: (Panel Width) - (3 buttons of 55px) - Margin
     mode_w = 55
     start_x = PANEL_W - (3 * mode_w) - 10
     
@@ -42,7 +42,7 @@ def build_header(ui_list, state):
     
     y += 60
 
-    # --- LIGNE 2 : ONGLETS (Toute largeur) ---
+    # --- LINE 2 : TABS (Full Width) ---
     def set_tab(t): state.set_active_tab(t)
     grp_tabs = []
     
@@ -64,18 +64,18 @@ def build_header(ui_list, state):
     return y + 35 
 
 def draw_footer_status(screen, fonts, state):
-    """Footer technique : FPS | SPP | Résolution"""
+    """Technical Footer: FPS | SPP | Resolution"""
     h = 24 
     y = WIN_H - h
     
-    # Fond
+    # Background
     pygame.draw.rect(screen, (25, 25, 25), (VIEW_W, y, PANEL_W, h))
     pygame.draw.line(screen, (60, 60, 60), (VIEW_W, y), (WIN_W, y))
     
     f = fonts.get(12)
     col = (160, 160, 160)
     
-    # 1. FPS (Gauche) - On lit la valeur stockée dans state
+    # 1. FPS (Left) - Read value stored in state
     fps_txt = f"FPS: {int(state.current_fps):.0f}"
     
     # Scale Text
@@ -86,7 +86,7 @@ def draw_footer_status(screen, fonts, state):
     label_left = f"{fps_txt}   |   Scale: {scale_txt}"
     screen.blit(f.render(label_left, True, col), (VIEW_W + 10, y + 5))
     
-    # 2. Infos Rendu (Droite)
+    # 2. Render Info (Right)
     info_str = f"SPP: {state.accum_spp}   |   {state.conf.width}x{state.conf.height}"
     i_surf = f.render(info_str, True, col)
     i_rect = i_surf.get_rect(topright=(WIN_W - 10, y + 5))

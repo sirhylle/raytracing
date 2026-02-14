@@ -77,11 +77,11 @@ def apply_tone_mapping(linear_pixels):
     return data
 
 def convert_to_uint8(data):
-    """Convertit un tableau float (0..1) en uint8 (0..255)."""
+    """Converts a float array (0..1) to uint8 (0..255)."""
     return (np.clip(data, 0.0, 1.0) * 255).astype(np.uint8)
 
 def overlay_params(pil_image, text):
-    """Dessine un texte discret en haut à droite."""
+    """Draws discrete text at the top right."""
     draw = ImageDraw.Draw(pil_image)
     try:
         font = ImageFont.truetype("arial.ttf", 14) 
@@ -105,7 +105,7 @@ def overlay_params(pil_image, text):
     return pil_image
 
 def save_image(linear_pixels, filename, overlay_text=None):
-    """Pipeline complet : ToneMap -> Uint8 -> Sauvegarde Disque."""
+    """Full pipeline: ToneMap -> Uint8 -> Disk Save."""
     toned = apply_tone_mapping(linear_pixels)
     img_uint8 = convert_to_uint8(toned)
     img = Image.fromarray(img_uint8, 'RGB')
@@ -115,15 +115,15 @@ def save_image(linear_pixels, filename, overlay_text=None):
     print(f"Saved: {filename}")
 
 def save_debug_layer(data, filename, is_normal=False):
-    """Sauvegarde une passe brute (Albedo ou Normal) pour inspection."""
+    """Saves a raw pass (Albedo or Normal) for inspection."""
     img_data = data.copy()
     if is_normal:
         # img_data = (img_data + 1.0) * 0.5
-        # C++ envoie déjà du 0..1 => On ne touche à RIEN.
-        # Surtout pas de Gamma qui délave les vecteurs.
+        # C++ already sends 0..1 => Do NOT touch.
+        # Especially no Gamma which washes out vectors.
         pass
     else:
-        # Albedo (Couleur) => Besoin de Gamma pour être affiché correctement
+        # Albedo (Color) => Needs Gamma to be displayed correctly
         img_data = np.clip(img_data, 0.0, 1.0)
         img_data = np.power(img_data, 1.0/2.2)
     
@@ -132,7 +132,7 @@ def save_debug_layer(data, filename, is_normal=False):
     print(f"Saved Debug: {filename}")
 
 def try_denoise(pixels, **kwargs):
-    """Tente de débruiter l'image."""
+    """Attempts to denoise the image."""
     try:
         return denoise_image(pixels, **kwargs)
     except ImportError:
@@ -223,7 +223,7 @@ def run_single_frame(engine, conf, pool_threads):
         save_debug_layer(normal, os.path.join(IMG_DIR, f'output_normal{timestamp}.png'), is_normal=True)
     
     # Denoise
-    # Optimisation: On ne lance OIDN que si on VEUT sauver le Denoised
+    # Optimization: Only run OIDN if we WANT to save the Denoised version
     denoised_pixels = None
     if do_save_denoised:
         denoised_pixels = try_denoise(pixels, albedo=albedo, normal=normal)
@@ -256,9 +256,9 @@ def run_animation(engine, conf, pool_threads):
     if num_existing > 0:
         print(f"\n[Info] Found {num_existing} existing frames.")
         if num_existing < conf.frames:
-            # Pour l'instant on assume resume, on ne demande pas d'input interactif ici pour simplifier
-            # Ou on force la recompilation si nécessaire. 
-            # Dans le doute, on reprend.
+            # Assuming resume for now, not asking for interactive input to simplify.
+            # Or force recompile if necessary.
+            # In doubt, resume.
             print(f"Resuming from frame {num_existing}...")
             start_frame = num_existing
             for fpath in tqdm(existing_files, desc="Loading existing"):
@@ -337,7 +337,7 @@ def run_animation(engine, conf, pool_threads):
         print(f"Done: {vid_path}")
 
 def run(engine, config):
-    # Calcul Threads
+    # Setup Threads
     pool_threads = config.threads
     if pool_threads == 0 and config.leave_cores > 0:
         pool_threads = max(1, multiprocessing.cpu_count() - config.leave_cores)

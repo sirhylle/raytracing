@@ -32,10 +32,10 @@ from dataclasses import asdict
 
 class SceneBuilder:
     """
-    Sert d'intermédiaire entre la définition de la scène (Python) et le moteur (C++).
-    Son rôle est double :
-    1. Créer les objets dans le moteur via les bindings C++.
-    2. Stocker l'état initial (Position, Rotation, Scale) pour l'éditeur (Gizmo).
+    Intermediary between Python scene definition and the C++ engine.
+    Its role is two-fold:
+    1. Create objects in the engine via C++ bindings.
+    2. Store the initial state (Position, Rotation, Scale) for the editor (Gizmo).
     """
     def __init__(self, engine):
         self.engine = engine
@@ -291,8 +291,8 @@ def create_auto_sun(builder, intensity, radius, distance):
     2. Place a light at 'distance' units in that direction.
     3. Scale the color intensity to match the user's requested 'intensity'.
     """
-    # 1. Analyse du moteur
-    # Renvoie des Vec3 C++
+    # 1. Engine Analysis
+    # Returns C++ Vec3
     sun_dir, sun_color = builder.get_env_sun_info()
     
     # 2. Conversion en tableaux Python/Numpy pour usage ultérieur
@@ -325,7 +325,7 @@ def load_environment(builder, environment,
     env_exposure=1.0, env_background=1.0, env_diffuse=1.0, env_specular=1.0, 
     auto_sun=False, auto_sun_intensity=None, auto_sun_radius=None,
     auto_sun_dist=None, clipping_multiplier=None):
-    """Charge la HDRI ou une couleur unie et configure le soleil physique automatique via le Builder."""
+    """Charge HDRI or solid color and configure auto-sun via Builder."""
 
     # 1. Cas : Rien défini
     if environment is None:
@@ -378,8 +378,8 @@ def load_environment(builder, environment,
         if env_img is not None:
              clipping_threshold = float('inf')
              
-             # Le clipping dynamique n'a de sens que pour les HDRIs (hautes dynamiques)
-             # Pour une couleur unie (LDR ou HDR basse), le clipping est inutile voire contre-productif.
+             # Dynamic clipping only makes sense for HDRIs (high dynamic range)
+             # For a solid color (LDR or low HDR), clipping is useless or even detrimental.
              if isinstance(environment, str) and (auto_sun or (clipping_multiplier and clipping_multiplier > 0)):
                  if clipping_multiplier is not None and clipping_multiplier > 0:
                      clipping_threshold = median_val * clipping_multiplier
@@ -402,7 +402,7 @@ def load_environment(builder, environment,
                 auto_sun_radius, 
                 auto_sun_dist
             )
-            print(f"[Loader] Auto-Sun added via Builder. Registry Updated.")
+            print("[Loader] Auto-Sun added via Builder. Registry Updated.")
             
         return median_val if 'median_val' in locals() else 1.0
 
@@ -428,11 +428,10 @@ def load_scene_from_json(builder, filepath, config):
 
     print(f"[Loader] Parsing scene: {filepath}...")
 
-    # 1. NETTOYAGE
-    # On suppose que l'engine est vide ou qu'on veut le vider
-    # (Attention si on voulait merger, mais ici c'est un load complet)
-    # Pour l'init, l'engine est vide. Si re-load, il faut clear.
-    # builder.registry est supposé vide à l'init.
+    # 1. CLEANUP
+    # We assume the engine is empty or we want to clear it.
+    # Note: If merging, this logic would need to change. For init, engine is empty.
+    # builder.registry assumes empty at init.
     
     # 2. CONFIGURATION (Override Config Object)
     if "render_settings" in data:

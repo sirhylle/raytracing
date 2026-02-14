@@ -22,7 +22,7 @@ import pygame
 import time
 
 # ===============================================================================================
-# CONFIGURATION UI & CONSTANTES
+# CONFIGURATION UI & CONSTANTS
 # ===============================================================================================
 
 COL_BG      = (43, 43, 43)
@@ -75,7 +75,7 @@ class Button(UIElement):
 
     def draw(self, screen, fonts):
         if self.color_override:
-            # Cas 1 : Couleur forcée (Save/Load, Start Render))
+            # Case 1 : Forced Color (Save/Load, Start Render))
             if self.active:
                 # Si cliqué, on garde le bleu standard pour le feedback d'activation
                 # (Ou on pourrait assombrir l'override, mais le bleu est plus clair pour l'utilisateur)
@@ -238,8 +238,8 @@ class Slider(UIElement):
         self.get_cb = get_cb
         self.set_cb = set_cb
         self.dragging = False
-        self.power = power         # Le facteur logarithmique
-        self.color_track = color_track # Ta couleur personnalisée
+        self.power = power         # Logarithmic factor
+        self.color_track = color_track # Custom color
         self.enabled = True
 
     def handle_event(self, event, state):
@@ -277,11 +277,11 @@ class Slider(UIElement):
         # Récupération de la valeur
         val = self.get_cb()
         
-        # Calcul inverse pour l'affichage : Valeur -> Position visuelle
+        # Inverse calculation for display: Value -> Visual Position
         norm_val = (val - self.min_v) / (self.max_v - self.min_v) if self.max_v > self.min_v else 0
         norm_val = max(0.0, min(1.0, norm_val))
         
-        # On inverse la puissance pour trouver la position du pixel
+        # Inverse power to find pixel position
         t = norm_val ** (1.0 / self.power)
         
         # Dessin du fond (Rail)
@@ -338,7 +338,7 @@ class Separator(UIElement):
             line_y = self.rect.centery
             pygame.draw.line(screen, self.color, (self.rect.x + 10, line_y), (self.rect.right - 10, line_y))
             
-            # Si texte, on l'affiche avec un fond pour "couper" la ligne
+            # If text, display with background to "cut" the line
             if self.text:
                 f = fonts.get(11) # Police très petite
                 txt = f.render(f" {self.text} ", True, COL_TEXT_DIM) # Texte gris

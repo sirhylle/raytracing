@@ -3,7 +3,7 @@ from ..ui_core import *
 def build(ui_list, start_y, state, engine, on_start_render):
     ys = start_y
     
-    # --- HELPER ACCORDÉON (Identique à tab_scene) ---
+    # --- ACCORDION HELPER (Identical to tab_scene) ---
     def draw_header(title, section_name, toggle_switch=None):
         nonlocal ys
         def toggle(): state.toggle_accordion("RENDER", section_name)
@@ -21,7 +21,7 @@ def build(ui_list, start_y, state, engine, on_start_render):
         ys += 30
         return is_open
 
-    # Helpers d'accès aux configs (avec getattr/setattr pour gérer les params optionnels)
+    # Config access helpers (with getattr/setattr to handle optional params)
     def get_c(k, default): return getattr(state.conf, k, default)
     def set_c(k, v): setattr(state.conf, k, v); state.dirty = True ; state.needs_ui_rebuild = True
 
@@ -83,8 +83,8 @@ def build(ui_list, start_y, state, engine, on_start_render):
         btn(ui_list, 180, ys, 80, 22, "Sobol",  set_render_samp, 1, True, grp_samp, (state.render_sampler==1)).corners={'tr':4, 'br':4}
         ys += 40
 
-    # ==================== 3. ANIMATION (Nouveau) ====================
-    # On utilise un switch dans le header pour activer/désactiver l'animation
+    # ==================== 3. ANIMATION (New) ====================
+    # Use a switch in the header to toggle animation
     def toggle_anim(): 
         current = get_c('animate', False)
         set_c('animate', not current)
@@ -116,7 +116,7 @@ def build(ui_list, start_y, state, engine, on_start_render):
             lbl(ui_list, 10, ys, "Render single still image.", 11, (100,100,100))
             ys += 40
 
-    # ==================== 4. SYSTEM / TECH (Nouveau) ====================
+    # ==================== 4. SYSTEM / TECH (New) ====================
     if draw_header("SYSTEM", "SYSTEM"):
         # Threads
         lbl(ui_list, 10, ys+4, "CPU Threads", 12, COL_TEXT_DIM)
@@ -149,7 +149,7 @@ def build(ui_list, start_y, state, engine, on_start_render):
         
         
         # --- BVH Strategy ---
-        # On place ça AVANT les boutons Raw/Stamp
+        # Place this BEFORE Raw/Stamp buttons
         import cpp_engine
         lbl(ui_list, 10, ys+3, "BVH Strategy", 12, COL_TEXT_DIM)
         
@@ -163,7 +163,7 @@ def build(ui_list, start_y, state, engine, on_start_render):
         
         grp_bvh = []
         # Buttons: Midpoint | SAH
-        # On utilise toggle=True pour qu'ils restent "enfoncés" (bleus) si actifs
+        # Use toggle=True so they stay "pressed" (blue) if active
         btn(ui_list, 100, ys, 80, 22, "Midpoint", lambda: set_bvh("Midpoint"), toggle=True, grp=grp_bvh, active=(state.bvh_type == "Midpoint"))\
            .corners={'tl':4, 'bl':4}
         btn(ui_list, 180, ys, 80, 22, "SAH",      lambda: set_bvh("SAH"),      toggle=True, grp=grp_bvh, active=(state.bvh_type == "SAH"))\
@@ -199,7 +199,7 @@ def build(ui_list, start_y, state, engine, on_start_render):
         # Depth (Bounces)
         lbl(ui_list, 10, ys+3, "Bounces", 12, COL_TEXT_DIM)
         
-        # Helper pour update depth (avec cast int)
+        # Helper to update depth (with int cast)
         def set_depth(d): 
              d_int = int(d)
              if state.preview_depth != d_int:
@@ -208,8 +208,8 @@ def build(ui_list, start_y, state, engine, on_start_render):
                  state.accum_spp = 0
                  state.dirty = True
 
-        # Slider 1 a 30 (Log power 1.0 = Linear is fine for small range, or 1.5 for precision at low values)
-        # On utilise display "center" pour la valeur
+        # Slider 1 to 30 (Log power 1.0 = Linear is fine for small range, or 1.5 for precision at low values)
+        # Using "center" display for value
         ui_list.append(Slider(VIEW_W+100, ys, 180, 22, 1, 30, lambda: state.preview_depth, set_depth, power=1.5))
 
         ys += 40
@@ -229,7 +229,7 @@ def build(ui_list, start_y, state, engine, on_start_render):
         ys += 40
 
     # ==================== FOOTER ACTION ====================
-    # On laisse un peu d'espace avant le gros bouton
+    # Leave some space before the big button
     # ys += 10
     # btn(ui_list, 10, ys, PANEL_W - 20, 40, "START RENDER", on_start_render, col_ov=(40, 100, 40), bd_ov=(80, 160, 80))
     # lbl(ui_list, 0, ys+45, "Will freeze editor until finished.", 11, COL_TEXT_DIM, align="center", width=PANEL_W)

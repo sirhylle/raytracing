@@ -149,11 +149,11 @@ class MaterialsShowcase(Scene):
         def dist_sq(v1, v2): return (v1.x()-v2.x())**2 + (v1.y()-v2.y())**2 + (v1.z()-v2.z())**2
         random.seed(42)
 
-        # 1. Le Sol (Plateau damier)
+        # 1. The Floor (Checkerboard)
         builder.add_checker_sphere(v3(0, -1000, 0), 1000.0, [0.1, 0.1, 0.1], [0.5, 0.5, 0.5], 2.0)
         
         placed_spheres = []
-        # 2. Les 4 Grosses Sphères
+        # 2. Large Spheres
         large_radius = 1.0
         large_y = large_radius
         large_positions = [v3(-4.5, large_y, 0), v3(-1.5, large_y, 0), v3(1.5, large_y, 0), v3(4.5, large_y, 0)]
@@ -165,7 +165,7 @@ class MaterialsShowcase(Scene):
         
         for pos in large_positions: placed_spheres.append((pos, large_radius))
 
-        # 3. Les Mini Sphères
+        # 3. Mini Spheres
         mini_radius = 0.25
         padding = 0.05
         
@@ -233,9 +233,7 @@ class MeshScene1(Scene):
             override_ior=vals['ir'],
             override_transmission=vals['transmission']
         ) # Note: 'override_mat' is string type in C++, 'standard' is used.
-        # But wait, load_mesh_asset Signature:
-        # load_mesh_asset(name, v, i, n, mat_type, color, rough, metal, ir, trans)
-        # So I need to verify loader.py behavior for 'load_asset' which builds 'load_mesh_asset' calls.
+        # (The loader correctly maps override params to C++ load_mesh_asset)
 
         builder.add_mesh_instance("my_bunny_asset", pos=[0, 0, 0], rot=[0, 0, 0], scale=[1.0, 1.0, 1.0])
 

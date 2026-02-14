@@ -4,7 +4,7 @@ import numpy as np
 def build(ui_list, start_y, state, engine):
     ys = start_y
     
-    # Helper identique aux autres tabs pour cohérence visuelle
+    # Helper identical to other tabs for visual consistency
     def draw_header(title, section_name):
         nonlocal ys
         
@@ -27,7 +27,7 @@ def build(ui_list, start_y, state, engine):
 
     # --- 1. PRIMITIVES ---
     if draw_header("PRIMITIVES", "PRIMITIVES"):
-        # Grille de boutons 2 colonnes
+        # Button Grid (2 columns)
         bw = (PANEL_W - 30) // 2
         
         btn(ui_list, 10, ys, bw, 30, "Sphere", add_prim, "sphere")

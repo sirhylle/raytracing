@@ -86,7 +86,7 @@ public:
 
   // --- PRIMITIVES (PBR UPDATED) ---
 
-  // NOTE: On ajoute 'metallic' et 'transmission' aux arguments
+  // NOTE: Added 'metallic', 'transmission', and 'roughness' support.
   int add_sphere(const Vec3 &center, Real radius, std::string mat_type,
                  const Vec3 &color, Real roughness = 0.5f, Real metallic = 0.0f,
                  Real ir = 1.5f, Real transmission = 0.0f) {

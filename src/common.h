@@ -21,9 +21,6 @@ const Real INFINITY_REAL = std::numeric_limits<Real>::infinity();
 // 1. Gestion du faux soleil (InvisibleLight) dans les reflets
 const bool VISIBLE_IN_REFLECTIONS = true;
 
-// DEPRECATED: Shadow transmission is now calculated dynamically (Albedo *
-// Transmission) const Real DIELECTRIC_SHADOW_TRANSMISSION = 0.8f;
-
 // 3. Epsilon pour éviter l'acné (Self-Intersection)
 // Offset pour éviter qu'un rayon ne re-intersecte la surface d'où il part.
 //

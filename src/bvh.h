@@ -282,12 +282,13 @@ private:
       // Because BVHNode only has 2 pointers. We can't store a vector of 8
       // objects.
 
-      // CRITICAL FLAW analysis:
-      // The current BVHNode structure (tree of 2 children) REQUIRES fully
-      // splitting down to 1 or 2 objects. We CANNOT stop at 8 objects unless we
-      // have a "LeafNode" that holds a list. We don't have that here. So the
-      // termination condition `minCost >= leafCost` is moot if count > 2. We
-      // MUST split.
+      // LIMITATION:
+      // The current BVHNode structure is a strict binary tree where each node
+      // has exactly two children (left/right). We cannot store a list of
+      // objects in a leaf node. Therefore, we must recurse until we isolate 1
+      // or 2 objects, prohibiting the creation of "fat leaves" with count < 8.
+      // The condition `minCost >= leafCost` is thus largely ignored for counts
+      // > 2.
     }
 
     // Force split if count > 2, regardless of cost?

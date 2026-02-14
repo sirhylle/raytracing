@@ -114,7 +114,7 @@ inline Vec3 sample_direct_light(const Ray &r, const HitRecord &rec,
         if (world.hit(shadow_ray, EPSILON, INFINITY_REAL, hit_obstacle)) {
           if (hit_obstacle.mat_ptr->is_transparent()) {
 
-            // CRITICAL FIX: Deterministic Shadow Throughput for Transparency
+            // NOTE: Deterministic Shadow Throughput for Transparency
             // We follow the user request: Shadow intensity depends on
             // Transmission. Using standard Beer's Law approximation for thin
             // surfaces (Throughput = Albedo * Transmission) No more stochastic
@@ -240,7 +240,7 @@ inline Vec3 ray_color(const Ray &r, const Hittable &world,
 
       Vec3 L_e = env_map->sample(r.dir, mode);
 
-      // CRITICAL FIX: Primary Rays must not be weighted by MIS.
+      // NOTE: Primary Rays must not be weighted by MIS.
       // They are "Dirac" observations from the camera (Strategy 1 with 100%
       // weight). If we apply MIS, the huge PDF of the unclipped sun (Strategy
       // 2) will crush the BSDF/Camera weight to zero -> Black Sun.

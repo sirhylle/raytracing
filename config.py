@@ -51,7 +51,7 @@ class RenderConfig:
 def build_configuration(args, scene_config):
     final_conf = RenderConfig()
 
-    # 1. Appliquer la config de la scène
+    # 1. Apply Scene Config
     if scene_config:
         scene_data = {k: v for k, v in asdict(scene_config).items() if v is not None}
         for k, v in scene_data.items():
@@ -60,7 +60,7 @@ def build_configuration(args, scene_config):
 
     # 2. Gestion de la string compacte Auto-Sun
     if hasattr(args, 'auto_sun') and args.auto_sun is not None:
-        # On active le flag principal quoi qu'il arrive
+        # Enable main flag in any case
         if not final_conf.auto_sun:
             print(f"[Override] CLI 'auto_sun': {final_conf.auto_sun} -> True")
             final_conf.auto_sun = True
@@ -68,7 +68,7 @@ def build_configuration(args, scene_config):
         # Si c'est une string de config (pas juste le flag par défaut 'ON')
         if type(args.auto_sun) == str and args.auto_sun != '':
             try:
-                # On découpe par espace : "I10 R30 D1000" -> ["I10", "R30", "D1000"]
+                # Split by space: "I10 R30 D1000" -> ["I10", "R30", "D1000"]
                 parts = args.auto_sun.split()
                 for p in parts:
                     code = p[0].upper()      # La lettre (I, R, D, C)
@@ -97,7 +97,7 @@ def build_configuration(args, scene_config):
         if v is not None and hasattr(final_conf, k) and k != 'auto_sun':
             # Gestion spéciale pour les vecteurs (listes)
             if k in ['lookfrom', 'lookat', 'vup']:
-                # args.lookfrom est [1, 2, 3] (list de float si nargs=3)
+                # args.lookfrom is [1, 2, 3] (list of float if nargs=3)
                 print(f"[Override] CLI '{k}': {getattr(final_conf, k)} -> {v}")
                 setattr(final_conf, k, v)
             else:

@@ -6,13 +6,12 @@
 // ===============================================================================================
 // FORWARD DECLARATION
 // ===============================================================================================
-// On dit au compilateur : "La classe Material existe, t'inquiète pas, je te
-// donnerai les détails plus tard." Cela permet d'utiliser 'Material*' dans
-// HitRecord sans inclure materials.h (qui n'existe pas encore).
+// Forward declaration to allow 'Material*' usage in HitRecord
+// without checking circular includes.
 class Material;
 
 // ===============================================================================================
-// HIT RECORD (Le "Constat d'Accident" du rayon)
+// HIT RECORD (Structure containing intersection details)
 // ===============================================================================================
 
 struct HitRecord {

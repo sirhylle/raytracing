@@ -43,7 +43,7 @@ def render_thread_task(engine, config, app_state):
 
 # --- GIZMO MATH UTILS ---
 def world_to_screen(view_rect, cam_pos, yaw, pitch, fov, point_3d):
-    """Projette un point 3D sur l'écran en utilisant les vecteurs de base de la caméra."""
+    """Projects a 3D point to screen using camera basis vectors."""
     
     # 1. Reconstruire les vecteurs de la caméra (Copie conforme de ta logique de mouvement)
     # Forward (Direction du regard)
@@ -100,7 +100,7 @@ def world_to_screen(view_rect, cam_pos, yaw, pitch, fov, point_3d):
     return (px, py)
 
 def draw_gizmo(screen, state, vp_rect):
-    """Dessine les axes (Gizmo) plus esthétiques avec des flèches."""
+    """Draws aesthetic axes (Gizmo) with arrows."""
     if state.axis_mode == "NONE" or state.selected_id == -1: return
     
     info = state.get_selected_info()
@@ -205,7 +205,7 @@ def run(engine, config, builder):
 
     ui_list = []
     
-    # Variables pour l'hysteresis de résolution (Qualité dynamique)
+    # Variables for Resolution Hysteresis (Dynamic Quality)
     last_render_dt = 0.03
     
     def start_render():
@@ -251,7 +251,7 @@ def run(engine, config, builder):
         dt = now - last_time
         last_time = now
 
-        # Écran de chargement si rendu offline en cours
+        # Loading screen if offline render is in progress
         if app_state.is_rendering:
             pygame.event.pump()
             overlay = pygame.Surface((ui_core.WIN_W, ui_core.WIN_H), pygame.SRCALPHA)
@@ -480,7 +480,7 @@ def run(engine, config, builder):
         # A. Render Logic
         should_render = False
         if app_state.preview_mode == 2: # RAY
-            # En Raytracing : On rend si ça a bougé OU si l'image n'est pas finie (SPP < Max)
+            # Raytracing: Render if changed OR image not finished (SPP < Max)
             if scene_changed or app_state.accum_spp < config.spp: 
                 should_render = True
         else: # CLAY / NORMALS
@@ -538,7 +538,7 @@ def run(engine, config, builder):
                 app_state.accum_spp += batch
             else: # PREVIEW
                 raw = engine.render_preview(rw, rh, app_state.preview_mode, render_threads)
-                app_state.accum_spp = 0 # Pas d'accumulation en preview
+                app_state.accum_spp = 0 # No accumulation in preview
             
             # Tone Mapping & Post Process
             if app_state.preview_mode == 2:
@@ -561,8 +561,8 @@ def run(engine, config, builder):
             app_state.current_image = surf
             last_render_dt = time.time() - t0
 
-            # On met à jour le FPS seulement quand on calcule une image
-            # On calcule le FPS basé sur le temps de rendu (Render FPS) et non le Loop FPS
+            # Update FPS only when computing an image
+            # FPS based on render time (Render FPS) not Loop FPS
             real_fps = 1.0 / max(0.001, last_render_dt)
             app_state.current_fps = real_fps
             #if len(ui_list) > 0 and isinstance(ui_list[0], ui_core.Label):
@@ -578,7 +578,7 @@ def run(engine, config, builder):
             screen.blit(app_state.current_image, (vp_rect.x, vp_rect.y))
 
         if app_state.picking_focus:
-            # Fond semi-transparent pour le texte
+            # Semi-transparent background for text
             msg = "PICK FOCUS POINT (CLICK ON SCENE) OR PRESS ESC"
             f_overlay = fonts.get(14)
             txt_surf = f_overlay.render(msg, True, (255, 255, 255))
@@ -595,14 +595,14 @@ def run(engine, config, builder):
             txt_rect = txt_surf.get_rect(center=bg_rect.center)
             screen.blit(txt_surf, txt_rect)
 
-        # Dessin du Gizmo 3D (Overlay)
+        # Draw 3D Gizmo (Overlay)
         draw_gizmo(screen, app_state, vp_rect)
 
         # C. Draw UI Panel
-        # 1. Fond Panel (Gris moyen - Remplissage total)
+        # 1. Panel Background (Medium Grey - Full Fill)
         pygame.draw.rect(screen, ui_core.COL_PANEL, (ui_core.VIEW_W, 0, ui_core.PANEL_W, ui_core.WIN_H))
 
-        # 2. Header (Haut)
+        # 2. Header (Top)
         header_height = 91
         pygame.draw.rect(screen, ui_core.COL_HEADER, (ui_core.VIEW_W, 0, ui_core.PANEL_W, header_height))
         pygame.draw.line(screen, ui_core.COL_BORDER, (ui_core.VIEW_W, 0), (ui_core.VIEW_W, ui_core.WIN_H))

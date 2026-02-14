@@ -106,9 +106,8 @@ def cmd_init(args):
 
     # Template Customization
     if template_name == 'cornell':
-        # Juste une référence, on ne va pas dumper toute la cornell box procédurale ici
-        # Mais on pourrait pré-remplir les murs. 
-        # Pour l'instant on fait simple.
+        # Just a reference, we won't dump the entire procedural Cornell Box here.
+        # Could pre-fill walls, but keeping it simple for now.
         print("[Info] Cornell template not fully implemented in JSON init yet. Creating basic scene.")
     elif template_name == 'outdoor':
         data["environment"]["auto_sun"] = True
@@ -137,8 +136,8 @@ def main():
     subparsers = parser.add_subparsers(dest='command', help='Available commands')
 
     # --- COMMON ARGUMENTS (reused across mixins) ---
-    # Pour éviter la duplication, on peut utiliser des parents parsers, 
-    # mais le plus simple ici est de définir des helpers ou de répéter un peu (c'est plus explicite).
+    # To avoid duplication, we could use parent parsers,
+    # but simplest is defining helpers or repeating slightly (more explicit).
 
     # 1. RENDER COMMAND
     parser_render = subparsers.add_parser('render', help='Render a scene (Headless)')
