@@ -16,6 +16,7 @@ DESCRIPTION:
 
 ================================================================================================
 """
+import sys
 import cpp_engine
 import os
 import numpy as np
@@ -23,6 +24,7 @@ import imageio.v3 as iio
 import scenes
 import transforms as tf
 from config import RenderConfig
+from dataclasses import asdict
 
 # ==================================================================================
 # SCENE BUILDER (Wrapper & State Manager)
@@ -408,38 +410,255 @@ def load_environment(builder, environment,
         print(f"[Loader] Failed to load environment map: {e}")
         return 1.0
 
-def initialize_scene_and_engine(args, scene_name=None):
+def load_scene_from_json(builder, filepath, config):
     """
-    Initialise le moteur, charge la scène.
-    Retourne (engine, config, builder).
+    Charge une scène JSON dans le moteur via le Builder et met à jour la Config.
+    """
+    import json
+    if not os.path.exists(filepath):
+        print(f"[Loader] Error: File not found {filepath}")
+        return False
+
+    try:
+        with open(filepath, 'r') as f:
+            data = json.load(f)
+    except Exception as e:
+        print(f"[Loader] JSON Load Failed: {e}")
+        return False
+
+    print(f"[Loader] Parsing scene: {filepath}...")
+
+    # 1. NETTOYAGE
+    # On suppose que l'engine est vide ou qu'on veut le vider
+    # (Attention si on voulait merger, mais ici c'est un load complet)
+    # Pour l'init, l'engine est vide. Si re-load, il faut clear.
+    # builder.registry est supposé vide à l'init.
+    
+    # 2. CONFIGURATION (Override Config Object)
+    if "render_settings" in data:
+        rs = data["render_settings"]
+        config.width = rs.get("width", config.width)
+        config.height = rs.get("height", config.height)
+        config.spp = rs.get("spp", config.spp)
+        config.depth = rs.get("depth", config.depth)
+        config.sampler = rs.get("render_sampler", config.sampler) # Default to render sampler
+        
+        # System
+        config.param_stamp = rs.get("param_stamp", config.param_stamp)
+        config.keep_raw = rs.get("save_raw", False) # Legacy mapping
+        # Try new flags if present? JSON might not have them yet.
+
+        # Animation
+        config.animate = rs.get("animate", config.animate)
+        config.frames = rs.get("frames", config.frames)
+        config.fps = rs.get("fps", config.fps)
+        config.radius = rs.get("turntable_radius", config.radius)
+
+    if "system" in data:
+         sys_conf = data["system"]
+         # Epsilon/Firefly are engine globals, not in Config usually? 
+         # But we might want to set them in Engine here.
+         if "epsilon" in sys_conf: cpp_engine.set_epsilon(float(sys_conf["epsilon"]))
+         if "firefly_clamp" in sys_conf: cpp_engine.set_firefly_clamp(float(sys_conf["firefly_clamp"]))
+
+    if "camera" in data:
+        cam = data["camera"]
+        config.lookfrom = cam.get("lookfrom", config.lookfrom)
+        config.lookat = cam.get("lookat", config.lookat)
+        config.vfov = cam.get("vfov", config.vfov)
+        config.aperture = cam.get("aperture", config.aperture)
+        config.focus_dist = cam.get("focus_dist", config.focus_dist)
+
+    # 3. ENVIRONMENT & SUN
+    if "environment" in data:
+        env = data["environment"]
+        config.env_exposure = env.get("exposure", config.env_exposure)
+        config.env_background = env.get("background_level", env.get("light_level", 1.0))
+        config.env_diffuse = env.get("diffuse_level", env.get("direct_level", 1.0))
+        config.env_specular = env.get("specular_level", env.get("indirect_level", 1.0))
+        
+        # Environnement Rotation (Not in Config yet? Engine only?)
+        # On l'applique directement au moteur
+        rot = env.get("rotation", 0.0)
+        builder.engine.set_env_rotation(rot)
+        
+        config.auto_sun = env.get("auto_sun", config.auto_sun)
+        config.auto_sun_intensity = env.get("sun_intensity", config.auto_sun_intensity)
+        config.auto_sun_radius = env.get("sun_radius", config.auto_sun_radius)
+        config.auto_sun_dist = env.get("sun_dist", config.auto_sun_dist)
+
+        env_map_path = env.get("map_path")
+        env_bg_color = env.get("background_color")
+        
+        if env_map_path:
+             if not os.path.isabs(env_map_path):
+                 # Relative to the SCENE file ideally, or CWD? 
+                 # Current implementation assumes CWD or compatible relative path.
+                 # Let's try to resolve relative to scene file if possible, or CWD.
+                 # For now, stick to CWD logic to match legacy.
+                 env_map_path = os.path.abspath(env_map_path)
+             config.environment = env_map_path
+        elif env_bg_color:
+             config.environment = env_bg_color
+    
+    # 4. OBJECTS
+    if "objects" in data:
+        for obj in data["objects"]:
+            otype = obj.get("type", "unknown")
+            pos = obj.get("pos", [0,0,0])
+            rot = obj.get("rot", [0,0,0])
+            scale = obj.get("scale", [1,1,1])
+            
+            # PBR
+            mat = obj.get("mat_type", "lambertian")
+            col = obj.get("color", [0.8, 0.8, 0.8])
+            rough = obj.get("roughness", 0.5)
+            metal = obj.get("metallic", 0.0)
+            trans = obj.get("transmission", 0.0)
+            ior = obj.get("ir", 1.5)
+            # Re-construction
+            if otype == 'sphere':
+                builder.add_sphere(pos, scale[0], mat, col, roughness=rough, metallic=metal, ir=ior, transmission=trans)
+            
+            elif otype == 'mesh':
+                name = obj.get("asset_name", "Unknown")
+                # Handle relative asset paths
+                if not os.path.exists(name):
+                     # Try relative to scene file
+                     scene_dir = os.path.dirname(filepath)
+                     alt_path = os.path.join(scene_dir, name)
+                     if os.path.exists(alt_path):
+                         name = alt_path
+                     elif os.path.exists(os.path.join("assets", os.path.basename(name))):
+                         name = os.path.join("assets", os.path.basename(name))
+
+                # Load asset if needed
+                if name not in builder.asset_library:
+                    builder.load_asset(os.path.basename(name), name)
+                
+                oid = builder.add_mesh_instance(os.path.basename(name), pos, rot, scale)
+                # Apply overrides
+                if oid in builder.registry:
+                    builder.registry[oid]['color'] = col
+                    builder.registry[oid]['mat_type'] = mat
+                    builder.registry[oid]['roughness'] = rough
+                    builder.registry[oid]['metallic'] = metal
+                    builder.registry[oid]['ir'] = ior
+                    builder.registry[oid]['transmission'] = trans
+                    builder.registry[oid]['transmission'] = trans
+                    # Push material to engine
+                    v_col = cpp_engine.Vec3(float(col[0]), float(col[1]), float(col[2]))
+                    builder.engine.update_instance_material(oid, mat, v_col, float(rough), float(metal), float(ior), float(trans))
+
+            elif otype == 'checker_sphere':
+                c2 = obj.get("color2", [0,0,0])
+                tscale = obj.get("texture_scale", 4.0)
+                builder.add_checker_sphere(pos, scale[0], col, c2, tscale)
+            
+            elif otype == 'quad':
+                u = obj.get("u", [1,0,0])
+                v = obj.get("v", [0,1,0])
+                builder.add_quad(pos, u, v, mat, col, roughness=rough, metallic=metal, ir=ior, transmission=trans)
+                
+            elif otype == 'light_sun':
+                # Skip, handled by environment auto-sun
+                continue
+
+    return True
+
+
+def initialize_scene_and_engine(scene_source=None, args_overrides=None):
+    """
+    Initialise le moteur.
+    - scene_source: Chemin fichier (.json) OU Nom de scène procédurale (ex: 'cornell').
+    - args_overrides: Arguments CLI pour surcharger config.py (ex: --spp).
     """
     print("[Loader] Initializing Engine...")
     engine = cpp_engine.Engine()
-    
-    # Instanciation du Builder qui wrapper l'engine
     builder = SceneBuilder(engine)
     
-    selected_scene = scene_name if scene_name else 'cornell'
-    if hasattr(args, 'scene') and args.scene:
-        selected_scene = args.scene
+    # 1. Base Configuration (Defaults)
+    from config import build_configuration, RenderConfig
+    # On commence avec une config vide/par défaut
+    base_config = RenderConfig()
+    
+    # 2. Loading Logic
+    is_json = False
+    
+    # Détection de la source
+    is_json = False
+    if scene_source:
+        # 1. Search for File Match (CWD or scenes/)
+        candidates = [scene_source]
+        
+        # If relative path, try appending .json and checking scenes/
+        if not os.path.isabs(scene_source):
+            if not scene_source.endswith('.json'):
+                candidates.append(scene_source + ".json")
+            
+            # Check scenes/ subdirectory
+            candidates.append(os.path.join("scenes", scene_source))
+            if not scene_source.endswith('.json'):
+                candidates.append(os.path.join("scenes", scene_source + ".json"))
+        
+        found_file = None
+        for c in candidates:
+            if os.path.isfile(c):
+                found_file = c
+                break
+        
+        if found_file:
+             print(f"[Loader] Resolved scene file: {found_file}")
+             scene_source = found_file
+             is_json = True
+        
+        # 2. Check Procedural Match
+        elif scene_source in scenes.AVAILABLE_SCENES:
+             is_json = False
+        
+        # 3. Fallback
+        else:
+             print(f"[Loader] Warning: Unknown scene '{scene_source}'. Falling back to default 'cornell'.")
+             scene_source = 'cornell'
+    else:
+        # Default
+        scene_source = 'cornell'
 
-    print(f"[Loader] Loading Scene: {selected_scene}")
-    scene_obj = scenes.AVAILABLE_SCENES[selected_scene]
-    
-    # Setup de la scène (geometry, materials) VIA LE BUILDER
-    partial_config = scene_obj.setup(builder)
-    
-    # Config Complète
-    from config import build_configuration
-    config = build_configuration(args, partial_config)
-    
-    # Camera Init
+    if is_json:
+        print(f"[Loader] Loading JSON Scene: {scene_source}")
+        # On charge le JSON dans base_config et le builder
+        success = load_scene_from_json(builder, scene_source, base_config)
+        if not success:
+            print("[Loader] Failed to load JSON. Exiting.")
+            sys.exit(1)
+    else:
+        print(f"[Loader] Loading Procedural Scene: {scene_source}")
+        scene_obj = scenes.AVAILABLE_SCENES[scene_source]
+        # Setup procédural
+        partial = scene_obj.setup(builder)
+        # Apply partial to base
+        if partial:
+            data = {k: v for k, v in asdict(partial).items() if v is not None}
+            for k, v in data.items():
+                if hasattr(base_config, k): setattr(base_config, k, v)
+
+    # 3. Apply CLI Overrides (Last interaction)
+    # On utilise build_configuration pour merger args_overrides sur base_config
+    if args_overrides:
+        # build_configuration attend (args, scene_config)
+        # Ici scene_config est notre base_config déjà remplie
+        config = build_configuration(args_overrides, base_config)
+    else:
+        config = base_config
+
+    # 4. Engine Camera Setup
     def v3(l): return cpp_engine.Vec3(float(l[0]), float(l[1]), float(l[2]))
     aspect = config.width / config.height
     engine.set_camera(v3(config.lookfrom), v3(config.lookat), v3(config.vup),
                       float(config.vfov), float(aspect), float(config.aperture), float(config.focus_dist))
 
-    # Environment (Passe le builder)
+    # 5. Environment Load
+    # Note: Si JSON, load_environment est appelé ici avec les params du config (qui viennent du JSON)
     load_environment(builder, config.environment, 
                      env_exposure=config.env_exposure,
                      env_background=config.env_background, 
@@ -451,19 +670,15 @@ def initialize_scene_and_engine(args, scene_name=None):
                      auto_sun_dist=config.auto_sun_dist,
                      clipping_multiplier=config.clipping_multiplier)
 
-    # 4. Blue Noise Dithering (Optional Asset)
+    # 6. Blue Noise
     bn_path = "blue_noise.png"
     if os.path.exists(bn_path):
         try:
             print(f"[Loader] Loading Blue Noise Dither Tile: {bn_path}")
             bn_img = iio.imread(bn_path)
-            # Ensure grayscale / single channel
-            if bn_img.ndim == 3:
-                bn_img = bn_img[:, :, 0]
+            if bn_img.ndim == 3: bn_img = bn_img[:, :, 0]
             bn_data = bn_img.astype(np.float32)
-            if bn_img.dtype == np.uint8:
-                bn_data /= 255.0
-            
+            if bn_img.dtype == np.uint8: bn_data /= 255.0
             engine.set_blue_noise_texture(np.ascontiguousarray(bn_data))
         except Exception as e:
             print(f"[Loader] Warning: Failed to load blue noise texture: {e}")

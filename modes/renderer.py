@@ -203,24 +203,41 @@ def run_single_frame(engine, conf, pool_threads):
     print("Processing outputs...")
     ensure_dir(IMG_DIR)
     
-    if conf.save_raw: 
+    # Determine what to save based on flags
+    do_save_denoised = conf.keep_denoised
+    do_save_raw = conf.keep_raw
+    do_save_albedo = conf.keep_albedo
+    do_save_normal = conf.keep_normal
+
+    # Default behavior: If no flags are provided, save denoised only
+    if not (do_save_denoised or do_save_raw or do_save_albedo or do_save_normal):
+        do_save_denoised = True
+
+    if do_save_raw: 
         save_image(pixels, os.path.join(IMG_DIR, f'output_raw{timestamp}.png'), overlay_txt)
 
-    if albedo is not None and conf.save_raw:
+    if albedo is not None and do_save_albedo:
         save_debug_layer(albedo, os.path.join(IMG_DIR, f'output_albedo{timestamp}.png'), is_normal=False)
     
-    if normal is not None and conf.save_raw:
+    if normal is not None and do_save_normal:
         save_debug_layer(normal, os.path.join(IMG_DIR, f'output_normal{timestamp}.png'), is_normal=True)
     
     # Denoise
-    denoised_pixels = try_denoise(pixels, albedo=albedo, normal=normal)
+    # Optimisation: On ne lance OIDN que si on VEUT sauver le Denoised
+    denoised_pixels = None
+    if do_save_denoised:
+        denoised_pixels = try_denoise(pixels, albedo=albedo, normal=normal)
     
     if denoised_pixels is not None:
         print("Denoising success (with Feature Buffers).")
         save_image(denoised_pixels, os.path.join(IMG_DIR, f'output_denoised{timestamp}.png'), overlay_txt)
-    else:
-        print("Skipping denoise output (failed or module missing). 保存 l'image raw.")
-        save_image(pixels, os.path.join(IMG_DIR, f'output_denoised{timestamp}.png'), overlay_txt)
+    elif do_save_denoised:
+        print("Skipping denoise output (failed or module missing).")
+        # Fallback: if user wanted denoised but it failed, we might want to warn or save raw as backup?
+        # For now, if explicit denoised was requested and failed, we effectively save nothing for that channel.
+        # But if it was the DEFAULT (no flags), we should probably save the raw one as 'output.png' or similar.
+        print("Fallback: Saving RAW as main output due to denoise failure.")
+        save_image(pixels, os.path.join(IMG_DIR, f'output_fallback{timestamp}.png'), overlay_txt)
 
 def run_animation(engine, conf, pool_threads):
     import imageio
@@ -274,17 +291,38 @@ def run_animation(engine, conf, pool_threads):
                           float(conf.aperture), float(conf.focus_dist))
         
         try:
+            # Determine saving preference
+            do_save_denoised = conf.keep_denoised
+            do_save_raw = conf.keep_raw
+            if not (do_save_denoised or do_save_raw):
+                do_save_denoised = True
+
             outputs = engine.render(conf.width, conf.height, conf.spp, conf.depth, pool_threads, conf.sampler)
             raw = outputs['color']
             
-            clean = try_denoise(raw, albedo=outputs['albedo'], normal=outputs['normal'])
-            if clean is None: clean = raw
+            clean = None
+            if do_save_denoised:
+                clean = try_denoise(raw, albedo=outputs['albedo'], normal=outputs['normal'])
             
-            final = apply_tone_mapping(clean)
-            img_uint8 = convert_to_uint8(final)
+            # 1. Save Raw if requested
+            if do_save_raw:
+                 raw_uint8 = convert_to_uint8(apply_tone_mapping(raw))
+                 Image.fromarray(raw_uint8, 'RGB').save(os.path.join(output_dir, f"frame_raw_{i:04d}.png"))
+
+            # 2. Prepare Final (Denoised or Raw fallback)
+            final_pixels = raw
+            if clean is not None:
+                final_pixels = clean
             
-            frame_path = os.path.join(output_dir, f"frame_{i:04d}.png")
-            Image.fromarray(img_uint8, 'RGB').save(frame_path)
+            final_mapped = apply_tone_mapping(final_pixels)
+            img_uint8 = convert_to_uint8(final_mapped)
+
+            # 3. Save Final/Denoised if requested (or default)
+            if do_save_denoised:
+                frame_path = os.path.join(output_dir, f"frame_{i:04d}.png")
+                Image.fromarray(img_uint8, 'RGB').save(frame_path)
+            
+            # Video compilation always uses the best available version
             frames_data.append(img_uint8)
             
         except Exception as e:

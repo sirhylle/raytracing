@@ -43,7 +43,10 @@ class RenderConfig:
     threads: int = 0
     leave_cores: int = 2
     param_stamp: bool = False
-    save_raw: bool = False
+    keep_denoised: bool = False
+    keep_raw: bool = False
+    keep_albedo: bool = False
+    keep_normal: bool = False
 
 def build_configuration(args, scene_config):
     final_conf = RenderConfig()

@@ -624,11 +624,4 @@ def run(engine, config, builder):
         pygame.display.flip()
 
     pygame.quit()
-    # Retour pour le mode replay
-    return {
-        'lookfrom': app_state.cam_pos.tolist(),
-        'lookat': (app_state.cam_pos + np.array([math.sin(app_state.yaw), math.sin(app_state.pitch), math.cos(app_state.yaw)])).tolist(),
-        'vfov': app_state.vfov,
-        'aperture': app_state.aperture,
-        'focus_dist': app_state.focus_dist
-    }
+    return None

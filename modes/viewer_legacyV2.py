@@ -1442,10 +1442,4 @@ def run(engine, config, builder):
         pygame.display.flip()
 
     pygame.quit()
-    return {
-        'lookfrom': state.cam_pos.tolist(),
-        'lookat': (state.cam_pos + np.array([math.sin(state.yaw), math.sin(state.pitch), math.cos(state.yaw)])).tolist(),
-        'vfov': state.vfov,
-        'aperture': state.aperture,
-        'focus_dist': state.focus_dist
-    }
+    return None
