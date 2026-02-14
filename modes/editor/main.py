@@ -544,8 +544,14 @@ def run(engine, config, builder):
             
             # --- Draw / Render ---
             render_threads = config.system.threads
-            rw = int(app_state.conf.render.width / app_state.res_scale)
-            rh = int(app_state.conf.render.height / app_state.res_scale)
+            
+            # VIEWPORT-RELATIVE SCALING: Interactive resolution is decoupled from Offline resolution.
+            # We use the dimensions of the fitted viewport (viewport_rect) as our 1:1 base.
+            base_w = app_state.viewport_rect[2]
+            base_h = app_state.viewport_rect[3]
+            
+            rw = int(base_w / app_state.res_scale)
+            rh = int(base_h / app_state.res_scale)
             
             # Safety clamp x1
             rw = max(1, min(4096, rw))
@@ -582,8 +588,8 @@ def run(engine, config, builder):
                 surf = pygame.surfarray.make_surface(img_transposed)
                 
                 # Rescaling for viewport
-                target_w = app_state.conf.render.width
-                target_h = app_state.conf.render.height
+                target_w = app_state.viewport_rect[2]
+                target_h = app_state.viewport_rect[3]
                 
                 if surf.get_width() != target_w or surf.get_height() != target_h:
                      surf = pygame.transform.smoothscale(surf, (target_w, target_h))
