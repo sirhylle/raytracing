@@ -2,103 +2,128 @@
 
 La roadmap se divise en plusieurs axes parallèles : **Consolidation Logicielle**, **Évolution PBR** (pour la qualité visuelle), et les nouvelles extensions créatives et de post-traitement.
 
-## Axe A : Consolidation Logicielle (Priority: Stability)
+## Axe A : Consolidation Logicielle & Refactoring
 
-1.  **Critical Fix (Bug)** : Corriger l'Importance Sampling de l'HDRI (Rotation ignorée `src/environment.h`).
-    *   **Status**: *Pending*
-2.  **Architecture** : Remplacer `del engine` par un Context Manager (`with Engine() as e:`).
-    *   **Status**: *Draft*
-3.  **Refactoring UI** : Nettoyer `EditorState` (God Object) et utiliser un layout automatique.
-    *   **Status**: *Draft*
-4.  **Single Source of Truth** : Faire en sorte que Python interroge le C++ pour l'état des objets (Getters/Setters via Nanobind).
-    *   **Status**: *Planned*
-5.  **UX: Decouple Preview from UI State** (Priority: High)
-    *   **Differentiation**: Distinguer "Scene Data Change" (qui requiert un restart rendu) de "UI State Change" (Tabs, Accordions).
-    *   **Objective**: Empêcher le redémarrage du rendu lors de la navigation dans l'interface si la scène n'a pas changé.
-6.  **Shadow Rays "Any Hit"** (Priority: High)
-    *   *Diff*: Medium | *Value*: High (Perf)
-    *   *Desc*: Add `hit_any()` to BVH for shadow rays. Stop traversal at the *first* intersection found instead of searching for the closest one. Expected gain: 20-30% on complex scenes.
+1.  **Critical Fix (Bug)**: Corriger l'Importance Sampling de l'HDRI (Rotation ignorée `src/environment.h`).
+    *   **Status**: ✅ **Completed**. (Rotation is correctly applied to phi_world in `environment.h`).
+    *   *Desc*: La rotation de l'environnement n'était pas prise en compte lors du sampling.
 
-## Axe B : Évolution PBR (Priority: Quality)
+2.  **Architecture**: Context Manager pour le Moteur (`with Engine() as ...`).
+    *   **Status**: ❌ **Not Implemented**. (Manual `del engine` and `gc.collect()` in `main.py`).
+    *   *Desc*: Assurer la libération de la mémoire C++ (Nanobind) explicitement.
 
-1.  **Microfacets Core** : Remplacer `Metal` et `Plastic` par une implémentation **GGX / Cook-Torrance**.
-    *   *Gain* : Réalisme physique, cohérence énergétique.
-    *   *Enable* : Permet d'échantillonner correctement les surfaces brillantes (Glossy).
-2.  **MIS (Multiple Importance Sampling)** : Implémenter le "Balance Heuristic".
-    *   *Gain* : Réduction drastique du bruit ("Fireflies") pour les matériaux mixtes (ni parfaitement diffus, ni parfaitement miroirs).
-3.  **Advanced Diffuse** : Remplacer `Lambertian` par **Oren-Nayar**.
-    *   *Gain* : Aspect plus naturel pour la pierre, le tissu, la peau.
+3.  **Refactoring UI**: Nettoyer `EditorState` qui est devenu un God Object.
+    *   **Status**: ⚠️ **Partial**. (File is still large ~950 lines, handles UI/Render/Logic).
+    *   *Desc*: Séparer `CameraControl`, `SceneManager`, `RenderState`.
 
-4.  **Caustics & Transparency (Visualisation & Rendu)**
-    *   **Solution : Targeted Photon Mapping**.
-        *   Lancer de photons uniquement vers la Bounding Box des objets transparents (Geometry Cone).
-        *   **Visualisation** : Afficher les points d'impact des photons dans l'Éditeur 3D pour donner un feedback immédiat.
-        *   **Rendu** : Utiliser cette carte pour éclairer les zones d'ombre (Caustiques).
-    *   **Intérêt** : Permet de voir la lumière traverser le verre sans attendre la convergence du Path Tracing.
+4.  **Single Source of Truth**: Ne plus dupliquer l'état dans Python (`EditorState`) et C++.
+    *   **Status**: ❌ **Not Implemented**. (Python iterates `builder.registry` instead of querying Engine).
+    *   *Desc*: Python doit interroger le moteur pour la position des objets, et non maintenir une copie.
+
+5.  **UX**: Découpler le "Preview" de l'état UI.
+    *   **Status**: ❌ **Not Implemented**. (UI updates trigger full accumulation reset).
+    *   *Desc*: Pouvoir bouger la caméra sans reset l'accumulation si on est en pause ?
+
+6.  **Shadow Rays "Any Hit"** (Optimisation).
+    *   **Status**: ❌ **Not Implemented**. (BVH uses standard "Closest Hit" logic).
+    *   *Desc*: Pour les ombres, on n'a pas besoin de savoir *quel* objet bloque, juste *si* un objet bloque. Gain perf ~15-20%.
+
+## Axe B : Évolution PBR (Physically Based Rendering)
+
+1.  **Microfacets Core (GGX)**.
+    *   **Status**: ✅ **Completed**. (`src/materials.h` implements GGX/Trowbridge-Reitz and Smith Geometry).
+    *   *Desc*: Remplacer les matériaux Legacy par une BRDF unifiée (Disney-like).
+
+2.  **MIS (Multiple Importance Sampling)**.
+    *   **Status**: ✅ **Completed**. (`src/renderer.h` uses Power Heuristic for NEE and BSDF sampling).
+    *   *Desc*: Combiner BSDF sampling et Light sampling pour réduire le bruit (Matériaux brillants vs Sources larges).
+
+3.  **Advanced Diffuse (Oren-Nayar)**.
+    *   **Status**: ✅ **Completed**. (`eval_oren_nayar` implemented in `src/materials.h`).
+    *   *Desc*: Modèle pour les surfaces rugueuses (Argile, Tissu) plus réaliste que Lambert.
+
+4.  **Caustics & Transparency**.
+    *   **Status**: ⚠️ **Partial** (Fake "Transparent Shadows").
+    *   *Desc*: Les ombres des objets en verre sont colorées (Beer's Law), mais pas de vraies caustiques (Photon Mapping absent).
+
+5.  **Dispersion Chromatique (Rendu Spectral ou RGB-Shift)** (Priority: Research/Low)
+    *   **Status**: ⚠️ **Partial** (Core logic in `materials.h`, bindings missing in `main.cpp`).
+    *   *Diff*: Very High | *Value*: Specific Realism (Gemstones, Prisms)
+    *   *Desc*: Simulation de la variation de l'IOR selon la longueur d'onde.
+    *   **WARNING (Historique)** : Tentatives passées non concluantes ("Dispersive Caustics").
+        *   Le passage au "Full Spectral" a causé des régressions de performance massives et du bruit de couleur difficile à converger.
+        *   La séparation simple R/G/B donne un effet "Ghosting" irréaliste (pas d'arc-en-ciel continu).
+        *   *Stratégie future*: Explorer une approche hybride ou Hero Wavelength sans tout casser.
 
 ## Axe C : Extension PBR & Material (Creative)
 
-*   **Textures Support** (Priority: High)
-    *   *Diff*: Medium | *Value*: High (Essential)
-    *   *Desc*: Support for UV mapping and Image Textures (Albedo, Roughness, Normal). Basic feature missing in current engine.
-*   **Procedural Noise (Perlin/Simplex)** (Priority: Medium)
-    *   *Diff*: Low/Medium | *Value*: High (Versatility)
-    *   *Desc*: Native C++ Perlin/Simplex noise generation.
-    *   *Use Cases*: Marble, Clouds, Heterogeneous materials.
-*   **Normal Alteration (Bump/Displacement)** (Priority: Medium)
-    *   *Diff*: Medium | *Value*: High (Detail)
-    *   *Desc*: Using Noise or Textures to perturb normals for high-frequency detail without adding geometry complexity.
-*   **Semi-Random Meshes** (Priority: Low)
-    *   *Diff*: High | *Value*: Fun/Niche
-    *   *Desc*: Procedural mesh generation or modification (e.g. deformed spheres, random blobs) directly in C++.
+1.  **Textures Support** (Priority: High).
+    *   **Status**: ❌ **Not Implemented**.
+    *   *Desc*: Charger .jpg/.png pour Albedo, Roughness, Normal Map. Nécessite UV Mapping sur les primitives.
 
-## Axe D : Visual Polish & Camera (Filmic)
+2.  **Procedural Noise** (Perlin, Voronoi).
+    *   **Status**: ❌ **Not Implemented**.
+    *   *Desc*: Pour varier la roughness/couleur sans texture.
 
-*   **Chromatic Aberration & Grain** (Priority: Medium)
-    *   *Diff*: Medium (Constraint: Post-Denoiser) | *Value*: High (Realism)
-    *   *Desc*: Post-processing effects to simulate real lenses (fringing, film grain).
-    *   **Constraint**: Must be implemented **AFTER** the OIDN Denoiser, otherwise the denoiser will clean up the grain.
-*   **Global Homogeneous Atmosphere (Fog/Aerial Perspective)** (Priority: Medium)
-    *   *Diff*: High | *Value*: HIgh (Depth)
-    *   *Desc*: Uniform participating media (fog). Adds "God Rays" and depth to large scenes. Easier to sample than clouds.
-*   **Volumetrics (Heterogeneous / Clouds)** (Priority: Low - Long Term)
-    *   *Diff*: Very High | *Value*: High (Specific)
-    *   *Desc*: Cloudscape, Smoke, Fire. Requires advanced Delta Tracking. Very noise-prone.
-*   **Subsurface Scattering (SSS)** (Priority: Low)
-    *   *Diff*: High | *Value*: Specific Quality
-    *   *Desc*: For wax/skin/jade. Can be approximated (Random Walk). To be done usually *after* volumetric logic is understood.
+3.  **Normal Alteration** (Bump/Displacement).
+    *   **Status**: ❌ **Not Implemented**.
+    *   *Desc*: Perturber la normale avant le shading (nécessite Textures ou Noise).
 
-### New Ideas (Proposed)
+4.  **Semi-Random Meshes** (e.g. Rocks).
+    *   **Status**: ❌ **Not Implemented**.
+    *   *Desc*: Génération procédurale de cailloux/débris.
 
-*   **Procedural Sky (Hosek-Wilkie)** (Priority: High)
-    *   *Diff*: Medium | *Value*: High (Atmosphere)
-    *   *Desc*: Parametric Sky based on Sun position and turbidity. Replaces static HDRIs with dynamic day/night cycles. Perfect synergy with Volumetric Fog.
-*   **Scatter System (Instancing Tool)** (Priority: Medium)
-    *   *Diff*: Low (Python UI) | *Value*: High (Creative)
-    *   *Desc*: "Paint" or procedural generation of instances (grass, pebbles) on surfaces. Purely a UI/Python layer over the existing Instance engine.
-*   **Adaptive Sampling** (Priority: High)
-    *   *Diff*: High | *Value*: High (Perf)
-    *   *Desc*: Stop sampling pixels that have converged (low variance). Accelerates simple areas (sky, walls) by 2-4x.
-*   **Advanced Tone Mapping (AgX / Configurable)** (Priority: Medium)
-    *   *Diff*: Low | *Value*: High (Realism)
-    *   *Status*: *Implemented (Fixed ACES)*. The current `renderer.py` hardcodes ACES + Gamma.
-    *   *Goal*: Allow selecting different operators (AgX, Filmic, Linear) via CLI/UI. AgX handles saturated bright colors better than ACES.
-*   **Imperfect Glass (Schlieren / Stress)** (Priority: Medium)
-    *   *Diff*: Medium | *Value*: High (Realism)
-    *   *Desc*: Perturbing IOR or Normal based on 3D World Position Noise to simulate internal stress/density variations. Removes the "perfectly digital" look of glass spheres. Synergies with Procedural Noise.
-*   **Toon/Cel Shading Preview** (Priority: Low)
-    *   *Diff*: Low | *Value*: High (Fun/Preview)
-    *   *Desc*: Non-photorealistic rendering mode for the editor. Quantized lighting bands + Edge detection (Sobel). Makes the editor feel like a stylized game.
+## Axe D : Visual Polish & Camera
 
+1.  **Chromatic Aberration & Grain** (Post-process).
+    *   **Status**: ❌ **Not Implemented**.
+    *   *Desc*: Effets caméra "fin de chaîne".
 
-## Axe E : Debug & Quality of Life
+2.  **Global Homogeneous Atmosphere (Fog)**.
+    *   **Status**: ❌ **Not Implemented**.
+    *   *Desc*: Absorption volumétrique constante (profondeur).
 
-*   **Blue Noise Samplers** (Priority: Low)
-    *   *Diff*: Medium | *Value*: Medium (Visual)
-    *   *Desc*: Better error distribution than White Noise/Sobol for low SPP/dithering patterns.
-*   **Debug Views (Heatmaps)** (Priority: Low)
-    *   *Diff*: Low | *Value*: Medium (Debug)
-    *   *Desc*: Visualize technical metrics: Bounce Count (Heatmap), BVH Depth costs. (Note: Normals preview already exists).
+3.  **Volumetrics (Clouds/Heterogeneous)**.
+    *   **Status**: ❌ **Not Implemented**.
+    *   *Desc*: Ray Marching dans le volume (très coûteux).
+
+4.  **Subsurface Scattering (SSS)**.
+    *   **Status**: ❌ **Not Implemented** (Beer's Law used for glass is a simplification).
+    *   *Desc*: Pour la peau, la cire, le marbre (Random Walk).
+
+## New Ideas (Brainstorming)
+
+1.  **Procedural Sky (Hosek-Wilkie)**.
+    *   **Status**: ❌ **Not Implemented** (Uses HDRI or constant color).
+    *   *Desc*: Ciel physique dynamique (Heure de la journée, Turbidity).
+
+2.  **Scatter System**.
+    *   **Status**: ❌ **Not Implemented**.
+    *   *Desc*: Remplir une surface avec des instances (Herbe, Cailloux).
+
+3.  **Adaptive Sampling**.
+    *   **Status**: ❌ **Not Implemented**.
+    *   *Desc*: Concentrer les samples sur les zones bruitées (Variance estimation).
+
+4.  **Advanced Tone Mapping (AgX / Khronos PBR)**.
+    *   **Status**: ❌ **Not Implemented** (Uses ACES Filmic).
+    *   *Desc*: Mieux gérer la saturation dans les hautes lumières (le "Notorious Six" problem de ACES).
+
+5.  **Imperfect Glass**.
+    *   **Status**: ❌ **Not Implemented**.
+    *   *Desc*: Surface roughness variable + Smudges (Texture dependent).
+
+6.  **Toon/Cel Shading Preview**.
+    *   **Status**: ❌ **Not Implemented**.
+    *   *Desc*: Mode de rendu non-photoréaliste pour le debug ou le style.
+
+7.  **Blue Noise Samplers**.
+    *   **Status**: ✅ **Completed**. (`src/sampler.h` uses Blue Noise for Sobol scrambling).
+    *   *Desc*: Améliorer la distribution des samples pour réduire les artefacts visuels à bas SPP.
+
+8.  **Debug Views (Heatmaps)**.
+    *   **Status**: ❌ **Not Implemented**.
+    *   *Desc*: Visualiser le coût de rendu par pixel (Heatmap de nombre de rebonds ou temps calcul).
 
 ---
 
