@@ -125,6 +125,32 @@ La roadmap se divise en plusieurs axes parallèles : **Consolidation Logicielle*
     *   **Status**: ❌ **Not Implemented**.
     *   *Desc*: Visualiser le coût de rendu par pixel (Heatmap de nombre de rebonds ou temps calcul).
 
+## Axe E : C++ Modernization & Vectorization (Performance)
+
+> Objectif : exploiter C++23 et améliorer le code pour aider le compilateur à vectoriser,
+> sans bouleverser l'architecture ni sacrifier la lisibilité.
+
+1.  **~~Branchless AABB Slab Test~~** (Priority: ~~High~~ → Rejected).
+    *   **Status**: ⛔ **Tested \u0026 Rejected** (Feb 2025). Two variants benchmarked: `initializer_list` (+60% slower) and scalar `min/max` (+8% slower). The original loop+early-exit wins because most rays miss most boxes, making the branch predictor + short-circuit more valuable than branchless vectorization.
+    *   *Lesson*: Early-exit saves 2 axes of computation on misses. Branch prediction is nearly perfect here (regular hit/miss patterns). Don't fix what ain't broke.
+
+2.  **`constexpr` / `if consteval` pour les maths PBR**.
+    *   **Status**: ❌ **Not Implemented**. (Les fonctions math comme `firefly_clamp`, `aces_filmic`, `ndf_ggx` sont `inline` mais pas `constexpr`).
+    *   *Diff*: Low | *Value*: Medium
+    *   *Desc*: Marquer les fonctions pures (`firefly_clamp`, `schlick_fresnel_color`, `ndf_ggx`, `geometry_smith`, `aces_filmic`) comme `constexpr`. Cela permet au compilateur d'évaluer les appels à arguments constants au compile-time (ex: `firefly_clamp` avec `USE_HARD_CLAMP = false` connue). Utiliser `if consteval` pour choisir entre un chemin compile-time exact et un chemin runtime rapide (ex: fast inverse sqrt vs `1/sqrt`).
+
+3.  **`alignas(16)` sur `Vec3`** (SIMD-Friendly Layout).
+    *   **Status**: ❌ **Not Implemented**. (`Vec3` est `Real e[3]`, 12 bytes, non aligné).
+    *   *Diff*: Low | *Value*: Medium-High (Touche TOUTE la géométrie, le shading, le BVH)
+    *   *Desc*: Passer `Vec3` à `alignas(16) Real e[4]` (avec `e[3]` = padding). L'alignement 16 bytes permet au compilateur d'utiliser des loads/stores SIMD alignés (`movaps` au lieu de `movups`), et les opérations comme `dot()`, `cross()`, `operator+` peuvent être mappées directement sur des intrinsics SSE/AVX (`_mm_dp_ps`, `_mm_add_ps`). L'overhead mémoire (+4 bytes/Vec3) est négligeable comparé au gain dans les boucles tight du BVH et du shading.
+    *   **⚠️ Attention** : Vérifier l'impact sur les structures contenant des Vec3 (Ray, HitRecord, AABB) — le padding peut légèrement augmenter la taille des structs et affecter la cache. Profiler avant/après.
+
+4.  **BVH Itératif** (Stack-Based Traversal).
+    *   **Status**: ❌ **Not Implemented**. (Traversée récursive via `shared_ptr<Hittable>` et virtual dispatch `hit()`).
+    *   *Diff*: Medium | *Value*: High (Élimine le coût du call stack + virtual dispatch dans le hot path)
+    *   *Desc*: Remplacer la traversée récursive du BVH par une boucle itérative avec stack local (`std::array<Node*, 64>`). Le gain vient de : (a) pas de frame de pile récursive, (b) pas de virtual dispatch sur chaque nœud interne (accès direct au type `BVHNode`), (c) meilleure prédiction de branchement sur la boucle. Ce refactoring est compatible avec le "Any Hit" (shadow rays) car le stack permet un early-exit propre.
+    *   **Note** : Nécessite de séparer les nœuds internes (BVH) des feuilles (Hittable*) dans la structure. C'est le refactoring le plus impactant de cet axe mais reste localisé à `bvh.h`.
+
 ---
 
 # Appendix: Lessons Learned & Specific Fixes (Legacy Notes)

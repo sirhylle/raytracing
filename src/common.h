@@ -201,7 +201,8 @@ struct AABB {
   AABB() {}
   AABB(const Vec3 &a, const Vec3 &b) : min(a), max(b) {}
 
-  // Méthode "Slab" optimisée (SIMD friendly)
+  // Slab method with early-exit (fastest on MSVC /O2 /arch:AVX2)
+  // The early-exit branches are well-predicted and save work on misses.
   bool hit(const Ray &r, Real t_min, Real t_max) const {
     for (int a = 0; a < 3; a++) {
       auto invD = r.inv_dir[a];
