@@ -555,14 +555,16 @@ def load_scene_from_json(builder, filepath, config):
     return True
 
 
-def initialize_scene_and_engine(scene_source=None, args_overrides=None):
+def initialize_scene_and_engine(scene_source=None, args_overrides=None, engine=None):
     """
     Initialise le moteur.
     - scene_source: Chemin fichier (.json) OU Nom de scène procédurale (ex: 'cornell').
     - args_overrides: Arguments CLI pour surcharger config.py (ex: --spp).
+    - engine: (Optional) Existing engine instance to use.
     """
     print("[Loader] Initializing Engine...")
-    engine = cpp_engine.Engine()
+    if engine is None:
+        engine = cpp_engine.Engine()
     builder = SceneBuilder(engine)
     
     # 1. Base Configuration (Defaults)
@@ -671,3 +673,21 @@ def initialize_scene_and_engine(scene_source=None, args_overrides=None):
     # e.g. Sampler type
     
     return engine, config, builder
+
+class EngineManager:
+    """
+    Context manager for the Engine to ensure resource cleanup.
+    """
+    def __init__(self, engine=None):
+        self.engine = engine if engine is not None else cpp_engine.Engine()
+    
+    def __enter__(self):
+        return self.engine
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        try:
+            self.engine.clear()
+        except:
+            pass
+        # Engine will be garbage collected eventually, but clear() releases heavy memory immediately.
+

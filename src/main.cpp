@@ -72,6 +72,19 @@ public:
     world_bvh = nullptr; // Invalidate
   }
 
+  void clear() {
+    // Invalidate world_bvh first as it depends on other objects
+    world_bvh = nullptr;
+    mesh_assets.clear();
+    instances_map.clear();
+    world.clear();
+    lights.clear();
+    accumulation_buffer.clear();
+    background = nullptr;
+    camera = nullptr;
+    accumulated_spp = 0;
+  }
+
   int create_and_register_instance(std::shared_ptr<Hittable> geo,
                                    const Matrix4 &m, const Matrix4 &inv,
                                    bool is_light) {
@@ -842,7 +855,8 @@ NB_MODULE(cpp_engine, m) {
            nb::arg("height"), nb::arg("sampler_type"), nb::arg("spp") = 1,
            nb::arg("dimension_offset") = 0)
       .def("set_blue_noise_texture", &PyScene::set_blue_noise_texture,
-           nb::arg("texture"));
+           nb::arg("texture"))
+      .def("clear", &PyScene::clear);
 
   m.def("get_epsilon", []() { return EPSILON; });
   m.def("set_epsilon", [](Real val) { EPSILON = val; });

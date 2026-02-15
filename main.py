@@ -17,44 +17,37 @@ from config import RenderConfig
 def cmd_render(args):
     """Handler for the 'render' command."""
     # 1. Initialize Engine & Config
-    # scene_source is the positional argument 'scene'
     scene_source = args.scene
     
-    # We pass 'args' as overrides. loader.initialize_scene_and_engine will merge them.
-    engine, config, builder = loader.initialize_scene_and_engine(scene_source, args)
-    
-    # 2. Run Renderer
-    try:
-        renderer.run(engine, config)
-    except KeyboardInterrupt:
-        print("\n[System] Render interrupted by user.")
-    
-    # 3. Cleanup
-    del engine
-    gc.collect()
+    with loader.EngineManager() as engine:
+        # We pass 'engine' to initialize_scene_and_engine to use within context
+        engine, config, builder = loader.initialize_scene_and_engine(scene_source, args, engine=engine)
+        
+        # 2. Run Renderer
+        try:
+            renderer.run(engine, config)
+        except KeyboardInterrupt:
+            print("\n[System] Render interrupted by user.")
 
 def cmd_editor(args):
     """Handler for the 'editor' command."""
     scene_source = args.scene # Can be None
     
-    # 1. Initialize
-    engine, config, builder = loader.initialize_scene_and_engine(scene_source, args)
-    
-    # 2. Run Editor
-    # Legacy flags dispatch
-    if args.v2:
-        from modes import viewer_legacyV2 as viewer_legacyV2
-        viewer_legacyV2.run(engine, config, builder)
-    elif args.v1:
-        from modes import viewer_legacyV1 as viewer_legacyV1
-        viewer_legacyV1.run(engine, config)
-    else:
-        # Default V3
-        viewer.run(engine, config, builder)
-
-    # 4. Cleanup
-    del engine
-    gc.collect()
+    with loader.EngineManager() as engine:
+        # 1. Initialize
+        engine, config, builder = loader.initialize_scene_and_engine(scene_source, args, engine=engine)
+        
+        # 2. Run Editor
+        # Legacy flags dispatch
+        if args.v2:
+            from modes import viewer_legacyV2 as viewer_legacyV2
+            viewer_legacyV2.run(engine, config, builder)
+        elif args.v1:
+            from modes import viewer_legacyV1 as viewer_legacyV1
+            viewer_legacyV1.run(engine, config)
+        else:
+            # Default V3
+            viewer.run(engine, config, builder)
 
 import serializer # NEW
 from dataclasses import asdict # NEW
@@ -88,44 +81,40 @@ def cmd_init(args):
     
     # 1. Init Virtual Engine (No Window needed)
     # We use a dummy builder to accumulate objects
-    engine = cpp_engine.Engine()
-    builder = loader.SceneBuilder(engine)
-    config = RenderConfig()
-    
-    # 2. Load Template
-    # We use the existing scenes.py module which defines templates
-    scene_cls = scenes.AVAILABLE_SCENES.get(template_name)
-    if not scene_cls:
-        print(f"[Warning] Template '{template_name}' not found. Using 'empty'.")
-        scene_cls = scenes.Empty()
+    with loader.EngineManager() as engine:
+        builder = loader.SceneBuilder(engine)
+        config = RenderConfig()
         
-    # 3. Setup Scene (Populate Builder & Config)
-    try:
-        scene_config = scene_cls.setup(builder)
-        if scene_config:
-            # Update RenderConfig from SceneConfig (dataclass)
-            # We use asdict to convert it to a dictionary
-            config.update_from_dict(asdict(scene_config))
+        # 2. Load Template
+        # We use the existing scenes.py module which defines templates
+        scene_cls = scenes.AVAILABLE_SCENES.get(template_name)
+        if not scene_cls:
+            print(f"[Warning] Template '{template_name}' not found. Using 'empty'.")
+            scene_cls = scenes.Empty()
             
-            # Special case: Map scene_config.environment to config.environment (path or color)
-            # update_from_dict handles keys matching RenderConfig.
-            # SceneConfig has 'environment' field which matches RenderConfig 'environment'.
-            pass
-            
-    except Exception as e:
-        print(f"[Error] Failed to generate template: {e}")
-        return
+        # 3. Setup Scene (Populate Builder & Config)
+        try:
+            scene_config = scene_cls.setup(builder)
+            if scene_config:
+                # Update RenderConfig from SceneConfig (dataclass)
+                # We use asdict to convert it to a dictionary
+                config.update_from_dict(asdict(scene_config))
+                
+                # Special case: Map scene_config.environment to config.environment (path or color)
+                # update_from_dict handles keys matching RenderConfig.
+                # SceneConfig has 'environment' field which matches RenderConfig 'environment'.
+                pass
+                
+        except Exception as e:
+            print(f"[Error] Failed to generate template: {e}")
+            return
 
-    # 4. Serialize to JSON
-    try:
-        serializer.serialize_scene(config, builder, filename)
-        print(f"[Success] Created new scene file: {filename}")
-    except Exception as e:
-        print(f"[Error] Failed to save file: {e}")
-        
-    # Cleanup
-    del engine
-    gc.collect()
+        # 4. Serialize to JSON
+        try:
+            serializer.serialize_scene(config, builder, filename)
+            print(f"[Success] Created new scene file: {filename}")
+        except Exception as e:
+            print(f"[Error] Failed to save file: {e}")
 
 def main():
     parser = argparse.ArgumentParser(description="Python Path Tracer CLI (Data-Driven)")
