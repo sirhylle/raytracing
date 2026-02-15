@@ -181,6 +181,8 @@ public:
     return true;
   }
 
+  bool is_opaque() const override { return !mat_ptr->is_transparent(); }
+
   // ---------------------------------------------------------------------------------------------
   // ALGORITHM: PROBABILITY DENSITY FUNCTION (PDF) & SAMPLING
   // ---------------------------------------------------------------------------------------------
@@ -347,6 +349,8 @@ public:
     auto p = Q + (uv.x() * u) + (uv.y() * v);
     return p - o;
   }
+
+  bool is_opaque() const override { return !mat_ptr->is_transparent(); }
 };
 
 // ===============================================================================================
@@ -428,4 +432,6 @@ public:
                       Vec3(max_x + 0.001f, max_y + 0.001f, max_z + 0.001f));
     return true;
   }
+
+  bool is_opaque() const override { return !mat_ptr->is_transparent(); }
 };

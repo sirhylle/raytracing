@@ -88,6 +88,12 @@ public:
     return true;
   }
 
+  bool is_opaque() const override {
+    if (override_material)
+      return !override_material->is_transparent();
+    return object->is_opaque();
+  }
+
   virtual bool bounding_box(AABB &output_box) const override {
     // 1. On récupère la boite de l'objet original (non transformé)
     AABB obj_box;

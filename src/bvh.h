@@ -50,6 +50,7 @@ public:
   bool right_is_leaf = false; // true if right child is NOT a BVHNode
   int split_axis = 0;         // Axis used to split (for front-to-back ordering)
   bool use_ordered = false;   // Adaptive: ordered traversal for deep BVHs
+  bool all_opaque = true;     // Shadow optimization: early-exit on first hit
 
   enum class SplitMethod { Midpoint, SAH };
 
@@ -80,6 +81,15 @@ private:
     right_raw = right.get();
     left_is_leaf = (dynamic_cast<BVHNode *>(left_raw) == nullptr);
     right_is_leaf = (dynamic_cast<BVHNode *>(right_raw) == nullptr);
+
+    // Propagate all_opaque: true only if both children are fully opaque
+    bool left_opaque = left_is_leaf
+                           ? left_raw->is_opaque()
+                           : static_cast<BVHNode *>(left_raw)->all_opaque;
+    bool right_opaque = right_is_leaf
+                            ? right_raw->is_opaque()
+                            : static_cast<BVHNode *>(right_raw)->all_opaque;
+    all_opaque = left_opaque && right_opaque;
   }
 
   void build(std::vector<std::shared_ptr<Hittable>> &objects, size_t start,
@@ -469,6 +479,8 @@ private:
     }
     return any_hit;
   }
+
+  bool is_opaque() const override { return all_opaque; }
 
   virtual bool bounding_box(AABB &output_box) const override {
     output_box = box;

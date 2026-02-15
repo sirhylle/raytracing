@@ -54,5 +54,8 @@ public:
     return Vec3(1, 0, 0);
   }
 
+  // Is this object fully opaque? Used by BVH to enable shadow ray early-exit.
+  virtual bool is_opaque() const { return true; }
+
   virtual ~Hittable() = default;
 };
