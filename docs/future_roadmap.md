@@ -24,7 +24,13 @@ La roadmap se divise en plusieurs axes parallèles : **Consolidation Logicielle*
     *   **Status**: ❌ **Not Implemented**. (UI updates trigger full accumulation reset).
     *   *Desc*: Pouvoir bouger la caméra sans reset l'accumulation si on est en pause ?
 
-6.  **~~Shadow Rays "Any Hit"~~** (Optimisation).
+6.  **Partial Accumulation (Timeslicing) for UI Responsiveness**.
+    *   **Status**: ❌ **Not Implemented**.
+    *   *Desc*: Rendre l'accumulation "interruptible" ou fractionnée. Au lieu de forcer 1 SPP *entier* sur tous les pixels (qui peut prendre 500ms+ sur grosse scène), on rend par blocs (ex: 10% des pixels) ou avec un budget temps (ex: 30ms max).
+    *   *Challenge*: Gérer la cohérence du buffer d'accumulation (ne pas mélanger des samples N et N+1 sur la même image affichée si possible, ou accepter le "tearing" temporaire).
+    *   *Priority*: High (Quick Win vs Threading).
+
+7.  **~~Shadow Rays "Any Hit"~~** (Optimisation).
     *   **Status**: ⛔ **Tested & Rejected** (Feb 2025). Shadow early-exit (`all_opaque` flag + first-hit return) benchmarked: no measurable improvement. Shadow rays are not the bottleneck — primary/indirect rays dominate. Infrastructure (`is_opaque()`, `all_opaque` flag) kept for future use.
     *   *Lesson*: In path tracing with NEE, shadow rays are ~50% of rays but most either miss (AABB pruning handles this) or are quickly blocked. The expensive closest-hit traversal is dominated by indirect bounces, not shadows.
 
@@ -125,7 +131,26 @@ La roadmap se divise en plusieurs axes parallèles : **Consolidation Logicielle*
     *   **Status**: ❌ **Not Implemented**.
     *   *Desc*: Visualiser le coût de rendu par pixel (Heatmap de nombre de rebonds ou temps calcul).
 
-## Axe E : C++ Modernization & Vectorization (Performance)
+## Axe F : Interactivity & Animation (New)
+
+1.  **Camera Bookmarks System** (Priority: Medium).
+    *   **Status**: ❌ **Not Implemented**.
+    *   *Desc*: Sauvegarder des "instantanés" de l'état de la caméra (position, direction, focus, champ de vision). Utile pour basculer rapidement entre une vue d'édition et une vue de rendu final.
+    *   **Features**:
+        *   UI pour capturer/supprimer des points.
+        *   Support dans le fichier JSON de scène.
+
+2.  **Animation Timeline (Interpolation)**.
+    *   **Status**: ❌ **Not Implemented**.
+    *   *Desc*: Enchaîner les bookmarks de caméra pour créer une séquence vidéo.
+    *   **Challenge**: Interpolation fluide (Slerp pour la rotation, Splines pour la position) avec contrôle de vitesse (Ease-in/out).
+
+3.  **General Keyframing System**.
+    *   **Status**: ❌ **Not Implemented**.
+    *   *Desc*: Étendre le principe des bookmarks à d'autres paramètres (intensité lumineuse, position des objets, couleurs des matériaux).
+    *   **Architecture**: Nécessite un système d'échantillonnage temporel pour que le moteur C++ sache quel état utiliser à la frame *T*.
+
+## Axe G : C++ Modernization & Vectorization (Performance)
 
 > Objectif : exploiter C++23 et améliorer le code pour aider le compilateur à vectoriser,
 > sans bouleverser l'architecture ni sacrifier la lisibilité.
