@@ -24,6 +24,7 @@
 #include "camera.h"
 #include "common.h"
 #include "environment.h"
+#include "flat_bvh.h"
 #include "geometry.h"
 #include "hittable.h"
 #include "instance.h"
@@ -265,7 +266,7 @@ public:
       auto tri = std::make_shared<Triangle>(v0, v1, v2, n0, n1, n2, mat);
       mesh_list.add(tri);
     }
-    auto mesh_bvh = std::make_shared<BVHNode>(mesh_list);
+    auto mesh_bvh = std::make_shared<FlatBVH>(mesh_list);
     mesh_assets[name] = mesh_bvh;
   }
 

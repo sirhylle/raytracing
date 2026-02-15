@@ -154,7 +154,19 @@ La roadmap se divise en plusieurs axes parallèles : **Consolidation Logicielle*
         | showcase (85 obj, 128 SPP) | 8.981s | 8.527s | **-5.1%** |
         | mesh2 (9 dragons, 64 SPP) | ~55s | 35.7s | **~-35%** |
 
----
+5.  **Hybrid Flat BVH** (Cache-Optimized Linear BVH for Meshes).
+    *   **Status**: ✅ **Implemented** (Feb 2025). New `flat_bvh.h` — 32-byte `FlatNode` in a contiguous `std::vector` (vs ~80+ byte heap-scattered `BVHNode`). Used for mesh-internal BVHs only (deep, 100K+ nodes). World BVH stays as `BVHNode` (shallow, <100 objects).
+    *   *Benchmark (960×720, SAH, hybrid vs BVHNode-only)*:
+
+        | Scene | BVHNode | Hybrid FlatBVH | Gain |
+        |---|---|---|---|
+        | random (486 sph, 128 SPP) | 6.339s | 6.412s | ~0% |
+        | cornell (8 obj, 128 SPP) | 9.394s | 9.483s | ~0% |
+        | showcase (85 obj, 128 SPP) | 8.635s | 8.919s | ~0% |
+        | mesh1 (bunny 78K tri, 128 SPP) | 12.935s | 12.358s | **-4.5%** |
+        | mesh2 (9 dragons 1M tri, 64 SPP) | 36.202s | 29.649s | **-18.1%** |
+
+    *   *Lesson*: Pure FlatBVH regressed on simple scenes (+6-12%) due to array indexing overhead vs direct pointer dispatch. Hybrid approach isolates the gain to deep BVHs where cache locality matters most.
 
 # Appendix: Lessons Learned & Specific Fixes (Legacy Notes)
 
