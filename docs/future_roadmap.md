@@ -9,8 +9,8 @@ La roadmap se divise en plusieurs axes parallèles : **Consolidation Logicielle*
     *   *Desc*: La rotation de l'environnement n'était pas prise en compte lors du sampling.
 
 2.  **Architecture**: Context Manager pour le Moteur (`with Engine() as ...`).
-    *   **Status**: ❌ **Not Implemented**. (Manual `del engine` and `gc.collect()` in `main.py`).
-    *   *Desc*: Assurer la libération de la mémoire C++ (Nanobind) explicitement.
+    *   **Status**: ✅ **Implemented** (via `loader.py` Wrapper).
+    *   *Desc*: `EngineManager` class in `loader.py` handles `__enter__`/`__exit__` and calls `engine.clear()`.
 
 3.  **Refactoring UI**: Nettoyer `EditorState` qui est devenu un God Object.
     *   **Status**: ⚠️ **Partial**. (File is still large ~950 lines, handles UI/Render/Logic).
