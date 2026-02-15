@@ -24,9 +24,9 @@ La roadmap se divise en plusieurs axes parallèles : **Consolidation Logicielle*
     *   **Status**: ❌ **Not Implemented**. (UI updates trigger full accumulation reset).
     *   *Desc*: Pouvoir bouger la caméra sans reset l'accumulation si on est en pause ?
 
-6.  **Shadow Rays "Any Hit"** (Optimisation).
-    *   **Status**: ❌ **Not Implemented**. (BVH uses standard "Closest Hit" logic).
-    *   *Desc*: Pour les ombres, on n'a pas besoin de savoir *quel* objet bloque, juste *si* un objet bloque. Gain perf ~15-20%.
+6.  **~~Shadow Rays "Any Hit"~~** (Optimisation).
+    *   **Status**: ⛔ **Tested & Rejected** (Feb 2025). Shadow early-exit (`all_opaque` flag + first-hit return) benchmarked: no measurable improvement. Shadow rays are not the bottleneck — primary/indirect rays dominate. Infrastructure (`is_opaque()`, `all_opaque` flag) kept for future use.
+    *   *Lesson*: In path tracing with NEE, shadow rays are ~50% of rays but most either miss (AABB pruning handles this) or are quickly blocked. The expensive closest-hit traversal is dominated by indirect bounces, not shadows.
 
 ## Axe B : Évolution PBR (Physically Based Rendering)
 
@@ -139,11 +139,9 @@ La roadmap se divise en plusieurs axes parallèles : **Consolidation Logicielle*
     *   *Diff*: Low | *Value*: Medium
     *   *Desc*: Marquer les fonctions pures (`firefly_clamp`, `schlick_fresnel_color`, `ndf_ggx`, `geometry_smith`, `aces_filmic`) comme `constexpr`. Cela permet au compilateur d'évaluer les appels à arguments constants au compile-time (ex: `firefly_clamp` avec `USE_HARD_CLAMP = false` connue). Utiliser `if consteval` pour choisir entre un chemin compile-time exact et un chemin runtime rapide (ex: fast inverse sqrt vs `1/sqrt`).
 
-3.  **`alignas(16)` sur `Vec3`** (SIMD-Friendly Layout).
-    *   **Status**: ❌ **Not Implemented**. (`Vec3` est `Real e[3]`, 12 bytes, non aligné).
-    *   *Diff*: Low | *Value*: Medium-High (Touche TOUTE la géométrie, le shading, le BVH)
-    *   *Desc*: Passer `Vec3` à `alignas(16) Real e[4]` (avec `e[3]` = padding). L'alignement 16 bytes permet au compilateur d'utiliser des loads/stores SIMD alignés (`movaps` au lieu de `movups`), et les opérations comme `dot()`, `cross()`, `operator+` peuvent être mappées directement sur des intrinsics SSE/AVX (`_mm_dp_ps`, `_mm_add_ps`). L'overhead mémoire (+4 bytes/Vec3) est négligeable comparé au gain dans les boucles tight du BVH et du shading.
-    *   **⚠️ Attention** : Vérifier l'impact sur les structures contenant des Vec3 (Ray, HitRecord, AABB) — le padding peut légèrement augmenter la taille des structs et affecter la cache. Profiler avant/après.
+3.  **~~`alignas(16)` sur `Vec3`~~** (SIMD-Friendly Layout).
+    *   **Status**: ⛔ **Tested & Rejected** (Feb 2025). Vec3 changed from `e[3]` (12 bytes) to `alignas(16) e[4]` (16 bytes). Uniform regression of +2-4% across all scenes. The 33% size increase hurts cache locality (AABB 24→32, BVH nodes larger, more cache misses) more than SIMD alignment helps.
+    *   *Lesson*: Same as E.1 — cache performance dominates. Modern CPUs handle unaligned loads (`movups`) efficiently; the extra padding bytes waste precious cache lines.
 
 4.  **BVH Itératif + Adaptive Traversal** (Stack-Based, Auto Simple/Ordered).
     *   **Status**: ✅ **Implemented** (Feb 2025). Iterative stack-based traversal with adaptive dispatch: simple (left/right) for BVHs with ≤500 primitives, ordered (front-to-back via `split_axis`) for deeper BVHs (meshes). One branch per `hit()` call, not per node.
