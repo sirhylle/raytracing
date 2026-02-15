@@ -119,13 +119,19 @@ def main():
             ("cornell",  960, 720, 128, 6, 3),
             # showcase: ~80+ mixed spheres with HDRI lighting
             ("showcase", 960, 720, 128, 6, 3),
+            # mesh1: bunny mesh (~5K tris), moderate BVH depth
+            ("mesh1",    960, 720, 128, 6, 3),
+            # mesh2: 9 dragon meshes (~100K+ tris), deepest BVH
+            ("mesh2",    960, 720,  64, 6, 3),
         ]
 
     all_results = {}
+    all_configs = {}
     for scene_name, w, h, spp, depth, runs in configs:
         try:
             times = benchmark_scene(scene_name, w, h, spp, depth, runs)
             all_results[scene_name] = times
+            all_configs[scene_name] = (w, h, spp)
         except Exception as e:
             print(f"  ⚠ SKIPPED ({e})")
             import traceback
@@ -140,7 +146,8 @@ def main():
         avg = statistics.mean(times)
         best = min(times)
         total_avg += avg
-        mrays = (960 * 720 * 128) / best / 1e6
+        w, h, spp = all_configs[name]
+        mrays = (w * h * spp) / best / 1e6
         print(f"  {name:12s}  avg={avg:.3f}s  best={best:.3f}s  ({mrays:.1f} Mrays/s)")
     if all_results:
         print(f"  {'TOTAL':12s}  avg={total_avg:.3f}s")

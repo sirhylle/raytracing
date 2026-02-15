@@ -145,10 +145,16 @@ La roadmap se divise en plusieurs axes parallèles : **Consolidation Logicielle*
     *   *Desc*: Passer `Vec3` à `alignas(16) Real e[4]` (avec `e[3]` = padding). L'alignement 16 bytes permet au compilateur d'utiliser des loads/stores SIMD alignés (`movaps` au lieu de `movups`), et les opérations comme `dot()`, `cross()`, `operator+` peuvent être mappées directement sur des intrinsics SSE/AVX (`_mm_dp_ps`, `_mm_add_ps`). L'overhead mémoire (+4 bytes/Vec3) est négligeable comparé au gain dans les boucles tight du BVH et du shading.
     *   **⚠️ Attention** : Vérifier l'impact sur les structures contenant des Vec3 (Ray, HitRecord, AABB) — le padding peut légèrement augmenter la taille des structs et affecter la cache. Profiler avant/après.
 
-4.  **BVH Itératif** (Stack-Based Traversal).
-    *   **Status**: ✅ **Implemented** (Feb 2025). Replaced recursive virtual dispatch with iterative stack-based traversal in `bvh.h`. Virtual dispatch only on leaf geometry, never on internal BVH nodes.
-    *   *Benchmark (960×720, 128 SPP, SAH)*: **-16%** on `random` (486 obj), **-7.9%** on `cornell`, **-5.4%** on `showcase`. **Total: -9.3%** (26.4s → 23.9s).
-    *   *Technique*: `finalize_node()` at build time caches raw pointers + `is_leaf` flags via `dynamic_cast` (zero cost at traversal). Fixed stack `BVHNode*[64]` replaces recursive call frames.
+4.  **BVH Itératif + Adaptive Traversal** (Stack-Based, Auto Simple/Ordered).
+    *   **Status**: ✅ **Implemented** (Feb 2025). Iterative stack-based traversal with adaptive dispatch: simple (left/right) for BVHs with ≤500 primitives, ordered (front-to-back via `split_axis`) for deeper BVHs (meshes). One branch per `hit()` call, not per node.
+    *   *Benchmark vs original recursive (960×720, SAH)*:
+
+        | Scene | Before | After | Gain |
+        |---|---|---|---|
+        | random (486 sph, 128 SPP) | 7.416s | 6.360s | **-14.2%** |
+        | cornell (8 obj, 128 SPP) | 9.965s | 9.215s | **-7.5%** |
+        | showcase (85 obj, 128 SPP) | 8.981s | 8.527s | **-5.1%** |
+        | mesh2 (9 dragons, 64 SPP) | ~55s | 35.7s | **~-35%** |
 
 ---
 

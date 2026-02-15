@@ -48,20 +48,28 @@ public:
   Hittable *right_raw = nullptr;
   bool left_is_leaf = false;  // true if left child is NOT a BVHNode
   bool right_is_leaf = false; // true if right child is NOT a BVHNode
+  int split_axis = 0;         // Axis used to split (for front-to-back ordering)
+  bool use_ordered = false;   // Adaptive: ordered traversal for deep BVHs
 
   enum class SplitMethod { Midpoint, SAH };
+
+  // Adaptive threshold: ordered traversal pays off at >1000 primitives (deep
+  // BVH)
+  static constexpr size_t ORDERED_THRESHOLD = 1000;
 
   // 1. Constructeur Public
   BVHNode(const HittableList &list,
           SplitMethod method = SplitMethod::Midpoint) {
     auto objects = list.owned_objects;
     build(objects, 0, objects.size(), method);
+    use_ordered = (objects.size() > ORDERED_THRESHOLD);
   }
 
   // 2. Constructeur privé pour la récursion
   BVHNode(std::vector<std::shared_ptr<Hittable>> &objects, size_t start,
           size_t end, SplitMethod method) {
     build(objects, start, end, method);
+    // Non-root nodes inherit use_ordered from root via hit() dispatch
   }
 
 private:
@@ -105,6 +113,7 @@ private:
       axis = 1;
     else if (extent.z() > extent.x() && extent.z() > extent.y())
       axis = 2;
+    split_axis = axis;
 
     auto comparator = [axis](const std::shared_ptr<Hittable> &a,
                              const std::shared_ptr<Hittable> &b) {
@@ -182,6 +191,7 @@ private:
       axis = 1;
     else if (extent.z() > extent.x() && extent.z() > extent.y())
       axis = 2;
+    split_axis = axis;
 
     if (extent[axis] < 1e-6f) {
       // Degenerate case: Fallback to simple split
@@ -367,39 +377,44 @@ private:
   }
 
   // ---------------------------------------------------------------------------------------------
-  // ALGORITHM: ITERATIVE STACK-BASED TRAVERSAL
+  // ALGORITHM: ADAPTIVE ITERATIVE TRAVERSAL
   // ---------------------------------------------------------------------------------------------
-  // Replaces recursive virtual dispatch with a while-loop + fixed stack.
-  // Virtual dispatch is only used on leaf geometry (Sphere, Quad, Triangle,
-  // Instance), never on internal BVH nodes.
+  // Dispatches between simple (left/right) and ordered (front-to-back)
+  // traversal. Decision made once per hit() call based on use_ordered flag (set
+  // at construction). Simple wins on shallow BVHs (spheres), ordered wins on
+  // deep BVHs (meshes).
   virtual bool hit(const Ray &r, Real t_min, Real t_max,
                    HitRecord &rec) const override {
-    constexpr int MAX_STACK = 64; // Depth ~9 for 500 objects, safe margin
+    if (use_ordered)
+      return hit_ordered(r, t_min, t_max, rec);
+    else
+      return hit_simple(r, t_min, t_max, rec);
+  }
+
+  // --- Simple traversal: minimal overhead, no near/far selection ---
+  bool hit_simple(const Ray &r, Real t_min, Real t_max, HitRecord &rec) const {
+    constexpr int MAX_STACK = 64;
     const BVHNode *stack[MAX_STACK];
     int stack_ptr = 0;
     bool any_hit = false;
 
-    // Push root
     stack[stack_ptr++] = this;
 
     while (stack_ptr > 0) {
       const BVHNode *node = stack[--stack_ptr];
 
-      // AABB test — skip entire subtree on miss
       if (!node->box.hit(r, t_min, t_max))
         continue;
 
-      // Left child
       if (node->left_is_leaf) {
         if (node->left_raw->hit(r, t_min, t_max, rec)) {
           any_hit = true;
-          t_max = rec.t; // Clamp: only accept closer hits from now on
+          t_max = rec.t;
         }
       } else {
         stack[stack_ptr++] = static_cast<const BVHNode *>(node->left_raw);
       }
 
-      // Right child
       if (node->right_is_leaf) {
         if (node->right_raw->hit(r, t_min, t_max, rec)) {
           any_hit = true;
@@ -409,7 +424,49 @@ private:
         stack[stack_ptr++] = static_cast<const BVHNode *>(node->right_raw);
       }
     }
+    return any_hit;
+  }
 
+  // --- Ordered traversal: near child first for better t_max clamping ---
+  bool hit_ordered(const Ray &r, Real t_min, Real t_max, HitRecord &rec) const {
+    constexpr int MAX_STACK = 64;
+    const BVHNode *stack[MAX_STACK];
+    int stack_ptr = 0;
+    bool any_hit = false;
+
+    stack[stack_ptr++] = this;
+
+    while (stack_ptr > 0) {
+      const BVHNode *node = stack[--stack_ptr];
+
+      if (!node->box.hit(r, t_min, t_max))
+        continue;
+
+      const bool left_first = r.dir[node->split_axis] > 0;
+
+      Hittable *near = left_first ? node->left_raw : node->right_raw;
+      bool near_is_leaf = left_first ? node->left_is_leaf : node->right_is_leaf;
+      Hittable *far = left_first ? node->right_raw : node->left_raw;
+      bool far_is_leaf = left_first ? node->right_is_leaf : node->left_is_leaf;
+
+      if (near_is_leaf) {
+        if (near->hit(r, t_min, t_max, rec)) {
+          any_hit = true;
+          t_max = rec.t;
+        }
+      }
+      if (far_is_leaf) {
+        if (far->hit(r, t_min, t_max, rec)) {
+          any_hit = true;
+          t_max = rec.t;
+        }
+      }
+
+      if (!far_is_leaf)
+        stack[stack_ptr++] = static_cast<const BVHNode *>(far);
+      if (!near_is_leaf)
+        stack[stack_ptr++] = static_cast<const BVHNode *>(near);
+    }
     return any_hit;
   }
 
