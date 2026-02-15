@@ -146,10 +146,9 @@ La roadmap se divise en plusieurs axes parallèles : **Consolidation Logicielle*
     *   **⚠️ Attention** : Vérifier l'impact sur les structures contenant des Vec3 (Ray, HitRecord, AABB) — le padding peut légèrement augmenter la taille des structs et affecter la cache. Profiler avant/après.
 
 4.  **BVH Itératif** (Stack-Based Traversal).
-    *   **Status**: ❌ **Not Implemented**. (Traversée récursive via `shared_ptr<Hittable>` et virtual dispatch `hit()`).
-    *   *Diff*: Medium | *Value*: High (Élimine le coût du call stack + virtual dispatch dans le hot path)
-    *   *Desc*: Remplacer la traversée récursive du BVH par une boucle itérative avec stack local (`std::array<Node*, 64>`). Le gain vient de : (a) pas de frame de pile récursive, (b) pas de virtual dispatch sur chaque nœud interne (accès direct au type `BVHNode`), (c) meilleure prédiction de branchement sur la boucle. Ce refactoring est compatible avec le "Any Hit" (shadow rays) car le stack permet un early-exit propre.
-    *   **Note** : Nécessite de séparer les nœuds internes (BVH) des feuilles (Hittable*) dans la structure. C'est le refactoring le plus impactant de cet axe mais reste localisé à `bvh.h`.
+    *   **Status**: ✅ **Implemented** (Feb 2025). Replaced recursive virtual dispatch with iterative stack-based traversal in `bvh.h`. Virtual dispatch only on leaf geometry, never on internal BVH nodes.
+    *   *Benchmark (960×720, 128 SPP, SAH)*: **-16%** on `random` (486 obj), **-7.9%** on `cornell`, **-5.4%** on `showcase`. **Total: -9.3%** (26.4s → 23.9s).
+    *   *Technique*: `finalize_node()` at build time caches raw pointers + `is_leaf` flags via `dynamic_cast` (zero cost at traversal). Fixed stack `BVHNode*[64]` replaces recursive call frames.
 
 ---
 

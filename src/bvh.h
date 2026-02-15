@@ -42,6 +42,13 @@ public:
   std::shared_ptr<Hittable> right;
   AABB box;
 
+  // Cached raw pointers + leaf flags for iterative traversal (set at build
+  // time)
+  Hittable *left_raw = nullptr;
+  Hittable *right_raw = nullptr;
+  bool left_is_leaf = false;  // true if left child is NOT a BVHNode
+  bool right_is_leaf = false; // true if right child is NOT a BVHNode
+
   enum class SplitMethod { Midpoint, SAH };
 
   // 1. Constructeur Public
@@ -58,6 +65,15 @@ public:
   }
 
 private:
+  // Called after build to cache raw pointers and determine leaf status.
+  // Uses dynamic_cast ONLY at build time (never during traversal).
+  void finalize_node() {
+    left_raw = left.get();
+    right_raw = right.get();
+    left_is_leaf = (dynamic_cast<BVHNode *>(left_raw) == nullptr);
+    right_is_leaf = (dynamic_cast<BVHNode *>(right_raw) == nullptr);
+  }
+
   void build(std::vector<std::shared_ptr<Hittable>> &objects, size_t start,
              size_t end, SplitMethod method) {
     if (method == SplitMethod::SAH) {
@@ -66,6 +82,7 @@ private:
       // Default: Midpoint (Object Median)
       build_midpoint(objects, start, end, method);
     }
+    finalize_node();
   }
 
   // --- MIDPOINT SPLIT (Legacy / Fast Build) ---
@@ -350,26 +367,50 @@ private:
   }
 
   // ---------------------------------------------------------------------------------------------
-  // ALGORITHM: TRAVERSAL
+  // ALGORITHM: ITERATIVE STACK-BASED TRAVERSAL
   // ---------------------------------------------------------------------------------------------
+  // Replaces recursive virtual dispatch with a while-loop + fixed stack.
+  // Virtual dispatch is only used on leaf geometry (Sphere, Quad, Triangle,
+  // Instance), never on internal BVH nodes.
   virtual bool hit(const Ray &r, Real t_min, Real t_max,
                    HitRecord &rec) const override {
-    // 1. Box Test: If the ray misses the bounding box, we can skip the entire
-    // subtree.
-    if (!box.hit(r, t_min, t_max))
-      return false;
+    constexpr int MAX_STACK = 64; // Depth ~9 for 500 objects, safe margin
+    const BVHNode *stack[MAX_STACK];
+    int stack_ptr = 0;
+    bool any_hit = false;
 
-    // 2. Check Children
-    // We recursively check the Left child.
-    bool hit_left = left->hit(r, t_min, t_max, rec);
+    // Push root
+    stack[stack_ptr++] = this;
 
-    // Then check Right child.
-    // OPTIMIZATION: If we hit the left child at distance 'rec.t', we clamp
-    // 't_max' for the right child search. We only care about objects CLOSER
-    // than the one we just found.
-    bool hit_right = right->hit(r, t_min, hit_left ? rec.t : t_max, rec);
+    while (stack_ptr > 0) {
+      const BVHNode *node = stack[--stack_ptr];
 
-    return hit_left || hit_right;
+      // AABB test — skip entire subtree on miss
+      if (!node->box.hit(r, t_min, t_max))
+        continue;
+
+      // Left child
+      if (node->left_is_leaf) {
+        if (node->left_raw->hit(r, t_min, t_max, rec)) {
+          any_hit = true;
+          t_max = rec.t; // Clamp: only accept closer hits from now on
+        }
+      } else {
+        stack[stack_ptr++] = static_cast<const BVHNode *>(node->left_raw);
+      }
+
+      // Right child
+      if (node->right_is_leaf) {
+        if (node->right_raw->hit(r, t_min, t_max, rec)) {
+          any_hit = true;
+          t_max = rec.t;
+        }
+      } else {
+        stack[stack_ptr++] = static_cast<const BVHNode *>(node->right_raw);
+      }
+    }
+
+    return any_hit;
   }
 
   virtual bool bounding_box(AABB &output_box) const override {
