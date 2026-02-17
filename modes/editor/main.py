@@ -562,8 +562,9 @@ def run(engine, config, builder):
             app_state.render_scanline_iterator = 0
             app_state.needs_render_reset = False
             # Clear current image to black/background to avoid ghosting
-            if app_state.current_image:
-                 app_state.current_image.fill((0,0,0))
+            # REMOVED for Smooth Transition (No Flash)
+            # if app_state.current_image:
+            #      app_state.current_image.fill((0,0,0))
             app_state.needs_repaint = True
 
         # 4. Render Execution
@@ -683,7 +684,8 @@ def run(engine, config, builder):
                 if app_state.render_strategy == "INTERACTIVE":
                     # Scale up if needed
                     if surf_slice.get_width() != target_w or surf_slice.get_height() != target_h:
-                        surf_slice = pygame.transform.scale(surf_slice, (target_w, target_h))
+                        # Use Smoothscale for better quality during interaction
+                        surf_slice = pygame.transform.smoothscale(surf_slice, (target_w, target_h))
                     app_state.current_image.blit(surf_slice, (0, 0))
                 else:
                     # Direct Blit at Offset (Scanline)
