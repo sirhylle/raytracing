@@ -46,6 +46,7 @@ class EditorState:
         self.preview_depth = 6
         self.preview_sampler = 0 # 0=Random, 1=Sobol
         self.render_sampler = 1  # 0=Random, 1=Sobol 
+        self.render_strategy = "IDLE" # "IDLE" or "INTERACTIVE"
 
         # --- VIEWPORT LOGIC ---
         self.target_aspect = conf.render.width / conf.render.height
@@ -77,7 +78,10 @@ class EditorState:
         self.needs_render_reset = True
         self.needs_ui_rebuild = True
         self.needs_repaint = True
+        self.needs_repaint = True
         self.accum_spp = 0
+        self.render_scanline_iterator = 0 # NEW: Tracks current scanline for idle rendering
+        self.last_interaction_time = 0.0  # NEW: Tracks last user interaction timestamp
         self.axis_mode = "LOCAL" # "NONE", "LOCAL", "GLOBAL"
         
         # --- EXCLUSIVE ACCORDION MANAGEMENT ---

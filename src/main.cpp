@@ -642,6 +642,104 @@ public:
     return nb::ndarray<nb::numpy, float>(display, 3, shape, owner);
   }
 
+  nb::ndarray<nb::numpy, float> render_scanlines(int width, int height, int spp,
+                                                 int start_y, int num_lines,
+                                                 int depth = 6,
+                                                 int sampler_type = 0) {
+    size_t num_pixels = (size_t)width * height;
+
+    // 1. Ensure Accumulation Buffer is valid for FULL FRAME
+    if (width != acc_width || height != acc_height ||
+        accumulation_buffer.size() != num_pixels * 3) {
+      accumulation_buffer.assign(num_pixels * 3, 0.0f);
+      accumulated_spp = 0;
+      acc_width = width;
+      acc_height = height;
+    }
+    if (!world_bvh)
+      world_bvh = std::make_shared<BVHNode>(world);
+
+    // 2. Validate Slice
+    if (start_y < 0)
+      start_y = 0;
+    if (start_y >= height)
+      return nb::ndarray<nb::numpy, float>(); // Empty
+    if (start_y + num_lines > height)
+      num_lines = height - start_y;
+
+    // Output buffer is strictly the size of the SLICE
+    size_t slice_pixels = (size_t)width * num_lines;
+    float *display_slice = new float[slice_pixels * 3];
+
+    try {
+      nb::gil_scoped_release release;
+
+      // Parallelize only over the SLICE rows
+#pragma omp parallel for schedule(dynamic)
+      for (int row_offset = 0; row_offset < num_lines; ++row_offset) {
+
+        int visual_y_in_image = start_y + row_offset; // 0..H (Top-Down)
+
+        // FIX: Geometric Y = H - 1 - Visual Y
+        // This ensures Visual Y=0 (Top) maps to Geometric Y=H-1 (Top)
+        int geometric_j = height - 1 - visual_y_in_image;
+
+        std::unique_ptr<Sampler> sampler;
+        if (sampler_type == 1)
+          sampler = std::make_unique<SobolSampler>();
+        else
+          sampler = std::make_unique<RandomSampler>();
+
+        for (int i = 0; i < width; ++i) {
+          sampler->start_pixel(i, geometric_j);
+
+          Vec3 batch_color(0, 0, 0);
+          for (int s = 0; s < spp; ++s) {
+            sampler->start_sample(s + accumulated_spp);
+
+            auto u = (i + sampler->get_1d()) / (width - 1);
+            auto v = (geometric_j + sampler->get_1d()) / (height - 1);
+            Ray r = camera->get_ray(u, v, *sampler);
+            r.is_primary = true;
+            batch_color += ray_color(r, *world_bvh, lights, background.get(),
+                                     depth, *sampler);
+          }
+
+          // Accumulate into GLOBAL buffer at Visual Index (Top-Down)
+          int global_idx = (visual_y_in_image * width + i) * 3;
+
+          accumulation_buffer[global_idx + 0] += batch_color.x();
+          accumulation_buffer[global_idx + 1] += batch_color.y();
+          accumulation_buffer[global_idx + 2] += batch_color.z();
+
+          float div = (float)(accumulated_spp + spp);
+
+          // Write to LOCAL slice at Row Offset
+          int slice_idx = (row_offset * width + i) * 3;
+
+          display_slice[slice_idx + 0] =
+              accumulation_buffer[global_idx + 0] / div;
+          display_slice[slice_idx + 1] =
+              accumulation_buffer[global_idx + 1] / div;
+          display_slice[slice_idx + 2] =
+              accumulation_buffer[global_idx + 2] / div;
+        }
+      }
+    } catch (...) {
+      delete[] display_slice;
+      throw;
+    }
+
+    nb::capsule owner(display_slice,
+                      [](void *p) noexcept { delete[] (float *)p; });
+    // Return shape corresponds to the SLICE
+    size_t shape[3] = {(size_t)num_lines, (size_t)width, 3ul};
+    return nb::ndarray<nb::numpy, float>(display_slice, 3, shape, owner);
+  }
+
+  // Allow Python to manually increment SPP when a full pass is done
+  void commit_spp(int spp_increment) { accumulated_spp += spp_increment; }
+
   void reset_accumulation() {
     std::fill(accumulation_buffer.begin(), accumulation_buffer.end(), 0.0f);
     accumulated_spp = 0;
@@ -845,6 +943,11 @@ NB_MODULE(cpp_engine, m) {
       .def("render_accumulate", &PyScene::render_accumulate, nb::arg("width"),
            nb::arg("height"), nb::arg("spp") = 1, nb::arg("n_threads") = 0,
            nb::arg("depth") = 6, nb::arg("sampler_type") = 0)
+      .def("render_scanlines", &PyScene::render_scanlines, nb::arg("width"),
+           nb::arg("height"), nb::arg("spp"), nb::arg("start_y"),
+           nb::arg("num_lines"), nb::arg("depth") = 6,
+           nb::arg("sampler_type") = 0)
+      .def("commit_spp", &PyScene::commit_spp, nb::arg("spp_increment"))
       .def("reset_accumulation", &PyScene::reset_accumulation)
       .def("pick_focus_distance", &PyScene::pick_focus_distance)
       .def("get_env_clipping_threshold", &PyScene::get_env_clipping_threshold)

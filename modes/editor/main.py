@@ -407,6 +407,7 @@ def run(engine, config, builder):
                         app_state.pitch -= dy * 0.003
                         app_state.pitch = max(-1.5, min(1.5, app_state.pitch))
                         app_state.scene_dirty = True
+                        app_state.last_interaction_time = time.time()
                     
                     # LIFT (Clic Molette maintenu) - Vertical Pur
                     if mouse_btns[1]:
@@ -420,6 +421,7 @@ def run(engine, config, builder):
                          app_state.cam_pos[1] -= dy * lift_speed
                          
                          app_state.scene_dirty = True
+                         app_state.last_interaction_time = time.time()
 
                     # Gizmo / Interaction Objet (Clic Gauche maintenu)
                     is_focusing = app_state.picking_focus or keys[pygame.K_f]
@@ -454,6 +456,7 @@ def run(engine, config, builder):
                                 data['scale'] = [v * s for v in data['scale']]
                             
                             app_state.update_transform(engine)
+                            app_state.last_interaction_time = time.time()
 
                 # Zoom (Molette)
                 elif event.type == pygame.MOUSEWHEEL and in_viewport:
@@ -463,6 +466,7 @@ def run(engine, config, builder):
                     zoom_step = app_state.move_speed * 0.05
                     app_state.cam_pos += np.array([fx, fy, fz]) * event.y * zoom_step
                     app_state.scene_dirty = True
+                    app_state.last_interaction_time = time.time()
 
         # Clavier (Déplacements ZQSD/Flèches)
         if not app_state.typing_mode: 
@@ -484,6 +488,7 @@ def run(engine, config, builder):
             if np.linalg.norm(move) > 0:
                 app_state.cam_pos += move * app_state.move_speed * dt
                 app_state.scene_dirty = True
+                app_state.last_interaction_time = time.time()
 
         # ---------------------------------------------------------
         # 3. ENGINE UPDATE (Camera)
@@ -510,28 +515,81 @@ def run(engine, config, builder):
             # Render reset implies we need to generate a new image
             app_state.needs_repaint = True 
 
-        # C. Render Step (Determine if we need to trace rays)
-        should_render = False
+        # C. HYBRID RENDER STRATEGY
+        # ---------------------------
+        # 1. Determine State
+        INTERACTION_GRACE_PERIOD = 0.2
+        time_since_interaction = time.time() - app_state.last_interaction_time
+        is_idling = time_since_interaction > INTERACTION_GRACE_PERIOD
         
-        if app_state.preview_mode == 2: # RAY
-            # Render if we haven't reached target SPP
-            if app_state.accum_spp < config.render.spp: 
-                should_render = True
-        else: # CLAY / NORMALS
-            # Render only if accumulation reset (spp=0)
-            if app_state.accum_spp == 0:
-                should_render = True
+        # 2. Determine Strategy & Resolution
+        strategy_changed = False
+        
+        # STATE: INTERACTION (Fast, Full Frame, Downscaled)
+        if not is_idling:
+            # Check if we just entered interaction mode
+            if app_state.render_strategy != "INTERACTIVE":
+                app_state.render_strategy = "INTERACTIVE"
+                strategy_changed = True
                 
-        # D. Execute Render
+            # Dynamic Scale (Auto-Scaler Logic applies here)
+            # Ensure we don't go below 1 pixel
+            base_w = app_state.viewport_rect[2]
+            base_h = app_state.viewport_rect[3]
+            rw = int(base_w / app_state.res_scale)
+            rh = int(base_h / app_state.res_scale)
+            rw = max(1, min(4096, rw))
+            rh = max(1, min(4096, rh))
+
+        # STATE: IDLE (High Quality, Scanlines, Native)
+        else:
+             if app_state.render_strategy != "IDLE":
+                app_state.render_strategy = "IDLE"
+                strategy_changed = True
+            
+             # Force Native Resolution
+             rw = app_state.viewport_rect[2]
+             rh = app_state.viewport_rect[3]
+             # If resizing window, we might have 0 dimensions briefly
+             rw = max(1, rw)
+             rh = max(1, rh)
+
+        # 3. Handle Transitions
+        if strategy_changed or app_state.needs_render_reset:
+            if hasattr(engine, 'reset_accumulation'): 
+                engine.reset_accumulation()
+            app_state.accum_spp = 0
+            app_state.render_scanline_iterator = 0
+            app_state.needs_render_reset = False
+            # Clear current image to black/background to avoid ghosting
+            if app_state.current_image:
+                 app_state.current_image.fill((0,0,0))
+            app_state.needs_repaint = True
+
+        # 4. Render Execution
+        should_render = False
+        if app_state.preview_mode == 2: # RAY
+             if app_state.render_strategy == "INTERACTIVE":
+                 # Render if SPP < Target (usually 1 for interaction, but we can accumulate if user holds still for < 0.2s)
+                 # Actually for interaction we usually want continuous updates.
+                 # Let's say we render if we haven't hit a modest limit or if we are moving?
+                 # If moving, accum_spp is reset constantly anyway.
+                 should_render = True
+             else:
+                 # IDLE: Render until target SPP
+                 should_render = (app_state.accum_spp < config.render.spp)
+        else:
+             # PREVIEW: Only render once
+             should_render = (app_state.accum_spp == 0)
+
         if should_render:
             t0 = time.time()
             
-            # Update Camera/Resolution
+            # Sync Camera
             fx = math.sin(app_state.yaw) * math.cos(app_state.pitch)
             fy = math.sin(app_state.pitch)
             fz = math.cos(app_state.yaw) * math.cos(app_state.pitch)
             lookat = app_state.cam_pos + np.array([fx, fy, fz])
-            
             engine.set_camera(
                  cpp_engine.Vec3(*app_state.cam_pos), 
                  cpp_engine.Vec3(*lookat), 
@@ -542,62 +600,98 @@ def run(engine, config, builder):
                  app_state.focus_dist
             )
             
-            # --- Draw / Render ---
             render_threads = config.system.threads
-            
-            # VIEWPORT-RELATIVE SCALING: Interactive resolution is decoupled from Offline resolution.
-            # We use the dimensions of the fitted viewport (viewport_rect) as our 1:1 base.
-            base_w = app_state.viewport_rect[2]
-            base_h = app_state.viewport_rect[3]
-            
-            rw = int(base_w / app_state.res_scale)
-            rh = int(base_h / app_state.res_scale)
-            
-            # Safety clamp x1
-            rw = max(1, min(4096, rw))
-            rh = max(1, min(4096, rh))
-            
-            raw = None
-            
-            if app_state.preview_mode == 2: # RAY
-                # SPP BATCHING: Render in small chunks to keep UI responsive.
-                # Clamp the last batch so we hit the target SPP exactly.
-                remaining = app_state.conf.render.spp - app_state.accum_spp
-                batch = min(app_state.ray_batch_size, remaining)
+            raw_slice = None
+            slice_y_offset = 0 # Where to blit
+
+            # --- CASE A: INTERACTIVE (Full Frame, Accumulate) ---
+            if app_state.render_strategy == "INTERACTIVE":
+                if app_state.preview_mode == 2: # RAY
+                     # Always 1 SPP per frame for responsiveness
+                     # We reuse render_accumulate for full frame
+                     cur_spp = 1
+                     raw_slice = engine.render_accumulate(rw, rh, cur_spp, render_threads, 3, app_state.preview_sampler) # Depth 3, Preview Sampler
+                     # Note: We don't increment accum_spp manually here, render_accumulate does NOT increment python counter?
+                     # Wait, cpp_engine.accumulate ADDS to internal buffer.
+                     # If we are interactive, we reset every frame?
+                     # Ideally: input -> reset -> render.
+                     # If we are dragging, input events trigger reset. 
+                     # If we stop dragging but are < 0.2s, we might accumulate a few frames.
+                     pass 
+                else:
+                     raw_slice = engine.render_preview(rw, rh, app_state.preview_mode, render_threads)
                 
-                if batch > 0:
-                    raw = engine.render_accumulate(rw, rh, batch, render_threads, app_state.conf.render.depth, app_state.preview_sampler) 
-                    app_state.accum_spp += batch
-            else: # PREVIEW (Normals / Clay)
-                raw = engine.render_preview(rw, rh, app_state.preview_mode, render_threads)
-                app_state.accum_spp = 1 # Mark as done
+                app_state.accum_spp = 1 # Just to mark as done
+                slice_y_offset = 0
 
-            # --- Post Process & Blit ---
-            if raw is not None:
-                # Tone Mapping
+            # --- CASE B: IDLE (Scanlines) ---
+            else: 
+                # SCANLINE LOGIC: Only for Raytracing (progressive)
                 if app_state.preview_mode == 2:
-                    corrected = renderer.apply_tone_mapping(raw)
-                elif app_state.preview_mode == 1: # Clay
-                    corrected = np.power(np.clip(raw, 0, 1), 1.0/2.2) # Gamma correction
-                else: # Normals
-                    corrected = raw
+                    # Chunk size targets ~30-60fps. 
+                    chunk_height = max(32, rh // 8) 
+                    
+                    start_y = app_state.render_scanline_iterator
+                    
+                    # Render Scanline Slice
+                    # Use preview parameters for Editor Idle
+                    raw_slice = engine.render_scanlines(rw, rh, 1, start_y, chunk_height, app_state.preview_depth, app_state.preview_sampler)
+                    
+                    slice_y_offset = start_y
+                    
+                    # Advance Iterator
+                    app_state.render_scanline_iterator += chunk_height
+                    if app_state.render_scanline_iterator >= rh:
+                        app_state.render_scanline_iterator = 0
+                        engine.commit_spp(1) # Signal C++ that 1 full pass is done
+                        app_state.accum_spp += 1
+                
+                # PREVIEW LOGIC (Clay/Normals) in Idle
+                else:
+                    # Just render full frame once (fast)
+                    raw_slice = engine.render_preview(rw, rh, app_state.preview_mode, render_threads)
+                    app_state.accum_spp = 1 # Mark as done
+                    slice_y_offset = 0
 
-                # Conversion to Surface
+            # --- POST PROCESS & BLIT ---
+            if raw_slice is not None:
+                # Tone Mapping
+                corrected = None
+                if app_state.preview_mode == 2:
+                    corrected = renderer.apply_tone_mapping(raw_slice)
+                elif app_state.preview_mode == 1:
+                    corrected = np.power(np.clip(raw_slice, 0, 1), 1.0/2.2)
+                else:
+                    corrected = raw_slice
+                
+                # To Surface
                 img_uint8 = (np.clip(corrected, 0, 1) * 255).astype(np.uint8)
                 img_transposed = np.transpose(img_uint8, (1, 0, 2))
-                surf = pygame.surfarray.make_surface(img_transposed)
+                surf_slice = pygame.surfarray.make_surface(img_transposed)
                 
-                # Rescaling for viewport
+                # Ensure Base Surface Exists and is Correct Size
                 target_w = app_state.viewport_rect[2]
                 target_h = app_state.viewport_rect[3]
                 
-                if surf.get_width() != target_w or surf.get_height() != target_h:
-                     surf = pygame.transform.smoothscale(surf, (target_w, target_h))
+                if app_state.current_image is None or \
+                   app_state.current_image.get_width() != target_w or \
+                   app_state.current_image.get_height() != target_h:
+                    app_state.current_image = pygame.Surface((target_w, target_h))
+                    app_state.current_image.fill((0,0,0))
                 
-                app_state.current_image = surf
+                # Blit Logic
+                if app_state.render_strategy == "INTERACTIVE":
+                    # Scale up if needed
+                    if surf_slice.get_width() != target_w or surf_slice.get_height() != target_h:
+                        surf_slice = pygame.transform.scale(surf_slice, (target_w, target_h))
+                    app_state.current_image.blit(surf_slice, (0, 0))
+                else:
+                    # Direct Blit at Offset (Scanline)
+                    # We assume scale is 1:1 in Idle
+                    app_state.current_image.blit(surf_slice, (0, slice_y_offset))
+                
                 last_render_dt = time.time() - t0
-            
-            app_state.needs_repaint = True # New frame -> Repaint screen
+                app_state.needs_repaint = True
             # print("DEBUG: Post Process Done")
             
 
@@ -609,10 +703,10 @@ def run(engine, config, builder):
             # A. FPS Smoothing
             current_instant_fps = 1.0 / max(0.001, last_render_dt)
             app_state.current_fps = app_state.current_fps * 0.9 + current_instant_fps * 0.1
-            real_fps = app_state.current_fps
             
             # B. AUTO SCALER (Legacy Logic + Stability)
-            if app_state.preview_mode == 2 and app_state.res_auto:
+            # ONLY RUN IN INTERACTIVE MODE
+            if app_state.render_strategy == "INTERACTIVE" and app_state.preview_mode == 2 and app_state.res_auto:
                 # LEGACY THRESHOLDS:
                 # 10 FPS (0.1s) -> Downscale
                 # 35 FPS (0.028s) -> Upscale
@@ -622,35 +716,33 @@ def run(engine, config, builder):
                 current_dt = last_render_dt
                 old_scale = app_state.res_scale
                 
-                # Discrete steps: [0.5, 1, 2, 4, 8]
-                scales = [0.5, 1.0, 2.0, 4.0, 8.0]
+                # Discrete steps: Extended for aggressive downscaling
+                scales = [0.5, 1.0, 2.0, 4.0, 8.0, 16.0] 
                 try:
                     idx = scales.index(old_scale)
                 except ValueError:
-                    idx = 1 # Default to 1:1 if weird scale
+                    idx = 1 # Default to 1:1
                 
                 # 1. DOWN-SCALING (Lag)
                 if current_dt > FPS_LOW_DT:
                     app_state.res_stability -= 1
-                    if app_state.res_stability <= -5: # Stability check
+                    if app_state.res_stability <= -3: # Faster reaction (was -5)
                         if idx < len(scales) - 1:
                             app_state.res_scale = scales[idx + 1]
                         app_state.res_stability = 0
                 
                 # 2. UP-SCALING (Headroom)
                 elif current_dt < FPS_HIGH_DT:
-                    # RESOLUTION LOCK: Freeze quality improvement after 10 SPP
-                    if app_state.accum_spp < 10:
-                        app_state.res_stability += 1
-                        if app_state.res_stability >= 10: # Stability check
-                            if idx > 0:
-                                new_scale = scales[idx - 1]
-                                # Special Rule: 0.5 (SuperSampling) only for PREVIEW modes
-                                if new_scale == 0.5 and app_state.preview_mode == 2:
-                                    pass # Stay at 1.0
-                                else:
-                                    app_state.res_scale = new_scale
-                            app_state.res_stability = 0
+                    app_state.res_stability += 1
+                    if app_state.res_stability >= 10: # Stability check
+                        if idx > 0:
+                            new_scale = scales[idx - 1]
+                            # Special Rule: 0.5 (SuperSampling) only for PREVIEW modes
+                            if new_scale == 0.5 and app_state.preview_mode == 2:
+                                pass # Stay at 1.0 for Raytracing (too heavy)
+                            else:
+                                app_state.res_scale = new_scale
+                        app_state.res_stability = 0
                 else:
                     # Decay
                     if app_state.res_stability > 0: app_state.res_stability -= 1
@@ -661,7 +753,6 @@ def run(engine, config, builder):
                     app_state.needs_render_reset = True
 
             # C. Batch Size Adjustment
-
             if app_state.preview_mode == 2:
                 ideal = app_state.ray_batch_size * (0.033 / last_render_dt)
                 app_state.ray_batch_size = max(1, min(32, int(ideal)))
