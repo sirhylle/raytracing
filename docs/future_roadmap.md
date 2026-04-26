@@ -53,13 +53,13 @@ La roadmap se divise en plusieurs axes parallèles : **Consolidation Logicielle*
     *   *Desc*: Les ombres des objets en verre sont colorées (Beer's Law), mais pas de vraies caustiques (Photon Mapping absent).
 
 5.  **Dispersion Chromatique (Rendu Spectral ou RGB-Shift)** (Priority: Research/Low)
-    *   **Status**: ⚠️ **Partial** (Core logic in `materials.h`, bindings missing in `main.cpp`).
+    *   **Status**: ✅ **Completed**.
     *   *Diff*: Very High | *Value*: Specific Realism (Gemstones, Prisms)
-    *   *Desc*: Simulation de la variation de l'IOR selon la longueur d'onde.
+    *   *Desc*: Simulation de la variation de l'IOR selon la longueur d'onde. Implémentée via échantillonnage d'un spectre RGB continu (`color_filter`) dans `materials.h`, exposée dans `loader.py` et paramétrable via l'UI (`tab_object.py`).
     *   **WARNING (Historique)** : Tentatives passées non concluantes ("Dispersive Caustics").
         *   Le passage au "Full Spectral" a causé des régressions de performance massives et du bruit de couleur difficile à converger.
-        *   La séparation simple R/G/B donne un effet "Ghosting" irréaliste (pas d'arc-en-ciel continu).
-        *   *Stratégie future*: Explorer une approche hybride ou Hero Wavelength sans tout casser.
+        *   La séparation simple R/G/B donnait un effet "Ghosting" irréaliste.
+        *   *Stratégie Actuelle*: L'approche actuelle utilise des spectres d'absorption triangulaires continus sur [0,1] pour garantir la conservation d'énergie tout en générant un arc-en-ciel fluide.
 
 ## Axe C : Extension PBR & Material (Creative)
 
