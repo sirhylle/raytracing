@@ -358,7 +358,7 @@ public:
     
     if (!mat) {
         // Create a default GgxMaterial if none exists
-        mat = std::make_shared<GgxMaterial>(Vec3(0.8, 0.8, 0.8), 0.5, 0.0);
+        mat = std::make_shared<GgxMaterial>(Vec3(0.8f, 0.8f, 0.8f), 0.5f, 0.0f);
         instances_map[id]->set_material(mat);
     }
     
@@ -942,12 +942,15 @@ NB_MODULE(cpp_engine, m) {
           [](PyScene &self, int id, const std::string &type, const Vec3 &color,
              Real roughness, Real metallic, Real ir, Real transmission,
              Real dispersion) {
-            
+            // DIRECT UPDATE: We bypass create_material() overrides to respect
+            // UI sliders. If user selects "GLASS" but drags Metal to 1.0, they
+            // get Metal Glass.
             std::shared_ptr<GgxMaterial> old_ggx = nullptr;
             if (self.instances_map.find(id) != self.instances_map.end()) {
                  old_ggx = std::dynamic_pointer_cast<GgxMaterial>(self.instances_map[id]->override_material);
             }
 
+            // Handle special types
             std::shared_ptr<Material> new_mat;
             if (type == "light")
               new_mat = std::make_shared<DiffuseLight>(color);
