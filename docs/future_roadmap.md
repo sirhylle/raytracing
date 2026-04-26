@@ -24,11 +24,11 @@ La roadmap se divise en plusieurs axes parallèles : **Consolidation Logicielle*
     *   **Status**: ❌ **Not Implemented**. (UI updates trigger full accumulation reset).
     *   *Desc*: Pouvoir bouger la caméra sans reset l'accumulation si on est en pause ?
 
-6.  **Partial Accumulation (Timeslicing) for UI Responsiveness**.
-    *   **Status**: ❌ **Not Implemented**.
-    *   *Desc*: Rendre l'accumulation "interruptible" ou fractionnée. Au lieu de forcer 1 SPP *entier* sur tous les pixels (qui peut prendre 500ms+ sur grosse scène), on rend par blocs (ex: 10% des pixels) ou avec un budget temps (ex: 30ms max).
-    *   *Challenge*: Gérer la cohérence du buffer d'accumulation (ne pas mélanger des samples N et N+1 sur la même image affichée si possible, ou accepter le "tearing" temporaire).
-    *   *Priority*: High (Quick Win vs Threading).
+6.  **~~Partial Accumulation (Timeslicing) for UI Responsiveness~~**.
+    *   **Status**: ⛔ **Tested & Rejected / Solved Differently**.
+    *   *Desc*: L'idée initiale était de rendre l'accumulation fractionnée par blocs ou budget temps.
+    *   *Lesson*: Rejeté car le rendu par blocs (ou scanline) créait des artefacts de déchirement ("tearing") très disgracieux lors du déplacement de la caméra en temps réel.
+    *   *Alternative choisie*: Mesure des FPS en temps réel et réduction dynamique de la résolution de rendu si les FPS chutent trop bas. Cela garantit une navigation fluide sans artefacts visuels.
 
 7.  **~~Shadow Rays "Any Hit"~~** (Optimisation).
     *   **Status**: ⛔ **Tested & Rejected** (Feb 2025). Shadow early-exit (`all_opaque` flag + first-hit return) benchmarked: no measurable improvement. Shadow rays are not the bottleneck — primary/indirect rays dominate. Infrastructure (`is_opaque()`, `all_opaque` flag) kept for future use.
@@ -64,8 +64,9 @@ La roadmap se divise en plusieurs axes parallèles : **Consolidation Logicielle*
 ## Axe C : Extension PBR & Material (Creative)
 
 1.  **Textures Support** (Priority: High).
-    *   **Status**: ❌ **Not Implemented**.
-    *   *Desc*: Charger .jpg/.png pour Albedo, Roughness, Normal Map. Nécessite UV Mapping sur les primitives.
+    *   **Status**: ✅ **Implemented** (Primitives) / ⚠️ **Partial** (Meshes).
+    *   *Desc*: L'échantillonnage PBR complet (Albedo, Roughness, Metallic, Normal) est implémenté en C++, exposé à Python (`update_instance_textures`), et intégré dans l'interface utilisateur. L'UV mapping est opérationnel sur les primitives de base.
+    *   *Reste à faire*: Gérer l'extraction et l'interpolation des coordonnées UV lors du chargement de fichiers `.obj` complexes (Meshes).
 
 2.  **Procedural Noise** (Perlin, Voronoi).
     *   **Status**: ❌ **Not Implemented**.
