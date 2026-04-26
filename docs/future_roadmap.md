@@ -193,6 +193,10 @@ La roadmap se divise en plusieurs axes parallèles : **Consolidation Logicielle*
 
     *   *Lesson*: Pure FlatBVH regressed on simple scenes (+6-12%) due to array indexing overhead vs direct pointer dispatch. Hybrid approach isolates the gain to deep BVHs where cache locality matters most.
 
+6.  **~~Unification PBR & Approximation de Schlick (Diélectriques)~~**.
+    *   **Status**: ⛔ **Tested & Rejected** (Avril 2026). Tentative d'unifier l'évaluation de tous les matériaux sous l'approximation de Fresnel de Schlick (en convertissant l'IOR en `F0` mis en cache) pour éviter les calculs coûteux par rayon.
+    *   *Lesson*: Le gain de performance mesuré sur la version C++ était imperceptible dans la pratique. L'approximation de Schlick, bien qu'étant le standard dans l'industrie temps-réel, induit une légère déviation de la probabilité de réflexion aux angles intermédiaires, créant des différences stochastiques dans les chemins de rayons (~1,18% de pixels différents). Nous avons décidé de privilégier la lisibilité du code et la pureté mathématique (utilisation de l'équation de Fresnel exacte pour les diélectriques) plutôt qu'une micro-optimisation contre-intuitive.
+
 # Appendix: Lessons Learned & Specific Fixes (Legacy Notes)
 
 **Context**: Attempted to implement "Configurable NEE" (Stochastic vs Exhaustive) + MIS. The NEE branching added complexity for little visual gain on simple scenes. The user decided to revert the NEE configuration but keep the knowledge for MIS and Material fixes.

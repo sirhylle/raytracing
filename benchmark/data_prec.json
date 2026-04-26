@@ -1,0 +1,23 @@
+{
+    "micro": {
+        "avg_time_s": 9.377886133268476,
+        "mrays_s": 9.434279617251473,
+        "times": [
+            9.443595899967477,
+            9.340392699930817,
+            9.349669799907133
+        ]
+    },
+    "macro_width": 3840,
+    "macro_height": 2160,
+    "macro_spp": 128,
+    "macro_time_s": 112.89867659984156,
+    "diff_ref": {
+        "mse": 0.0,
+        "diff_percent": 0.0
+    },
+    "diff_prec": {
+        "mse": 0.0,
+        "diff_percent": 0.0
+    }
+}

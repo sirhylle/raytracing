@@ -35,6 +35,7 @@
 
 Real EPSILON = 0.001f;
 Real FIREFLY_CLAMP_LIMIT = 100.0f;
+int GLOBAL_BASE_SEED = -1;
 
 namespace nb = nanobind;
 using namespace nb::literals;
@@ -847,6 +848,10 @@ public:
     }
   }
 
+  void set_seed(int base_seed) {
+    set_global_seed(base_seed);
+  }
+
 private:
   std::shared_ptr<Material> create_material(const std::string &type,
                                             const Vec3 &col, Real roughness,
@@ -973,6 +978,7 @@ NB_MODULE(cpp_engine, m) {
       .def("update_instance_textures", &PyScene::update_instance_textures, nb::arg("id"), 
            nb::arg("albedo").none(), nb::arg("roughness").none(), nb::arg("metallic").none(), nb::arg("normal").none())
       .def("remove_instance", &PyScene::remove_instance, nb::arg("id"))
+      .def("set_seed", &PyScene::set_seed, nb::arg("base_seed"))
       .def("set_camera", &PyScene::set_camera)
       .def("set_environment", &PyScene::set_environment, nb::arg("image"),
            nb::arg("clipping_threshold") = INFINITY_REAL)

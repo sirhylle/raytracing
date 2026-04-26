@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <iostream>
 #include <limits>
@@ -71,11 +72,34 @@ inline Real firefly_clamp(Real x, Real limit) {
 // UTILITAIRES ALÉATOIRES (Thread Safe)
 // ===============================================================================================
 
+extern int GLOBAL_BASE_SEED;
+
+inline void set_global_seed(int seed) {
+    GLOBAL_BASE_SEED = seed;
+}
+
+inline std::mt19937& get_thread_generator() {
+    static thread_local bool initialized = false;
+    static thread_local std::mt19937 generator;
+    if (!initialized) {
+        if (GLOBAL_BASE_SEED >= 0) {
+            static std::atomic<int> thread_counter{0};
+            int tid = thread_counter++;
+            // Scramble seed a bit per thread so thread 0 and thread 1 don't have extremely correlated sequences if base_seed is small.
+            // Using a simple hash for the thread seed
+            std::seed_seq ss{uint32_t(GLOBAL_BASE_SEED), uint32_t(tid)};
+            generator.seed(ss);
+        } else {
+            generator.seed(std::random_device{}());
+        }
+        initialized = true;
+    }
+    return generator;
+}
+
 inline Real random_real() {
-  static thread_local std::mt19937 generator{std::random_device{}()};
-  static thread_local std::uniform_real_distribution<Real> distribution(0.0f,
-                                                                        1.0f);
-  return distribution(generator);
+  static thread_local std::uniform_real_distribution<Real> distribution(0.0f, 1.0f);
+  return distribution(get_thread_generator());
 }
 
 inline Real random_real(Real min, Real max) {

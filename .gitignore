@@ -18,6 +18,7 @@ animations_frames - Copie/
 *.hdr
 !rendering*
 !Screenshot*
+!benchmark/*.png
 
 # Logs
 *.log
