@@ -30,6 +30,7 @@
 #include "instance.h"
 #include "materials.h"
 #include "renderer.h"
+#include "texture.h"
 
 Real EPSILON = 0.001f;
 Real FIREFLY_CLAMP_LIMIT = 100.0f;
@@ -346,6 +347,29 @@ public:
         create_material(mat_type, color, roughness, metallic, ir, transmission);
     instances_map[id]->set_material(new_mat);
     reset_accumulation();
+  }
+
+  void update_instance_textures(int id, std::shared_ptr<Texture> albedo,
+                                std::shared_ptr<Texture> roughness,
+                                std::shared_ptr<Texture> metallic,
+                                std::shared_ptr<Texture> normal) {
+    if (instances_map.find(id) == instances_map.end()) return;
+    auto mat = instances_map[id]->override_material;
+    
+    if (!mat) {
+        // Create a default GgxMaterial if none exists
+        mat = std::make_shared<GgxMaterial>(Vec3(0.8, 0.8, 0.8), 0.5, 0.0);
+        instances_map[id]->set_material(mat);
+    }
+    
+    auto ggx = std::dynamic_pointer_cast<GgxMaterial>(mat);
+    if (ggx) {
+        ggx->albedo_map = albedo;
+        ggx->roughness_map = roughness;
+        ggx->metallic_map = metallic;
+        ggx->normal_map = normal;
+        reset_accumulation();
+    }
   }
 
   void remove_instance(int id) {
@@ -854,6 +878,20 @@ NB_MODULE(cpp_engine, m) {
       .value("SAH", BVHNode::SplitMethod::SAH)
       .export_values();
 
+  nb::class_<Texture>(m, "Texture");
+  
+  nb::class_<SolidColor, Texture>(m, "SolidColor")
+      .def(nb::init<Vec3>())
+      .def(nb::init<Real>());
+
+  nb::class_<ImageTexture, Texture>(m, "ImageTexture")
+      .def("__init__", [](ImageTexture *t, nb::ndarray<float, nb::c_contig> data, int w, int h) {
+          std::vector<float> img(w * h * 3);
+          const float* ptr = (const float*)data.data();
+          std::copy(ptr, ptr + w * h * 3, img.begin());
+          new (t) ImageTexture(img, w, h);
+      });
+
   nb::class_<Vec3>(m, "Vec3")
       .def(nb::init<Real, Real, Real>())
       .def("x", &Vec3::x)
@@ -904,21 +942,27 @@ NB_MODULE(cpp_engine, m) {
           [](PyScene &self, int id, const std::string &type, const Vec3 &color,
              Real roughness, Real metallic, Real ir, Real transmission,
              Real dispersion) {
-            // DIRECT UPDATE: We bypass create_material() overrides to respect
-            // UI sliders. If user selects "GLASS" but drags Metal to 1.0, they
-            // get Metal Glass.
+            
+            std::shared_ptr<GgxMaterial> old_ggx = nullptr;
+            if (self.instances_map.find(id) != self.instances_map.end()) {
+                 old_ggx = std::dynamic_pointer_cast<GgxMaterial>(self.instances_map[id]->override_material);
+            }
 
-            // Handle special types
             std::shared_ptr<Material> new_mat;
             if (type == "light")
               new_mat = std::make_shared<DiffuseLight>(color);
             else if (type == "invisible_light")
               new_mat = std::make_shared<InvisibleLight>(color);
             else {
-              // All standard types (lambertian, metal, dielectric, standard)
-              // use explicit params
-              new_mat = std::make_shared<GgxMaterial>(
+              auto ggx = std::make_shared<GgxMaterial>(
                   color, roughness, metallic, ir, transmission, dispersion);
+              if (old_ggx) {
+                  ggx->albedo_map = old_ggx->albedo_map;
+                  ggx->roughness_map = old_ggx->roughness_map;
+                  ggx->metallic_map = old_ggx->metallic_map;
+                  ggx->normal_map = old_ggx->normal_map;
+              }
+              new_mat = ggx;
             }
 
             self.instances_map[id]->set_material(new_mat);
@@ -928,6 +972,8 @@ NB_MODULE(cpp_engine, m) {
           nb::arg("roughness") = 0.5f, nb::arg("metallic") = 0.0f,
           nb::arg("ir") = 1.5f, nb::arg("transmission") = 0.0f,
           nb::arg("dispersion") = 0.0f)
+      .def("update_instance_textures", &PyScene::update_instance_textures, nb::arg("id"), 
+           nb::arg("albedo").none(), nb::arg("roughness").none(), nb::arg("metallic").none(), nb::arg("normal").none())
       .def("remove_instance", &PyScene::remove_instance, nb::arg("id"))
       .def("set_camera", &PyScene::set_camera)
       .def("set_environment", &PyScene::set_environment, nb::arg("image"),

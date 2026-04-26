@@ -47,7 +47,7 @@ def _relativize_paths(data, base_dir):
     where appropriate (e.g. 'asset_name', 'texture_path').
     """
     # Keys known to contain paths
-    PATH_KEYS = {'asset_name', 'map_path', 'texture_path'}
+    PATH_KEYS = {'asset_name', 'map_path', 'texture_path', 'albedo_map', 'roughness_map', 'metallic_map', 'normal_map'}
     
     if isinstance(data, dict):
         for k, v in data.items():

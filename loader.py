@@ -42,6 +42,37 @@ class SceneBuilder:
         # Le Registre : ID -> {type, pos, rot, scale, ...}
         self.registry = {}
         self.asset_library = {}
+        self.texture_cache = {}  # path -> cpp_engine.ImageTexture
+
+    def load_texture(self, filepath):
+        """Loads an image file and returns a cpp_engine.ImageTexture. Uses cache."""
+        if filepath in self.texture_cache:
+            return self.texture_cache[filepath]
+        
+        if not os.path.exists(filepath):
+            print(f"[Loader] Texture not found: {filepath}")
+            return None
+        
+        try:
+            img = iio.imread(filepath)
+            if img.ndim == 2:
+                img = np.stack((img,)*3, axis=-1)
+            if img.ndim == 3 and img.shape[2] > 3:
+                img = img[:,:,:3]
+            
+            img_f = img.astype(np.float32)
+            if img.dtype == np.uint8:
+                img_f /= 255.0
+            
+            h, w = img_f.shape[:2]
+            flat = np.ascontiguousarray(img_f.reshape(-1), dtype=np.float32)
+            tex = cpp_engine.ImageTexture(flat, w, h)
+            self.texture_cache[filepath] = tex
+            print(f"[Loader] Loaded texture: {filepath} ({w}x{h})")
+            return tex
+        except Exception as e:
+            print(f"[Loader] Failed to load texture {filepath}: {e}")
+            return None
 
     # --- Primitives PBR ---
 

@@ -288,3 +288,64 @@ def build(ui_list, start_y, state, engine):
             ui_list.append(Slider(VIEW_W + slider_x_prop, ys, slider_w_prop, 12, 0.0, 0.1, 
                                   lambda: get_prop('dispersion', 0.00), lambda v: set_prop(v, 'dispersion'), power=3))
             ys += 20
+
+    # ==================== BLOCK 4 : TEXTURES ====================
+    is_light = sel_data.get('mat_type', '') in ('light', 'invisible_light')
+    if not is_light and draw_section_header("TEXTURE", "TEXTURE"):
+        
+        import tkinter as tk_tex
+        from tkinter import filedialog as fd_tex
+        import os as os_tex
+
+        tex_channels = [
+            ("Albedo",    "albedo_map",    (200, 170, 100)),
+            ("Roughness", "roughness_map", (140, 140, 140)),
+            ("Metallic",  "metallic_map",  (100, 160, 200)),
+            ("Normal",    "normal_map",    (130, 130, 220)),
+        ]
+        
+        for label_name, key, color in tex_channels:
+            current_path = sel_data.get(key)
+            display_name = os_tex.path.basename(current_path) if current_path else "None"
+            
+            # Label: Channel Name
+            lbl(ui_list, 10, ys + 2, label_name, 12, color)
+            
+            # Label: Current File (truncated)
+            if len(display_name) > 20:
+                display_name = "..." + display_name[-17:]
+            lbl(ui_list, 80, ys + 2, display_name, 11, COL_TEXT_DIM)
+            
+            # LOAD Button
+            def make_load(k):
+                def load_tex():
+                    root = tk_tex.Tk(); root.withdraw(); root.attributes('-topmost', True)
+                    fpath = fd_tex.askopenfilename(
+                        title=f"Load {k.replace('_map','').title()} Map",
+                        filetypes=[("Images", "*.png *.jpg *.jpeg *.tga *.bmp *.hdr *.exr")],
+                        initialdir="."
+                    )
+                    root.destroy()
+                    if not fpath: return
+                    d = state.get_selected_info()
+                    if d:
+                        d[k] = fpath
+                        state.push_texture_update(engine)
+                        state.needs_ui_rebuild = True
+                return load_tex
+            
+            btn(ui_list, PANEL_W - 80, ys, 35, 20, "Load", make_load(key))
+            
+            # CLEAR Button  
+            def make_clear(k):
+                def clear_tex():
+                    d = state.get_selected_info()
+                    if d:
+                        d[k] = None
+                        state.push_texture_update(engine)
+                        state.needs_ui_rebuild = True
+                return clear_tex
+            
+            btn(ui_list, PANEL_W - 40, ys, 25, 20, "X", make_clear(key), col_ov=(120, 50, 50))
+            
+            ys += 26

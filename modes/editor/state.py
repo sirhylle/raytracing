@@ -289,6 +289,37 @@ class EditorState:
         self.needs_render_reset = True
         self.needs_repaint = True
 
+    def push_texture_update(self, engine):
+        """Loads textures from registry paths and sends them to the C++ engine."""
+        d = self.get_selected_info()
+        if not d: return
+        
+        # CRITICAL: Ensure the override_material exists with correct PBR params
+        # BEFORE applying textures. Without this, objects that only have a geometry
+        # material (no override) would get a blank default material.
+        self.push_material_update(engine)
+        
+        tex_channels = ['albedo_map', 'roughness_map', 'metallic_map', 'normal_map']
+        textures = {}
+        
+        for ch in tex_channels:
+            path = d.get(ch)
+            if path and isinstance(path, str):
+                tex = self.builder.load_texture(path)
+                textures[ch] = tex
+            else:
+                textures[ch] = None
+        
+        engine.update_instance_textures(
+            self.selected_id,
+            textures['albedo_map'],
+            textures['roughness_map'],
+            textures['metallic_map'],
+            textures['normal_map']
+        )
+        self.needs_render_reset = True
+        self.needs_repaint = True
+
     def load_new_env_map(self, engine):
         root = tk.Tk(); root.withdraw(); root.attributes('-topmost', True)
         file_path = filedialog.askopenfilename(title="Load Environment Map", filetypes=[("HDR/IMG", "*.hdr *.exr *.jpg *.png")], initialdir="./env-maps")
@@ -749,6 +780,7 @@ class EditorState:
         
         # Update Viewport
         self.target_aspect = self.conf.render.width / self.conf.render.height if self.conf.render.height > 0 else 1.33
+        self.calculate_viewport(VIEW_W, VIEW_H)
 
         self.scene_dirty = True
         self.ui_dirty = True
@@ -869,9 +901,7 @@ class EditorState:
                 c2 = obj.get("color2", [0,0,0])
                 tscale = obj.get("texture_scale", 10.0)
                 new_id = self.builder.add_checker_sphere(pos, scale[0], col, c2, tscale)
-            elif otype == "quad":
-                u = obj.get("u", [1,0,0])
-                v = obj.get("v", [0,1,0])
+
             elif otype == "quad":
                 u = obj.get("u", [1,0,0])
                 v = obj.get("v", [0,1,0])
@@ -880,6 +910,26 @@ class EditorState:
 
             if new_id != -1 and name:
                 self.builder.registry[new_id]['name'] = name
+            
+            # --- TEXTURE RESTORATION ---
+            if new_id != -1:
+                tex_keys = ['albedo_map', 'roughness_map', 'metallic_map', 'normal_map']
+                has_textures = False
+                for tk in tex_keys:
+                    path = obj.get(tk)
+                    if path and isinstance(path, str):
+                        # Resolve relative paths against scene file directory
+                        if not os.path.isabs(path):
+                            scene_dir = os.path.dirname(os.path.abspath(filepath))
+                            path = os.path.normpath(os.path.join(scene_dir, path))
+                        self.builder.registry[new_id][tk] = path
+                        has_textures = True
+                
+                if has_textures:
+                    old_sel = self.selected_id
+                    self.selected_id = new_id
+                    self.push_texture_update(self.builder.engine)
+                    self.selected_id = old_sel
 
         self.dirty = True
         self.needs_ui_rebuild = True

@@ -19,6 +19,7 @@
 #include "common.h"
 #include "hittable.h"
 #include "sampler.h"
+#include "texture.h"
 
 // ===============================================================================================
 // CONSTANTS: VISUAL TWEAKS
@@ -274,51 +275,71 @@ public:
   Real transmission; // 0=Opaque, 1=Transmissive
   Real dispersion;   // 0=No Dispersion, >0=Rainbow Effect
 
+  std::shared_ptr<Texture> albedo_map;
+  std::shared_ptr<Texture> roughness_map;
+  std::shared_ptr<Texture> metallic_map;
+  std::shared_ptr<Texture> normal_map;
+
   GgxMaterial(const Vec3 &a, Real r, Real m, Real i = 1.5f, Real t = 0.0f,
               Real d = 0.0f)
       : albedo(a), roughness(r), metallic(m), ior(i), transmission(t),
-        dispersion(d) {}
+        dispersion(d), albedo_map(nullptr), roughness_map(nullptr), metallic_map(nullptr), normal_map(nullptr) {}
+
+  // Helper properties resolver
+  inline void resolve_properties(const HitRecord &rec, Vec3 &out_albedo, Real &out_roughness, Real &out_metallic, Vec3 &out_normal) const {
+    Vec3 tex_albedo = albedo_map ? albedo_map->value(rec.u, rec.v, rec.p) : Vec3(1, 1, 1);
+    out_albedo = albedo * tex_albedo;
+    
+    Real tex_rough = roughness_map ? roughness_map->value(rec.u, rec.v, rec.p).x() : 1.0f;
+    out_roughness = std::max(0.0f, std::min(1.0f, roughness * tex_rough));
+    
+    Real tex_metal = metallic_map ? metallic_map->value(rec.u, rec.v, rec.p).x() : 1.0f;
+    out_metallic = std::max(0.0f, std::min(1.0f, metallic * tex_metal));
+
+    out_normal = rec.normal;
+    if (normal_map) {
+        Vec3 n_color = normal_map->value(rec.u, rec.v, rec.p);
+        Vec3 ts_n = n_color * 2.0f - Vec3(1.0f, 1.0f, 1.0f);
+        ONB onb;
+        onb.build_from_w(out_normal);
+        out_normal = unit_vector(onb.local(ts_n));
+    }
+  }
 
   virtual Vec3 get_albedo(const HitRecord &rec) const override {
-    return albedo;
+    Vec3 out_a, out_n; Real out_r, out_m;
+    resolve_properties(rec, out_a, out_r, out_m, out_n);
+    return out_a;
   }
 
   virtual bool is_transparent() const override { return transmission > 0.001f; }
 
   virtual Vec3 shadow_attenuation(const Ray &r_in,
                                   const HitRecord &rec) const override {
+    Vec3 out_albedo, out_normal; Real out_roughness, out_metallic;
+    resolve_properties(rec, out_albedo, out_roughness, out_metallic, out_normal);
+
     // Volumetric Absorption (Beer's Law) + Fresnel + Metallic Blend
 
     // 1. Fresnel Loss (Reflection)
     Vec3 unit_direction = unit_vector(r_in.dir);
-    Real cos_theta = std::fmin(dot(-unit_direction, rec.normal), 1.0f);
+    Real cos_theta = std::fmin(dot(-unit_direction, out_normal), 1.0f);
     Real refraction_ratio = rec.front_face ? (1.0f / ior) : ior;
     Real R = fresnel_dielectric_exact(cos_theta, refraction_ratio);
 
     // 2. Base Throughput
-    // Tweaking Fresnel for softer shadows (User Request):
-    // 1. Power SHADOW_FRESNEL_POWER -> Gradient curve.
-    // 2. Min SHADOW_FRESNEL_MAX_OPACITY -> Max opacity reduced for softer look.
     Real R_shadow =
         std::min(std::pow(R, SHADOW_FRESNEL_POWER), SHADOW_FRESNEL_MAX_OPACITY);
 
-    // Transmission factor reduced by modified reflection (1-R_shadow) and metal
-    // opacity (1-M)
     Vec3 throughput = Vec3(1.0f, 1.0f, 1.0f) * transmission *
-                      (1.0f - R_shadow) * (1.0f - metallic);
+                      (1.0f - R_shadow) * (1.0f - out_metallic);
 
     // 3. Volumetric Absorption (Beer's Law)
-    // Only applied when EXITING the medium (Back Face), as 'rec.t' represents
-    // the distance traveled inside.
     if (!rec.front_face) {
-      // We assume Albedo represents the color at distance = 1.0 unit
-      // Absorption = Albedo^Distance
-      throughput.e[0] *= std::pow(albedo.x(), rec.t);
-      throughput.e[1] *= std::pow(albedo.y(), rec.t);
-      throughput.e[2] *= std::pow(albedo.z(), rec.t);
+      throughput.e[0] *= std::pow(out_albedo.x(), rec.t);
+      throughput.e[1] *= std::pow(out_albedo.y(), rec.t);
+      throughput.e[2] *= std::pow(out_albedo.z(), rec.t);
     }
-    // If Entering (Front Face), absorption is 0, just Fresnel/Base applied.
-
     return throughput;
   }
 
@@ -326,65 +347,49 @@ public:
   virtual BsdfComponents
   eval_bsdf_components(const Ray &r_in, const HitRecord &rec,
                        const Vec3 &scattered_dir) const override {
+    
+    Vec3 final_albedo, normal; Real final_roughness, final_metallic;
+    resolve_properties(rec, final_albedo, final_roughness, final_metallic, normal);
+
     Vec3 l = unit_vector(scattered_dir);
     Vec3 v = unit_vector(-r_in.dir);
-    Vec3 n = rec.normal;
+    Vec3 n = normal;
 
     Real n_dot_l = dot(n, l);
     Real n_dot_v = dot(n, v);
 
-    // Below horizon -> 0
     if (n_dot_l <= 0.0f || n_dot_v <= 0.0f)
       return {Vec3(0, 0, 0), Vec3(0, 0, 0)};
 
-    // 1. Transmission ignored in NEE
-    if (transmission > 0.999f && metallic < 0.001f) {
+    if (transmission > 0.999f && final_metallic < 0.001f) {
       return {Vec3(0, 0, 0), Vec3(0, 0, 0)};
     }
 
-    // 2. Diffuse / Specular Mix
-
-    // Calculate Fresnel
     Vec3 F;
     Vec3 h = unit_vector(v + l);
     Real v_dot_h = std::max(dot(v, h), 0.0f);
 
-    if (metallic > 0.0f) {
-      // Conductor: Use Schlick with F0 = Albedo
-      Vec3 F0 = albedo;
+    if (final_metallic > 0.0f) {
+      Vec3 F0 = final_albedo;
       F = schlick_fresnel_color(v_dot_h, F0);
     } else {
-      // Dielectric: Use Exact Fresnel
       Real F_diel = fresnel_dielectric_exact(v_dot_h, 1.0f / ior);
       F = Vec3(F_diel, F_diel, F_diel);
     }
 
-    // GGX Terms
     Real n_dot_h = std::max(dot(n, h), 0.0f);
-    Real D = ndf_ggx(n_dot_h, roughness);
-    Real G = geometry_smith(n_dot_l, n_dot_v, roughness);
+    Real D = ndf_ggx(n_dot_h, final_roughness);
+    Real G = geometry_smith(n_dot_l, n_dot_v, final_roughness);
 
-    // Cook-Torrance Specular BRDF * cos(theta_l)
     Vec3 specular = (D * G * F) / (4.0f * std::max(n_dot_v, 0.0001f));
 
-    // Diffuse Term (Oren-Nayar)
-    // Energy conservation: kD = (1-F)(1-Metal).
-    Vec3 kD = (Vec3(1.0f, 1.0f, 1.0f) - F) * (1.0f - metallic);
-
-    // Original Lambert: Vec3 diffuse = (kD * albedo / PI) * n_dot_l;
-
-    // New Oren-Nayar:
-    // eval_oren_nayar() returns the radiance factor (Albedo/Pi * cos *
-    // Correction). We multiply by kD to ensure energy conservation with the
-    // specular layer.
+    Vec3 kD = (Vec3(1.0f, 1.0f, 1.0f) - F) * (1.0f - final_metallic);
 
     Vec3 diffuse;
-    if (roughness < 0.01f) {
-      // Optimization: Fallback to Lambert for smooth surfaces (Sigma ~ 0 ->
-      // A=1, B=0)
-      diffuse = (kD * albedo / PI) * n_dot_l;
+    if (final_roughness < 0.01f) {
+      diffuse = (kD * final_albedo / PI) * n_dot_l;
     } else {
-      diffuse = kD * eval_oren_nayar(n, v, l, roughness, albedo);
+      diffuse = kD * eval_oren_nayar(n, v, l, final_roughness, final_albedo);
     }
 
     return {diffuse, specular};
@@ -397,54 +402,40 @@ public:
     return comps.diffuse + comps.specular;
   }
 
-  // PDF Calculation for MIS
   virtual Real scattering_pdf(const Ray &r_in, const HitRecord &rec,
                               const Ray &scattered) const override {
-    Vec3 n = rec.normal;
+    Vec3 final_albedo, normal; Real final_roughness, final_metallic;
+    resolve_properties(rec, final_albedo, final_roughness, final_metallic, normal);
+
+    Vec3 n = normal;
     Vec3 v = unit_vector(-r_in.dir);
     Vec3 l = unit_vector(scattered.dir);
     Real n_dot_l = dot(n, l);
     Real n_dot_v = dot(n, v);
-    if (n_dot_v < 0)
-      n_dot_v = 0;
+    if (n_dot_v < 0) n_dot_v = 0;
+    if (n_dot_l <= 0) return 0;
 
-    if (n_dot_l <= 0)
-      return 0;
-
-    // Calculate Mix Probability (Must match scatter!)
     Real F_lum = 0.0f;
-    if (metallic > 0.0f) {
-      Vec3 F = schlick_fresnel_color(n_dot_v, albedo);
+    if (final_metallic > 0.0f) {
+      Vec3 F = schlick_fresnel_color(n_dot_v, final_albedo);
       F_lum = (F.x() + F.y() + F.z()) / 3.0f;
     } else {
       F_lum = fresnel_dielectric_exact(n_dot_v, 1.0f / ior);
     }
 
-    Real prob_spec = (1.0f - metallic) * F_lum + metallic;
+    Real prob_spec = (1.0f - final_metallic) * F_lum + final_metallic;
+    prob_spec = std::max(0.0f, std::min(1.0f, prob_spec));
 
-    // Limits
-    if (prob_spec < 0.0f)
-      prob_spec = 0.0f;
-    if (prob_spec > 1.0f)
-      prob_spec = 1.0f;
-    // Note: In scatter we check for effectively zero/one.
-    // If very rough or very smooth?
-    if (roughness < 0.001f)
-      return 0; // Dirac delta, pdf is infinite/undefined for specific ray
+    if (final_roughness < 0.001f) return 0;
 
-    // Diffuse PDF
-    Real pdf_diffuse = (metallic > 0.99f) ? 0.0f : (n_dot_l / PI);
+    Real pdf_diffuse = (final_metallic > 0.99f) ? 0.0f : (n_dot_l / PI);
 
-    // Specular PDF (GGX)
-    // p_h = D * cos_theta_h
-    // p_l = p_h / (4 * v.h)
     Vec3 h = unit_vector(v + l);
     Real n_dot_h = std::max(dot(n, h), 0.0f);
-    Real v_dot_h = std::max(dot(v, h), 0.0f);
+    Real v_dot_h = std::max(dot(v, h), 1e-6f);
 
-    Real D = ndf_ggx(n_dot_h, roughness);
-    Real safe_v_dot_h = std::max(v_dot_h, 1e-6f);
-    Real pdf_spec = D * n_dot_h / (4.0f * safe_v_dot_h);
+    Real D = ndf_ggx(n_dot_h, final_roughness);
+    Real pdf_spec = D * n_dot_h / (4.0f * v_dot_h);
 
     return prob_spec * pdf_spec + (1.0f - prob_spec) * pdf_diffuse;
   }
@@ -452,98 +443,56 @@ public:
   virtual bool scatter(const Ray &r_in, const HitRecord &rec,
                        ScatterRecord &srec, Sampler &sampler) const override {
 
+    Vec3 final_albedo, normal; Real final_roughness, final_metallic;
+    resolve_properties(rec, final_albedo, final_roughness, final_metallic, normal);
+
     // 1. Transmission (Glass)
-    Real eff_transmission = transmission * (1.0f - metallic);
+    Real eff_transmission = transmission * (1.0f - final_metallic);
 
     if (eff_transmission > 0.0f && sampler.get_1d() < eff_transmission) {
       srec.is_specular = true;
-      srec.attenuation = albedo;
+      srec.attenuation = final_albedo;
 
-      // DISPERSION LOGIC (Continuous Balanced Spectrum)
       Real picked_ior = ior;
       Vec3 color_filter(1.0f, 1.0f, 1.0f);
 
       if (dispersion > 0.001f) {
-        // Continuous sampling t in [0, 1]
         Real t = sampler.get_1d();
-
-        // Map t to IOR shift: Linear interpolation
-        // Range: [ior - disp, ior + disp]
         picked_ior = ior + (t - 0.5f) * 2.0f * dispersion;
 
-        // Balanced Spectral Weights
-        // We want Integral(R) = Integral(G) = Integral(B) = 1/3 over [0,1].
-        // Using overlapping triangular distributions:
-
-        float r_val = 0.0f;
-        float g_val = 0.0f;
-        float b_val = 0.0f;
-
-        // RED: Starts at 1.0, falls linearly to 0 at t=2/3 = 0.666
-        // Area = 0.5 * height * width = 0.5 * 1.0 * (2/3) = 1/3. Correct.
-        if (t < 0.6666f) {
-          r_val = 1.0f - (t * 1.5f);
-        }
-
-        // GREEN: Triangle centered at 0.5. Starts at 1/6 (0.166), peaks at 0.5,
-        // ends at 5/6 (0.833). Width = 4/6 = 2/3. Height = 1.0. Area = 0.5
-        // * 1.0 * (2/3) = 1/3. Correct.
+        float r_val = 0.0f, g_val = 0.0f, b_val = 0.0f;
+        if (t < 0.6666f) r_val = 1.0f - (t * 1.5f);
         float g_dist = std::abs(t - 0.5f);
-        if (g_dist < 0.3333f) {
-          g_val = 1.0f - (g_dist * 3.0f);
-        }
-
-        // BLUE: Starts at 1/3 (0.333), rises linearly to 1.0 at t=1.0.
-        // Area = 0.5 * 1.0 * (2/3) = 1/3. Correct.
-        if (t > 0.3333f) {
-          b_val = (t - 0.3333f) * 1.5f;
-        }
+        if (g_dist < 0.3333f) g_val = 1.0f - (g_dist * 3.0f);
+        if (t > 0.3333f) b_val = (t - 0.3333f) * 1.5f;
 
         color_filter = Vec3(r_val, g_val, b_val);
-
-        // Energy Preservation:
-        // The average value of any channel is 1/3.
-        // We want the average to be 1.0 (preserve Albedo brightness).
-        // Scale Factor = 1.0 / (1/3) = 3.0.
-
         srec.attenuation = srec.attenuation * color_filter * 3.0f;
       }
 
       Real refraction_ratio = rec.front_face ? (1.0f / picked_ior) : picked_ior;
       Vec3 unit_direction = unit_vector(r_in.dir);
 
-      // GGX Microfacet Refraction
-      // Instead of refracting via the geometric normal 'rec.normal',
-      // we sample a microfacet normal 'h' based on roughness.
-
       Vec3 h;
-      if (roughness < 0.001f) {
-        h = rec.normal;
+      if (final_roughness < 0.001f) {
+        h = normal;
         srec.roughness = 0.0f;
       } else {
-        // Sample GGX Normal using ONB
         ONB onb;
-        onb.build_from_w(rec.normal);
-        Vec3 local_h =
-            sample_ggx_ndf(sampler.get_2d(), roughness); // Use sampler for 2D
+        onb.build_from_w(normal);
+        Vec3 local_h = sample_ggx_ndf(sampler.get_2d(), final_roughness);
         h = onb.local(local_h);
-        srec.roughness = roughness;
+        srec.roughness = final_roughness;
       }
 
-      // Ensure h is in the same hemisphere as proper normal relative to ray
-      // Calculate Fresnel on Microfacet H
       Real cos_theta = std::fmin(dot(-unit_direction, h), 1.0f);
       Real F = fresnel_dielectric_exact(cos_theta, refraction_ratio);
 
       Vec3 direction;
-      // Stochastic Fresnel choice
       if (sampler.get_1d() < F) {
-        // Reflect off microfacet
         direction = reflect(unit_direction, h);
       } else {
-        // Refract via microfacet
         direction = refract(unit_direction, h, refraction_ratio);
-        // If refract returns (0,0,0) due to TIR... fallback to reflect
         if (direction.length_squared() < 1e-6f)
           direction = reflect(unit_direction, h);
       }
@@ -553,138 +502,95 @@ public:
     }
 
     // 2. Opaque PBR Setup
-    // NO THRESHOLDS. ALWAYS FALSE (unless delta).
     srec.is_specular = false;
+    srec.roughness = final_roughness;
 
-    // Pass roughness for next bounce logic
-    srec.roughness = roughness;
-
-    // Exception: If Roughness is virtually zero.
-    if (roughness < 0.001f) {
+    if (final_roughness < 0.001f) {
       srec.is_specular = true;
     }
 
     Vec3 v = unit_vector(-r_in.dir);
-    Real n_dot_v = dot(rec.normal, v);
-    if (n_dot_v < 0)
-      n_dot_v = 0;
+    Real n_dot_v = std::max(dot(normal, v), 0.0f);
 
-    // Specular Probability
-    // Dielectric: Exact Fresnel at current angle
-    // Metal: Schlick with Albedo
     Real F_lum = 0.0f;
-
-    if (metallic > 0.0f) {
-      Vec3 F_schlick = schlick_fresnel_color(n_dot_v, albedo);
+    if (final_metallic > 0.0f) {
+      Vec3 F_schlick = schlick_fresnel_color(n_dot_v, final_albedo);
       F_lum = (F_schlick.x() + F_schlick.y() + F_schlick.z()) / 3.0f;
     } else {
-      // Dielectric
       F_lum = fresnel_dielectric_exact(n_dot_v, 1.0f / ior);
     }
 
-    // Mix
-    Real prob_spec = (1.0f - metallic) * F_lum +
-                     metallic; // Metal is 100% specular lobe (colored)
+    Real prob_spec = (1.0f - final_metallic) * F_lum + final_metallic;
+    prob_spec = std::max(0.0f, std::min(1.0f, prob_spec));
 
     // 3. Stochastic Choice
     if (sampler.get_1d() < prob_spec) {
       // --- SPECULAR PATH (GGX) ---
       ONB onb;
-      onb.build_from_w(rec.normal);
+      onb.build_from_w(normal);
 
-      if (roughness < 0.001f) {
-        // Mirror
-        Vec3 reflected = reflect(unit_vector(r_in.dir), rec.normal);
+      if (final_roughness < 0.001f) {
+        Vec3 reflected = reflect(unit_vector(r_in.dir), normal);
         srec.specular_ray = Ray(rec.p, reflected, r_in.tm);
         srec.is_specular = true;
-        // Weight = F / p = F / F = 1.
-        // Actually for metal F is colored.
-        if (metallic > 0.0f)
-          srec.attenuation = schlick_fresnel_color(n_dot_v, albedo) / prob_spec;
+        if (final_metallic > 0.0f)
+          srec.attenuation = schlick_fresnel_color(n_dot_v, final_albedo) / prob_spec;
         else
-          srec.attenuation =
-              Vec3(1, 1, 1) *
-              (fresnel_dielectric_exact(n_dot_v, 1.0f / ior) / prob_spec);
+          srec.attenuation = Vec3(1, 1, 1) * (fresnel_dielectric_exact(n_dot_v, 1.0f / ior) / prob_spec);
         return true;
       }
 
-      Vec3 local_h = sample_ggx_ndf(sampler.get_2d(), roughness);
+      Vec3 local_h = sample_ggx_ndf(sampler.get_2d(), final_roughness);
       Vec3 h = onb.local(local_h);
       Vec3 l = reflect(-v, h);
 
-      if (dot(l, rec.normal) <= 0.0f)
-        return false;
+      if (dot(l, normal) <= 0.0f) return false;
 
       srec.specular_ray = Ray(rec.p, l, r_in.tm);
 
-      // BRDF Terms
-      Real n_dot_l = std::max(dot(rec.normal, l), 0.0001f);
-      Real n_dot_h = std::max(dot(rec.normal, h), 0.0001f);
+      Real n_dot_l = std::max(dot(normal, l), 0.0001f);
+      Real n_dot_h = std::max(dot(normal, h), 0.0001f);
       Real v_dot_h = std::max(dot(v, h), 0.0001f);
 
       Vec3 F;
-      if (metallic > 0.0f)
-        F = schlick_fresnel_color(v_dot_h, albedo);
+      if (final_metallic > 0.0f) F = schlick_fresnel_color(v_dot_h, final_albedo);
       else {
         Real f = fresnel_dielectric_exact(v_dot_h, 1.0f / ior);
         F = Vec3(f, f, f);
       }
 
-      Real G = geometry_smith(n_dot_l, std::max(n_dot_v, 0.0001f), roughness);
+      Real G = geometry_smith(n_dot_l, std::max(n_dot_v, 0.0001f), final_roughness);
 
-      // Weight = (F * G * v.h) / (n.v * n.h)
-      // Dividing by prob_spec
-      Vec3 spec_weight =
-          F * G * v_dot_h / (std::max(n_dot_v, 0.0001f) * n_dot_h);
+      Vec3 spec_weight = F * G * v_dot_h / (std::max(n_dot_v, 0.0001f) * n_dot_h);
       srec.attenuation = spec_weight / prob_spec;
 
     } else {
       // --- DIFFUSE PATH ---
-      if (metallic > 0.99f)
-        return false;
+      if (final_metallic > 0.99f) return false;
 
-      // Note on Sampling:
-      // Oren-Nayar strictly should have a specific sampling routine to be
-      // unbiased with simple weights. However, Cosine Weighted Sampling is
-      // extremely close to the PDF of Oren-Nayar (which is mostly Lambertian).
-      // Standard practice: Keep Cosine Weighted Sampling and apply the BRDF
-      // weight correction. Weight = BSDF / PDF. PDF_cosine = cos_theta / PI.
-      // BSDF_oren = (Albedo/PI) * cos_theta * (A + B...)
-      // Weight = Albedo * (A + B...)
-
-      Vec3 diff_dir = sample_cosine_weighted(rec.normal, sampler.get_2d());
+      Vec3 diff_dir = sample_cosine_weighted(normal, sampler.get_2d());
       srec.specular_ray = Ray(rec.p, diff_dir, r_in.tm);
+      Vec3 l = diff_dir;
 
-      Vec3 l = diff_dir; // Outgoing light direction
-
-      // Calculate Oren-Nayar Correction (A + B...) term only (since cos/PI
-      // cancels out with PDF) Re-evaluating full BSDF/PDF ratio for correctness
-
-      if (roughness < 0.01f) {
-        // Lambert case: Weight = Albedo
-        srec.attenuation = albedo * (1.0f - metallic);
+      if (final_roughness < 0.01f) {
+        srec.attenuation = final_albedo * (1.0f - final_metallic);
       } else {
-        // Full Oren-Nayar Weight
-        // We need V (view) and L (light = scattered)
         Vec3 v_in = unit_vector(-r_in.dir);
-
-        Vec3 on_val = eval_oren_nayar(rec.normal, v_in, l, roughness, albedo);
-
-        Real n_dot_l = dot(rec.normal, l);
+        Vec3 on_val = eval_oren_nayar(normal, v_in, l, final_roughness, final_albedo);
+        Real n_dot_l = dot(normal, l);
         Real pdf = (n_dot_l < 0) ? 0 : (n_dot_l / PI);
 
         if (pdf > 1e-6f) {
-          srec.attenuation = (on_val * (1.0f - metallic)) / pdf;
+          srec.attenuation = (on_val * (1.0f - final_metallic)) / pdf;
         } else {
           srec.attenuation = Vec3(0, 0, 0);
         }
       }
 
-      // Weights are handled by the standard albedo return for split variance
-      // reduction.
-
-      // Standard split weight logic
-      srec.attenuation = srec.attenuation / (1.0f - prob_spec);
+      Real effective_prob = 1.0f - prob_spec;
+      if (effective_prob > 0.001f) {
+           srec.attenuation = srec.attenuation / effective_prob;
+      }
     }
 
     return true;
