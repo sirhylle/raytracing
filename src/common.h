@@ -15,7 +15,7 @@ class Sampler; // Forward declaration
 // ===============================================================================================
 
 using Real = float;
-const Real PI = 3.1415926535897932385f;
+constexpr Real PI = 3.1415926535897932385f;
 const Real INFINITY_REAL = std::numeric_limits<Real>::infinity();
 
 // 1. Gestion du faux soleil (InvisibleLight) dans les reflets
@@ -116,10 +116,10 @@ struct Vec3 {
 
   Vec3 &operator/=(Real t) { return *this *= (1.0f / t); }
 
-  Real length_squared() const {
+  [[nodiscard]] Real length_squared() const {
     return e[0] * e[0] + e[1] * e[1] + e[2] * e[2];
   }
-  Real length() const { return std::sqrt(length_squared()); }
+  [[nodiscard]] Real length() const { return std::sqrt(length_squared()); }
 };
 
 // Opérateurs Vec3
@@ -137,15 +137,15 @@ inline Vec3 operator*(Real t, const Vec3 &v) {
 }
 inline Vec3 operator*(const Vec3 &v, Real t) { return t * v; }
 inline Vec3 operator/(const Vec3 &v, Real t) { return (1.0f / t) * v; }
-inline Real dot(const Vec3 &u, const Vec3 &v) {
+[[nodiscard]] inline Real dot(const Vec3 &u, const Vec3 &v) {
   return u.e[0] * v.e[0] + u.e[1] * v.e[1] + u.e[2] * v.e[2];
 }
-inline Vec3 cross(const Vec3 &u, const Vec3 &v) {
+[[nodiscard]] inline Vec3 cross(const Vec3 &u, const Vec3 &v) {
   return Vec3(u.e[1] * v.e[2] - u.e[2] * v.e[1],
               u.e[2] * v.e[0] - u.e[0] * v.e[2],
               u.e[0] * v.e[1] - u.e[1] * v.e[0]);
 }
-inline Vec3 unit_vector(const Vec3 &v) { return v / v.length(); }
+[[nodiscard]] inline Vec3 unit_vector(const Vec3 &v) { return v / v.length(); }
 
 // Helpers Géométriques (Thread Safe Default)
 inline Vec3 random_vec3() {
@@ -156,10 +156,10 @@ inline Vec3 random_vec3(Real min, Real max) {
               random_real(min, max));
 }
 
-inline Vec3 reflect(const Vec3 &v, const Vec3 &n) {
+[[nodiscard]] inline Vec3 reflect(const Vec3 &v, const Vec3 &n) {
   return v - 2 * dot(v, n) * n;
 }
-inline Vec3 refract(const Vec3 &uv, const Vec3 &n, Real etai_over_etat) {
+[[nodiscard]] inline Vec3 refract(const Vec3 &uv, const Vec3 &n, Real etai_over_etat) {
   auto cos_theta = std::fmin(dot(-uv, n), 1.0f);
   Vec3 r_out_perp = etai_over_etat * (uv + cos_theta * n);
   Vec3 r_out_parallel =

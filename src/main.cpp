@@ -14,6 +14,7 @@
 
 #include <atomic>
 #include <iostream>
+#include <memory>
 #include <map>
 #include <omp.h>
 #include <string>
@@ -478,11 +479,11 @@ public:
     total_scanlines = height;
     completed_scanlines = 0;
     size_t num_pixels = (size_t)width * height;
-    float *beauty = new float[num_pixels * 3];
-    float *albedo = new float[num_pixels * 3];
-    float *normal = new float[num_pixels * 3];
+    std::unique_ptr<float[]> beauty(new float[num_pixels * 3]);
+    std::unique_ptr<float[]> albedo(new float[num_pixels * 3]);
+    std::unique_ptr<float[]> normal(new float[num_pixels * 3]);
 
-    try {
+    {
       nb::gil_scoped_release release;
       if (n_threads > 0)
         omp_set_num_threads(n_threads);
@@ -528,21 +529,20 @@ public:
         }
         completed_scanlines++;
       }
-    } catch (...) {
-      delete[] beauty;
-      delete[] albedo;
-      delete[] normal;
-      throw;
     }
 
-    nb::capsule ob(beauty, [](void *p) noexcept { delete[] (float *)p; });
-    nb::capsule oa(albedo, [](void *p) noexcept { delete[] (float *)p; });
-    nb::capsule on(normal, [](void *p) noexcept { delete[] (float *)p; });
+    float *raw_beauty = beauty.release();
+    float *raw_albedo = albedo.release();
+    float *raw_normal = normal.release();
+
+    nb::capsule ob(raw_beauty, [](void *p) noexcept { delete[] (float *)p; });
+    nb::capsule oa(raw_albedo, [](void *p) noexcept { delete[] (float *)p; });
+    nb::capsule on(raw_normal, [](void *p) noexcept { delete[] (float *)p; });
     size_t shape[3] = {(size_t)height, (size_t)width, 3ul};
     nb::dict res;
-    res["color"] = nb::ndarray<nb::numpy, float>(beauty, 3, shape, ob);
-    res["albedo"] = nb::ndarray<nb::numpy, float>(albedo, 3, shape, oa);
-    res["normal"] = nb::ndarray<nb::numpy, float>(normal, 3, shape, on);
+    res["color"] = nb::ndarray<nb::numpy, float>(raw_beauty, 3, shape, ob);
+    res["albedo"] = nb::ndarray<nb::numpy, float>(raw_albedo, 3, shape, oa);
+    res["normal"] = nb::ndarray<nb::numpy, float>(raw_normal, 3, shape, on);
     return res;
   }
 
@@ -554,9 +554,9 @@ public:
       world_bvh = std::make_shared<BVHNode>(world);
 
     size_t num_pixels = (size_t)width * height;
-    float *buffer = new float[num_pixels * 3];
+    std::unique_ptr<float[]> buffer(new float[num_pixels * 3]);
 
-    try {
+    {
       nb::gil_scoped_release release;
       if (n_threads > 0)
         omp_set_num_threads(n_threads);
@@ -592,13 +592,12 @@ public:
           buffer[idx + 2] = col.z();
         }
       }
-    } catch (...) {
-      delete[] buffer;
-      throw;
     }
-    nb::capsule owner(buffer, [](void *p) noexcept { delete[] (float *)p; });
+
+    float *raw_buffer = buffer.release();
+    nb::capsule owner(raw_buffer, [](void *p) noexcept { delete[] (float *)p; });
     size_t shape[3] = {(size_t)height, (size_t)width, 3ul};
-    return nb::ndarray<nb::numpy, float>(buffer, 3, shape, owner);
+    return nb::ndarray<nb::numpy, float>(raw_buffer, 3, shape, owner);
   }
 
   nb::ndarray<nb::numpy, float>
@@ -615,8 +614,8 @@ public:
     if (!world_bvh)
       world_bvh = std::make_shared<BVHNode>(world);
 
-    float *display = new float[num_pixels * 3];
-    try {
+    std::unique_ptr<float[]> display(new float[num_pixels * 3]);
+    {
       nb::gil_scoped_release release;
       if (n_threads > 0)
         omp_set_num_threads(n_threads);
@@ -656,14 +655,13 @@ public:
           display[idx + 2] = accumulation_buffer[idx + 2] / count;
         }
       }
-    } catch (...) {
-      delete[] display;
-      throw;
     }
+
     accumulated_spp += spp;
-    nb::capsule owner(display, [](void *p) noexcept { delete[] (float *)p; });
+    float *raw_display = display.release();
+    nb::capsule owner(raw_display, [](void *p) noexcept { delete[] (float *)p; });
     size_t shape[3] = {(size_t)height, (size_t)width, 3ul};
-    return nb::ndarray<nb::numpy, float>(display, 3, shape, owner);
+    return nb::ndarray<nb::numpy, float>(raw_display, 3, shape, owner);
   }
 
   nb::ndarray<nb::numpy, float> render_scanlines(int width, int height, int spp,
@@ -693,9 +691,9 @@ public:
 
     // Output buffer is strictly the size of the SLICE
     size_t slice_pixels = (size_t)width * num_lines;
-    float *display_slice = new float[slice_pixels * 3];
+    std::unique_ptr<float[]> display_slice(new float[slice_pixels * 3]);
 
-    try {
+    {
       nb::gil_scoped_release release;
 
       // Parallelize only over the SLICE rows
@@ -749,16 +747,14 @@ public:
               accumulation_buffer[global_idx + 2] / div;
         }
       }
-    } catch (...) {
-      delete[] display_slice;
-      throw;
     }
 
-    nb::capsule owner(display_slice,
+    float *raw_display_slice = display_slice.release();
+    nb::capsule owner(raw_display_slice,
                       [](void *p) noexcept { delete[] (float *)p; });
     // Return shape corresponds to the SLICE
     size_t shape[3] = {(size_t)num_lines, (size_t)width, 3ul};
-    return nb::ndarray<nb::numpy, float>(display_slice, 3, shape, owner);
+    return nb::ndarray<nb::numpy, float>(raw_display_slice, 3, shape, owner);
   }
 
   // Allow Python to manually increment SPP when a full pass is done
@@ -796,8 +792,8 @@ public:
   nb::ndarray<nb::numpy, float> get_sampler_image(int width, int height,
                                                   int sampler_type, int spp,
                                                   int dimension_offset) {
-    float *buffer = new float[width * height * 3];
-    try {
+    std::unique_ptr<float[]> buffer(new float[width * height * 3]);
+    {
       nb::gil_scoped_release release;
 #pragma omp parallel for schedule(dynamic)
       for (int j = 0; j < height; ++j) {
@@ -828,13 +824,12 @@ public:
           buffer[idx + 2] = acc.z();
         }
       }
-    } catch (...) {
-      delete[] buffer;
-      throw;
     }
-    nb::capsule owner(buffer, [](void *p) noexcept { delete[] (float *)p; });
+
+    float *raw_buffer = buffer.release();
+    nb::capsule owner(raw_buffer, [](void *p) noexcept { delete[] (float *)p; });
     size_t shape[3] = {(size_t)height, (size_t)width, 3ul};
-    return nb::ndarray<nb::numpy, float>(buffer, 3, shape, owner);
+    return nb::ndarray<nb::numpy, float>(raw_buffer, 3, shape, owner);
   }
 
   void set_blue_noise_texture(
