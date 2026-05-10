@@ -16,9 +16,8 @@ animations_frames - Copie/
 *.mp4
 *.png
 *.hdr
-!rendering*
-!Screenshot*
 !benchmark/*.png
+!docs/illustrations/*.png
 
 # Logs
 *.log

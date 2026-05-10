@@ -86,13 +86,17 @@ La roadmap se divise en plusieurs axes parallèles : **Consolidation Logicielle*
     *   **Status**: ❌ **Not Implemented**.
     *   *Desc*: Effets caméra "fin de chaîne".
 
-2.  **Global Homogeneous Atmosphere (Fog)**.
-    *   **Status**: ❌ **Not Implemented**.
+2.  **~~Global Homogeneous Atmosphere (Fog)~~**.
+    *   **Status**: ⛔ **Tested & Rejected (Volumetric Fog Rolled Back)** (Mai 2026).
     *   *Desc*: Absorption volumétrique constante (profondeur).
+    *   *Lesson*: Voir les détails ci-dessous dans la section Volumétrie / Brouillard Hétérogène.
 
-3.  **Volumetrics (Clouds/Heterogeneous)**.
-    *   **Status**: ❌ **Not Implemented**.
-    *   *Desc*: Ray Marching dans le volume (très coûteux).
+3.  **~~Volumetrics (Clouds/Heterogeneous)~~**.
+    *   **Status**: ⛔ **Tested & Rejected (Volumetric Fog Rolled Back)** (Mai 2026).
+    *   *Desc*: Ray Marching / Woodcock Tracking dans le volume.
+    *   *Lesson*: L'implémentation complète d'un brouillard atmosphérique hétérogène (décroissance exponentielle avec l'altitude et perturbation 3D par bruit de Perlin fBm) a été réalisée et testée avec succès sur le plan technique, mais **n'a finalement pas été conservée**.
+    *   *Pourquoi ?* L'intention initiale de créer des faisceaux de lumière sacrée ("God rays") bien contrastés et nets s'est heurtée aux limitations physiques du path tracing unidirectionnel avec Next Event Estimation (NEE). Le système souffre d'un bruit de type "neige" / "fireflies" extrêmement tenace à faible SPP, et les essais d'atténuation ont rendu le brouillard trop diffus et homogène sans faire ressortir de véritables colonnes de lumière.
+    *   *Ressources d'archive* : La conception mathématique, l'implémentation C++/Python et la galerie des rendus de debug (`fog1.png` à `fog5.png`) sont documentées en détail dans [atmospheric_fog.md](file:///d:/Python/raytracing/docs/atmospheric_fog.md) à titre d'archive technique.
 
 4.  **Subsurface Scattering (SSS)**.
     *   **Status**: ❌ **Not Implemented** (Beer's Law used for glass is a simplification).
